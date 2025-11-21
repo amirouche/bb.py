@@ -148,6 +148,27 @@ python3 ouverture.py get HASH@lang
 - **Constants**: UPPER_SNAKE_CASE (`PYTHON_BUILTINS`)
 - **Normalized names**: `_ouverture_v_N` (N = 0, 1, 2, ...)
 
+#### Preferred Function Naming Pattern
+
+**Note**: This is a project-specific convention that differs from traditional PEP 8 `verb_noun` patterns. Ouverture emphasizes a structured naming convention that puts the type being operated on first:
+
+**Pattern**: `type_name_verb_complement`
+
+**Structure**:
+- `type_name`: The type/object being operated on (filepath, function, hash, ast, etc.)
+- `verb`: The action being performed (open, get, save, compute, normalize, etc.)
+- `complement` (optional): Additional context or output format
+
+**Examples**:
+- `filepath_open()` - Opens a filepath
+- `function_get()` - Gets a function from the pool
+- `function_dump_as_json()` - Dumps a function as JSON
+- `hash_compute()` - Computes a hash
+- `ast_normalize()` - Normalizes an AST
+- `code_denormalize()` - Denormalizes code
+
+**Rationale**: This convention groups related operations alphabetically and makes the primary subject clear at a glance, which is particularly useful in a function-centric architecture where functions are the primary unit of composition.
+
 ### Testing Conventions
 
 - **Test framework**: pytest
