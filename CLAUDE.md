@@ -223,6 +223,17 @@ $HOME/.local/ouverture/
 - Returns: Tuple of (normalized_code, name_mapping, alias_mapping, docstring)
 - **This is the default load function** - auto-detects format
 
+#### `function_show(hash_with_lang_and_mapping)` (lines 1014-1107)
+**Show function with mapping exploration and selection** (Phase 5)
+- Supports three formats: `HASH@LANG`, `HASH@LANG@MAPPING_HASH`
+- Single mapping: Outputs code directly to stdout
+- Multiple mappings: Displays selection menu with copyable commands and comments
+- Explicit mapping hash: Directly outputs specified mapping
+- V0 backward compatible: Automatically handles v0 format (single mapping per language)
+- Uses function_load() + code_denormalize() to reconstruct original code
+- **This is the recommended command** for exploring and viewing functions
+- **Note**: CLI command `ouverture.py show HASH@lang[@mapping_hash]`
+
 #### `code_denormalize(normalized_code, name_mapping, alias_mapping)` (lines 497-679)
 **Reconstructs original-looking code**
 - Reverses variable renaming: `_ouverture_v_X → original_name`
@@ -368,12 +379,13 @@ ouverture.py remote push NAME                       # Publish functions to remot
 
 #### Function Operations
 ```bash
-ouverture.py add FILENAME.py@LANG              # Add function to local pool
-ouverture.py get HASH[@LANG] FILENAME.py       # Retrieve function and save to file (in specific language)
-ouverture.py translate HASH@LANG LANG          # Add translation for existing function
-ouverture.py review HASH                       # Recursively review function and dependencies (in user's languages)
-ouverture.py run HASH@lang                     # Execute function interactively
-ouverture.py run HASH@lang --debug             # Execute with debugger (native language variables)
+ouverture.py add FILENAME.py@LANG                      # Add function to local pool
+ouverture.py show HASH@LANG[@MAPPING_HASH]             # Show function with mapping exploration (recommended)
+ouverture.py get HASH[@LANG] FILENAME.py               # Retrieve function and save to file (in specific language)
+ouverture.py translate HASH@LANG LANG                  # Add translation for existing function
+ouverture.py review HASH                               # Recursively review function and dependencies (in user's languages)
+ouverture.py run HASH@lang                             # Execute function interactively
+ouverture.py run HASH@lang --debug                     # Execute with debugger (native language variables)
 ```
 
 #### Discovery
@@ -384,7 +396,10 @@ ouverture.py search [NAME | URL] [QUERY...]    # Search and list functions by qu
 
 **Currently implemented**:
 - `add` command: Parses file, normalizes AST, computes hash, saves to local pool
+- `show` command: Shows function with mapping exploration and selection (v0 and v1 compatible)
 - `get` command: Retrieves function from local pool, denormalizes to target language
+- `migrate` command: Migrates functions from v0 to v1 schema format
+- `validate` command: Validates v1 function structure
 
 **Language codes**: Currently 3 characters (ISO 639-3: eng, fra, spa, etc.), future support for any string <256 chars
 

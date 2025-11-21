@@ -1011,8 +1011,104 @@ def function_load(hash_value: str, lang: str, mapping_hash: str = None) -> Tuple
         sys.exit(1)
 
 
+def function_show(hash_with_lang_and_mapping: str):
+    """
+    Show a function from the ouverture pool with mapping selection support.
+
+    Supports three formats:
+    - HASH@LANG: Show single mapping, or menu if multiple exist
+    - HASH@LANG@MAPPING_HASH: Show specific mapping
+
+    Args:
+        hash_with_lang_and_mapping: Function identifier in format HASH@LANG[@MAPPING_HASH]
+    """
+    # Parse the format
+    if '@' not in hash_with_lang_and_mapping:
+        print("Error: Missing language suffix. Use format: HASH@lang[@mapping_hash]", file=sys.stderr)
+        sys.exit(1)
+
+    parts = hash_with_lang_and_mapping.split('@')
+    if len(parts) < 2:
+        print("Error: Invalid format. Use format: HASH@lang[@mapping_hash]", file=sys.stderr)
+        sys.exit(1)
+
+    hash_value = parts[0]
+    lang = parts[1]
+    mapping_hash = parts[2] if len(parts) > 2 else None
+
+    # Validate hash format (should be 64 hex characters for SHA256)
+    if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value.lower()):
+        print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate language code (should be 3 characters, ISO 639-3)
+    if len(lang) != 3:
+        print(f"Error: Language code must be 3 characters (ISO 639-3). Got: {lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # Detect schema version
+    version = schema_detect_version(hash_value)
+    if version is None:
+        print(f"Error: Function not found: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Handle v0 functions (always single mapping per language)
+    if version == 0:
+        # v0 functions always have exactly one mapping per language
+        normalized_code, name_mapping, alias_mapping, docstring = function_load(hash_value, lang)
+
+        # Replace docstring and denormalize
+        try:
+            normalized_code = docstring_replace(normalized_code, docstring)
+            original_code = code_denormalize(normalized_code, name_mapping, alias_mapping)
+        except Exception as e:
+            print(f"Error: Failed to denormalize code: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        # Print the code
+        print(original_code)
+        return
+
+    # Handle v1 functions
+    # Get available mappings for the language
+    mappings = mappings_list_v1(hash_value, lang)
+
+    if len(mappings) == 0:
+        print(f"Error: No mappings found for language '{lang}'", file=sys.stderr)
+        sys.exit(1)
+
+    # Determine which mapping to show
+    if mapping_hash is not None:
+        # Explicit mapping hash provided
+        selected_hash = mapping_hash
+    elif len(mappings) == 1:
+        # Only one mapping - show it directly
+        selected_hash, _ = mappings[0]
+    else:
+        # Multiple mappings - show selection menu
+        print(f"Multiple mappings found for '{lang}'. Please choose one:\n")
+        for m_hash, comment in sorted(mappings):
+            comment_suffix = f"  # {comment}" if comment else ""
+            print(f"ouverture.py show {hash_value}@{lang}@{m_hash}{comment_suffix}")
+        return
+
+    # Load the selected mapping
+    normalized_code, name_mapping, alias_mapping, docstring = function_load(hash_value, lang, mapping_hash=selected_hash)
+
+    # Replace docstring and denormalize
+    try:
+        normalized_code = docstring_replace(normalized_code, docstring)
+        original_code = code_denormalize(normalized_code, name_mapping, alias_mapping)
+    except Exception as e:
+        print(f"Error: Failed to denormalize code: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Print the code
+    print(original_code)
+
+
 def function_get(hash_with_lang: str):
-    """Get a function from the ouverture pool"""
+    """Get a function from the ouverture pool (backward compatible with show command)"""
     # Parse the hash and language
     if '@' not in hash_with_lang:
         print("Error: Missing language suffix. Use format: HASH@lang", file=sys.stderr)
@@ -1248,9 +1344,13 @@ def main():
     add_parser.add_argument('file', help='Path to Python file with @lang suffix (e.g., file.py@eng)')
     add_parser.add_argument('--comment', default='', help='Optional comment explaining this mapping variant')
 
-    # Get command
+    # Get command (backward compatibility)
     get_parser = subparsers.add_parser('get', help='Get a function from the pool')
     get_parser.add_argument('hash', help='Function hash with @lang suffix (e.g., abc123...@eng)')
+
+    # Show command (improved version of get with mapping selection)
+    show_parser = subparsers.add_parser('show', help='Show a function with mapping selection support')
+    show_parser.add_argument('hash', help='Function hash with @lang[@mapping_hash] (e.g., abc123...@eng or abc123...@eng@xyz789...)')
 
     # Migrate command
     migrate_parser = subparsers.add_parser('migrate', help='Migrate functions from v0 to v1')
@@ -1268,6 +1368,8 @@ def main():
         function_add(args.file, args.comment)
     elif args.command == 'get':
         function_get(args.hash)
+    elif args.command == 'show':
+        function_show(args.hash)
     elif args.command == 'migrate':
         if args.hash:
             # Migrate specific function
