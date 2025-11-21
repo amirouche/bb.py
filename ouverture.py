@@ -448,9 +448,14 @@ def directory_get_ouverture() -> Path:
     return Path(home) / '.local' / 'ouverture'
 
 
-def function_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
-                  name_mapping: Dict[str, str], alias_mapping: Dict[str, str]):
-    """Save the function to the ouverture objects directory"""
+def function_save_v0(hash_value: str, lang: str, normalized_code: str, docstring: str,
+                     name_mapping: Dict[str, str], alias_mapping: Dict[str, str]):
+    """
+    Save the function to the ouverture objects directory using schema v0.
+
+    This function is kept for the migration tool and backward compatibility.
+    New code should use function_save_v1() instead.
+    """
     # Create directory structure: OUVERTURE_DIR/objects/XX/
     ouverture_dir = directory_get_ouverture()
     objects_dir = ouverture_dir / 'objects'
@@ -485,6 +490,125 @@ def function_save(hash_value: str, lang: str, normalized_code: str, docstring: s
     print(f"Function saved: {json_path}")
     print(f"Hash: {hash_value}")
     print(f"Language: {lang}")
+
+
+def function_save_v1(hash_value: str, normalized_code: str, metadata: Dict[str, any]):
+    """
+    Save function to ouverture directory using schema v1.
+
+    Creates the function directory and object.json file:
+    - Directory: $OUVERTURE_DIRECTORY/objects/XX/YYYYYY.../
+    - File: $OUVERTURE_DIRECTORY/objects/XX/YYYYYY.../object.json
+
+    Args:
+        hash_value: Function hash (64-character hex)
+        normalized_code: Normalized code with docstring
+        metadata: Metadata dict (created, author, tags, dependencies)
+    """
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+
+    # Create function directory: objects/XX/YYYYYY.../
+    func_dir = objects_dir / hash_value[:2] / hash_value[2:]
+    func_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create object.json
+    object_json = func_dir / 'object.json'
+
+    data = {
+        'schema_version': 1,
+        'hash': hash_value,
+        'hash_algorithm': 'sha256',
+        'normalized_code': normalized_code,
+        'encoding': 'none',
+        'metadata': metadata
+    }
+
+    with open(object_json, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    print(f"Function saved (v1): {object_json}")
+    print(f"Hash: {hash_value}")
+
+
+def mapping_save_v1(func_hash: str, lang: str, docstring: str,
+                   name_mapping: Dict[str, str], alias_mapping: Dict[str, str],
+                   comment: str = "") -> str:
+    """
+    Save language mapping to ouverture directory using schema v1.
+
+    Creates the mapping directory and mapping.json file:
+    - Directory: $OUVERTURE_DIRECTORY/objects/XX/YYYYYY.../lang/ZZ/WWWWW.../
+    - File: $OUVERTURE_DIRECTORY/objects/XX/YYYYYY.../lang/ZZ/WWWWW.../mapping.json
+
+    The mapping is content-addressed, enabling deduplication.
+
+    Args:
+        func_hash: Function hash (64-character hex)
+        lang: Language code (e.g., "eng", "fra")
+        docstring: Function docstring for this language
+        name_mapping: Normalized name -> original name mapping
+        alias_mapping: Ouverture function hash -> alias mapping
+        comment: Optional comment explaining this mapping variant
+
+    Returns:
+        Mapping hash (64-character hex)
+    """
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+
+    # Compute mapping hash
+    mapping_hash = mapping_compute_hash(docstring, name_mapping, alias_mapping, comment)
+
+    # Create mapping directory: objects/XX/YYYYYY.../lang/ZZ/WWWWW.../
+    func_dir = objects_dir / func_hash[:2] / func_hash[2:]
+    mapping_dir = func_dir / lang / mapping_hash[:2] / mapping_hash[2:]
+    mapping_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create mapping.json
+    mapping_json = mapping_dir / 'mapping.json'
+
+    data = {
+        'docstring': docstring,
+        'name_mapping': name_mapping,
+        'alias_mapping': alias_mapping,
+        'comment': comment
+    }
+
+    with open(mapping_json, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    print(f"Mapping saved (v1): {mapping_json}")
+    print(f"Language: {lang}")
+    print(f"Mapping hash: {mapping_hash}")
+
+    return mapping_hash
+
+
+def function_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
+                  name_mapping: Dict[str, str], alias_mapping: Dict[str, str], comment: str = ""):
+    """
+    Save function to ouverture directory using schema v1 (current default).
+
+    This is the main entry point for saving functions. It uses schema v1 format.
+
+    Args:
+        hash_value: Function hash (64-character hex)
+        lang: Language code (e.g., "eng", "fra")
+        normalized_code: Normalized code with docstring
+        docstring: Function docstring for this language
+        name_mapping: Normalized name -> original name mapping
+        alias_mapping: Ouverture function hash -> alias mapping
+        comment: Optional comment explaining this mapping variant
+    """
+    # Create metadata
+    metadata = metadata_create()
+
+    # Save function (object.json)
+    function_save_v1(hash_value, normalized_code, metadata)
+
+    # Save mapping (mapping.json)
+    mapping_save_v1(hash_value, lang, docstring, name_mapping, alias_mapping, comment)
 
 
 def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_mapping: Dict[str, str]) -> str:
