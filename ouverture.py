@@ -769,9 +769,13 @@ def docstring_replace(code: str, new_docstring: str) -> str:
     return ast.unparse(tree)
 
 
-def function_load(hash_value: str, lang: str) -> Tuple[str, Dict[str, str], Dict[str, str], str]:
+def function_load_v0(hash_value: str, lang: str) -> Tuple[str, Dict[str, str], Dict[str, str], str]:
     """
-    Load a function from the ouverture pool.
+    Load a function from the ouverture pool using schema v0.
+
+    This function is kept for backward compatibility with v0 format.
+    New code should use function_load() which dispatches to v0 or v1.
+
     Returns (normalized_code, name_mapping, alias_mapping, docstring)
     """
     # Build file path using configurable ouverture directory
@@ -807,6 +811,204 @@ def function_load(hash_value: str, lang: str) -> Tuple[str, Dict[str, str], Dict
     docstring = data.get('docstrings', {}).get(lang, '')
 
     return normalized_code, name_mapping, alias_mapping, docstring
+
+
+def function_load_v1(hash_value: str) -> Dict[str, any]:
+    """
+    Load function from ouverture directory using schema v1.
+
+    Loads only the object.json file (no language-specific data).
+
+    Args:
+        hash_value: Function hash (64-character hex)
+
+    Returns:
+        Dictionary with schema_version, hash, hash_algorithm, normalized_code, encoding, metadata
+    """
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+
+    # Build path: objects/sha256/XX/YYYYYY.../object.json
+    func_dir = objects_dir / 'sha256' / hash_value[:2] / hash_value[2:]
+    object_json = func_dir / 'object.json'
+
+    # Check if file exists
+    if not object_json.exists():
+        print(f"Error: Function not found (v1): {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Load the JSON data
+    try:
+        with open(object_json, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"Error: Failed to parse object.json: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    return data
+
+
+def mappings_list_v1(func_hash: str, lang: str) -> list:
+    """
+    List all mapping variants for a given function and language.
+
+    Scans the language directory and returns all available mappings.
+
+    Args:
+        func_hash: Function hash (64-character hex)
+        lang: Language code (e.g., "eng", "fra")
+
+    Returns:
+        List of (mapping_hash, comment) tuples
+    """
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+
+    # Build path: objects/sha256/XX/YYYYYY.../lang/
+    func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    lang_dir = func_dir / lang
+
+    # Check if language directory exists
+    if not lang_dir.exists():
+        return []
+
+    # Scan for mapping directories: lang/sha256/ZZ/WWWW.../mapping.json
+    mappings = []
+    sha256_dir = lang_dir / 'sha256'
+    if not sha256_dir.exists():
+        return []
+
+    # Iterate through hash prefix directories (ZZ/)
+    for hash_prefix_dir in sha256_dir.iterdir():
+        if not hash_prefix_dir.is_dir():
+            continue
+
+        # Iterate through full hash directories (WWWW.../)
+        for mapping_hash_dir in hash_prefix_dir.iterdir():
+            if not mapping_hash_dir.is_dir():
+                continue
+
+            # Check if mapping.json exists
+            mapping_json = mapping_hash_dir / 'mapping.json'
+            if not mapping_json.exists():
+                continue
+
+            # Reconstruct mapping hash from path
+            mapping_hash = hash_prefix_dir.name + mapping_hash_dir.name
+
+            # Load mapping to get comment
+            try:
+                with open(mapping_json, 'r', encoding='utf-8') as f:
+                    mapping_data = json.load(f)
+                comment = mapping_data.get('comment', '')
+                mappings.append((mapping_hash, comment))
+            except (json.JSONDecodeError, IOError):
+                # Skip invalid mapping files
+                continue
+
+    return mappings
+
+
+def mapping_load_v1(func_hash: str, lang: str, mapping_hash: str) -> Tuple[str, Dict[str, str], Dict[str, str], str]:
+    """
+    Load a specific language mapping using schema v1.
+
+    Args:
+        func_hash: Function hash (64-character hex)
+        lang: Language code (e.g., "eng", "fra")
+        mapping_hash: Mapping hash (64-character hex)
+
+    Returns:
+        Tuple of (docstring, name_mapping, alias_mapping, comment)
+    """
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+
+    # Build path: objects/sha256/XX/Y.../lang/sha256/ZZ/W.../mapping.json
+    func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    mapping_dir = func_dir / lang / 'sha256' / mapping_hash[:2] / mapping_hash[2:]
+    mapping_json = mapping_dir / 'mapping.json'
+
+    # Check if file exists
+    if not mapping_json.exists():
+        print(f"Error: Mapping not found: {func_hash}@{lang} (mapping hash: {mapping_hash})", file=sys.stderr)
+        sys.exit(1)
+
+    # Load the JSON data
+    try:
+        with open(mapping_json, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"Error: Failed to parse mapping.json: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    docstring = data.get('docstring', '')
+    name_mapping = data.get('name_mapping', {})
+    alias_mapping = data.get('alias_mapping', {})
+    comment = data.get('comment', '')
+
+    return docstring, name_mapping, alias_mapping, comment
+
+
+def function_load(hash_value: str, lang: str, mapping_hash: str = None) -> Tuple[str, Dict[str, str], Dict[str, str], str]:
+    """
+    Load a function from the ouverture pool (dispatch to v0 or v1).
+
+    Detects the schema version and routes to the appropriate loader.
+
+    Args:
+        hash_value: Function hash (64-character hex)
+        lang: Language code (e.g., "eng", "fra")
+        mapping_hash: Optional mapping hash for v1 (64-character hex)
+
+    Returns:
+        Tuple of (normalized_code, name_mapping, alias_mapping, docstring)
+    """
+    # Detect schema version
+    version = schema_detect_version(hash_value)
+
+    if version is None:
+        print(f"Error: Function not found: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    if version == 0:
+        # Load v0 format (backward compatibility)
+        return function_load_v0(hash_value, lang)
+
+    elif version == 1:
+        # Load v1 format
+        # Load object.json
+        func_data = function_load_v1(hash_value)
+        normalized_code = func_data['normalized_code']
+
+        # Get available mappings
+        mappings = mappings_list_v1(hash_value, lang)
+
+        if len(mappings) == 0:
+            print(f"Error: No mappings found for language '{lang}'", file=sys.stderr)
+            sys.exit(1)
+
+        # Determine which mapping to load
+        if mapping_hash is not None:
+            # Explicit mapping requested
+            selected_hash = mapping_hash
+        elif len(mappings) == 1:
+            # Only one mapping available
+            selected_hash, _ = mappings[0]
+        else:
+            # Multiple mappings available - pick first alphabetically for now
+            # (Phase 5 will improve this with a selection menu)
+            mappings_sorted = sorted(mappings, key=lambda x: x[0])
+            selected_hash, _ = mappings_sorted[0]
+
+        # Load the mapping
+        docstring, name_mapping, alias_mapping, comment = mapping_load_v1(hash_value, lang, selected_hash)
+
+        return normalized_code, name_mapping, alias_mapping, docstring
+
+    else:
+        print(f"Error: Unsupported schema version: {version}", file=sys.stderr)
+        sys.exit(1)
 
 
 def function_get(hash_with_lang: str):

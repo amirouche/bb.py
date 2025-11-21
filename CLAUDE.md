@@ -181,14 +181,49 @@ $HOME/.local/ouverture/
 - Identical mappings across functions share same file
 - Returns: mapping hash for verification
 
-#### `function_save(hash_value, lang, normalized_code, docstring, name_mapping, alias_mapping, comment='')` (lines 588-611)
+#### `function_save(hash_value, lang, normalized_code, docstring, name_mapping, alias_mapping, comment='')` (lines 471-494)
 **Main entry point for saving functions** (Schema v1)
 - Wrapper that calls function_save_v1() + mapping_save_v1()
 - Creates metadata automatically using metadata_create()
 - Accepts optional comment parameter for mapping variant identification
 - **This is the default save function** - all new code uses v1 format
 
-#### `code_denormalize(normalized_code, name_mapping, alias_mapping)` (lines 614-679)
+#### `function_load_v0(hash_value, lang)` (lines 772-813)
+**Loads function from pool using schema v0** (Legacy)
+- Kept for backward compatibility with v0 format
+- Reads single JSON file: `$OUVERTURE_DIRECTORY/objects/XX/YYYYYY.json`
+- Returns: (normalized_code, name_mapping, alias_mapping, docstring)
+- **Note**: Use function_load() which auto-detects v0/v1
+
+#### `function_load_v1(hash_value)` (lines 816-848)
+**Loads function from pool using schema v1**
+- Reads object.json: `$OUVERTURE_DIRECTORY/objects/sha256/XX/YYYYYY.../object.json`
+- Returns: Dictionary with schema_version, hash, hash_algorithm, normalized_code, encoding, metadata
+- Does NOT load language-specific data (use mapping functions for that)
+
+#### `mappings_list_v1(func_hash, lang)` (lines 851-909)
+**Lists all mapping variants for a language** (Schema v1)
+- Scans language directory: `$OUVERTURE_DIRECTORY/objects/sha256/XX/Y.../lang/`
+- Returns: List of (mapping_hash, comment) tuples
+- Used to discover available mapping variants
+- Returns empty list if language doesn't exist
+
+#### `mapping_load_v1(func_hash, lang, mapping_hash)` (lines 912-950)
+**Loads specific language mapping** (Schema v1)
+- Reads mapping.json: `$OUVERTURE_DIRECTORY/objects/sha256/XX/Y.../lang/sha256/ZZ/W.../mapping.json`
+- Returns: Tuple of (docstring, name_mapping, alias_mapping, comment)
+- Content-addressed storage enables deduplication
+
+#### `function_load(hash_value, lang, mapping_hash=None)` (lines 953-1011)
+**Main entry point for loading functions** (Dispatches to v0 or v1)
+- Detects schema version using schema_detect_version()
+- If v0: Routes to function_load_v0() for backward compatibility
+- If v1: Routes to function_load_v1() + mapping_load_v1()
+- If multiple v1 mappings exist and no mapping_hash specified, picks first alphabetically
+- Returns: Tuple of (normalized_code, name_mapping, alias_mapping, docstring)
+- **This is the default load function** - auto-detects format
+
+#### `code_denormalize(normalized_code, name_mapping, alias_mapping)` (lines 497-679)
 **Reconstructs original-looking code**
 - Reverses variable renaming: `_ouverture_v_X → original_name`
 - Rewrites imports: `from ouverture.pool import X` → `from ouverture.pool import X as alias` (restores alias)

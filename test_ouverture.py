@@ -942,7 +942,6 @@ def _ouverture_v_0(_ouverture_v_1, _ouverture_v_2):
 
 # End-to-end integration tests
 
-@pytest.mark.xfail(reason="function_load() doesn't support v1 format yet (Phase 3)")
 def test_end_to_end_roundtrip_simple_function(mock_ouverture_dir):
     """Test add then get produces equivalent code"""
     # Create test file
@@ -985,7 +984,6 @@ def test_end_to_end_roundtrip_simple_function(mock_ouverture_dir):
     assert len(orig_func.args.args) == len(retr_func.args.args)
 
 
-@pytest.mark.xfail(reason="function_load() doesn't support v1 format yet (Phase 3)")
 def test_end_to_end_multilingual_same_hash(mock_ouverture_dir):
     """Test that equivalent functions in different languages produce same hash"""
     # English version
@@ -1428,3 +1426,202 @@ def test_v1_write_integration_full_structure(mock_ouverture_dir):
     # Check mapping files exist - with sha256 in mapping paths
     assert (func_dir / 'eng' / 'sha256' / eng_hash[:2] / eng_hash[2:] / 'mapping.json').exists()
     assert (func_dir / 'fra' / 'sha256' / fra_hash[:2] / fra_hash[2:] / 'mapping.json').exists()
+
+
+# ============================================================================
+# Tests for Phase 3: V1 Read Path (Schema v1)
+# ============================================================================
+
+def test_function_load_v1_loads_object_json(mock_ouverture_dir):
+    """Test that function_load_v1 loads object.json correctly"""
+    func_hash = "test5678" + "0" * 56
+    normalized_code = "def _ouverture_v_0(_ouverture_v_1):\n    return _ouverture_v_1 * 2"
+    metadata = {
+        'created': '2025-01-01T00:00:00Z',
+        'author': 'testuser',
+        'tags': ['test'],
+        'dependencies': []
+    }
+
+    # Save function first
+    ouverture.function_save_v1(func_hash, normalized_code, metadata)
+
+    # Load it back
+    loaded_data = ouverture.function_load_v1(func_hash)
+
+    # Verify data
+    assert loaded_data['schema_version'] == 1
+    assert loaded_data['hash'] == func_hash
+    assert loaded_data['hash_algorithm'] == 'sha256'
+    assert loaded_data['normalized_code'] == normalized_code
+    assert loaded_data['encoding'] == 'none'
+    assert loaded_data['metadata'] == metadata
+
+
+def test_mappings_list_v1_single_mapping(mock_ouverture_dir):
+    """Test that mappings_list_v1 returns single mapping correctly"""
+    func_hash = "list1234" + "0" * 56
+    lang = "eng"
+    docstring = "Test function"
+    name_mapping = {"_ouverture_v_0": "test_func"}
+    alias_mapping = {}
+    comment = "Test variant"
+
+    # Create function and mapping
+    ouverture.function_save_v1(func_hash, "def _ouverture_v_0(): pass", ouverture.metadata_create())
+    ouverture.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
+
+    # List mappings
+    mappings = ouverture.mappings_list_v1(func_hash, lang)
+
+    # Should have exactly one mapping
+    assert len(mappings) == 1
+    mapping_hash, mapping_comment = mappings[0]
+    assert len(mapping_hash) == 64
+    assert mapping_comment == comment
+
+
+def test_mappings_list_v1_multiple_mappings(mock_ouverture_dir):
+    """Test that mappings_list_v1 returns multiple mappings"""
+    func_hash = "list5678" + "0" * 56
+    lang = "eng"
+
+    # Create function
+    ouverture.function_save_v1(func_hash, "def _ouverture_v_0(): pass", ouverture.metadata_create())
+
+    # Add two mappings with different comments
+    ouverture.mapping_save_v1(func_hash, lang, "Doc 1", {"_ouverture_v_0": "func1"}, {}, "Formal")
+    ouverture.mapping_save_v1(func_hash, lang, "Doc 2", {"_ouverture_v_0": "func2"}, {}, "Casual")
+
+    # List mappings
+    mappings = ouverture.mappings_list_v1(func_hash, lang)
+
+    # Should have two mappings
+    assert len(mappings) == 2
+
+    # Extract comments
+    comments = [comment for _, comment in mappings]
+    assert "Formal" in comments
+    assert "Casual" in comments
+
+
+def test_mappings_list_v1_no_mappings(mock_ouverture_dir):
+    """Test that mappings_list_v1 returns empty list when no mappings exist"""
+    func_hash = "nomaps12" + "0" * 56
+
+    # Create function without any mappings
+    ouverture.function_save_v1(func_hash, "def _ouverture_v_0(): pass", ouverture.metadata_create())
+
+    # List mappings for a language that doesn't exist
+    mappings = ouverture.mappings_list_v1(func_hash, "fra")
+
+    # Should be empty
+    assert len(mappings) == 0
+
+
+def test_mapping_load_v1_loads_correctly(mock_ouverture_dir):
+    """Test that mapping_load_v1 loads a specific mapping"""
+    func_hash = "load1234" + "0" * 56
+    lang = "eng"
+    docstring = "Test docstring"
+    name_mapping = {"_ouverture_v_0": "test_func", "_ouverture_v_1": "param"}
+    alias_mapping = {"abc123": "helper"}
+    comment = "Test variant"
+
+    # Create function and mapping
+    ouverture.function_save_v1(func_hash, "def _ouverture_v_0(): pass", ouverture.metadata_create())
+    mapping_hash = ouverture.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
+
+    # Load the mapping
+    loaded_doc, loaded_name, loaded_alias, loaded_comment = ouverture.mapping_load_v1(func_hash, lang, mapping_hash)
+
+    # Verify data
+    assert loaded_doc == docstring
+    assert loaded_name == name_mapping
+    assert loaded_alias == alias_mapping
+    assert loaded_comment == comment
+
+
+def test_function_load_v1_integration(mock_ouverture_dir):
+    """Integration test: write v1, read v1, verify correctness"""
+    func_hash = "integ123" + "0" * 56
+    lang = "eng"
+    normalized_code = "def _ouverture_v_0(_ouverture_v_1):\n    return _ouverture_v_1 + 1"
+    docstring = "Increment by one"
+    name_mapping = {"_ouverture_v_0": "increment", "_ouverture_v_1": "value"}
+    alias_mapping = {}
+    comment = "Simple increment"
+
+    # Write v1 format
+    ouverture.function_save(func_hash, lang, normalized_code, docstring, name_mapping, alias_mapping, comment)
+
+    # Read back using dispatch (should detect v1)
+    loaded_code, loaded_name, loaded_alias, loaded_doc = ouverture.function_load(func_hash, lang)
+
+    # Verify correctness
+    assert loaded_code == normalized_code
+    assert loaded_name == name_mapping
+    assert loaded_alias == alias_mapping
+    assert loaded_doc == docstring
+
+
+def test_function_load_v0_backward_compatibility(mock_ouverture_dir):
+    """Integration test: read v0 file, verify backward compatibility"""
+    func_hash = "v0compat" + "0" * 56
+    lang = "eng"
+    normalized_code = "def _ouverture_v_0(): return 42"
+    docstring = "Return 42"
+    name_mapping = {"_ouverture_v_0": "get_answer"}
+    alias_mapping = {}
+
+    # Write v0 format explicitly
+    ouverture.function_save_v0(func_hash, lang, normalized_code, docstring, name_mapping, alias_mapping)
+
+    # Read back using dispatch (should detect v0)
+    loaded_code, loaded_name, loaded_alias, loaded_doc = ouverture.function_load(func_hash, lang)
+
+    # Verify correctness
+    assert loaded_code == normalized_code
+    assert loaded_name == name_mapping
+    assert loaded_alias == alias_mapping
+    assert loaded_doc == docstring
+
+
+def test_function_load_dispatch_multiple_mappings(mock_ouverture_dir):
+    """Test that dispatch with multiple mappings defaults to first one"""
+    func_hash = "multi123" + "0" * 56
+    lang = "eng"
+    normalized_code = "def _ouverture_v_0(): pass"
+
+    # Create function with two mappings
+    ouverture.function_save_v1(func_hash, normalized_code, ouverture.metadata_create())
+    hash1 = ouverture.mapping_save_v1(func_hash, lang, "Doc 1", {"_ouverture_v_0": "func1"}, {}, "First")
+    hash2 = ouverture.mapping_save_v1(func_hash, lang, "Doc 2", {"_ouverture_v_0": "func2"}, {}, "Second")
+
+    # Load without specifying mapping_hash (should return first alphabetically)
+    loaded_code, loaded_name, loaded_alias, loaded_doc = ouverture.function_load(func_hash, lang)
+
+    # Should load one of the mappings (implementation will pick first alphabetically)
+    assert loaded_code == normalized_code
+    assert loaded_name in [{"_ouverture_v_0": "func1"}, {"_ouverture_v_0": "func2"}]
+    assert loaded_doc in ["Doc 1", "Doc 2"]
+
+
+def test_function_load_dispatch_explicit_mapping(mock_ouverture_dir):
+    """Test that dispatch can load specific mapping by hash"""
+    func_hash = "explicit1" + "0" * 56
+    lang = "eng"
+    normalized_code = "def _ouverture_v_0(): pass"
+
+    # Create function with two mappings
+    ouverture.function_save_v1(func_hash, normalized_code, ouverture.metadata_create())
+    hash1 = ouverture.mapping_save_v1(func_hash, lang, "Doc 1", {"_ouverture_v_0": "func1"}, {}, "First")
+    hash2 = ouverture.mapping_save_v1(func_hash, lang, "Doc 2", {"_ouverture_v_0": "func2"}, {}, "Second")
+
+    # Load with specific mapping_hash
+    loaded_code, loaded_name, loaded_alias, loaded_doc = ouverture.function_load(func_hash, lang, mapping_hash=hash2)
+
+    # Should load the second mapping
+    assert loaded_code == normalized_code
+    assert loaded_name == {"_ouverture_v_0": "func2"}
+    assert loaded_doc == "Doc 2"
