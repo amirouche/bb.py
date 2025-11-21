@@ -27,7 +27,7 @@ def normalize_code_for_test(code: str) -> str:
 
     The function:
     1. Parses code into AST
-    2. Clears all line/column information recursively
+    2. Clears all line/column information recursively (using ouverture.ast_clear_locations)
     3. Fixes missing locations
     4. Unparses back to string
 
@@ -40,18 +40,7 @@ def normalize_code_for_test(code: str) -> str:
         # Returns: "def _ouverture_v_0():\\n    return 42"
     """
     tree = ast.parse(code)
-
-    # Clear all line and column information recursively
-    for node in ast.walk(tree):
-        if hasattr(node, 'lineno'):
-            node.lineno = None
-        if hasattr(node, 'col_offset'):
-            node.col_offset = None
-        if hasattr(node, 'end_lineno'):
-            node.end_lineno = None
-        if hasattr(node, 'end_col_offset'):
-            node.end_col_offset = None
-
+    ouverture.ast_clear_locations(tree)
     ast.fix_missing_locations(tree)
     return ast.unparse(tree)
 
