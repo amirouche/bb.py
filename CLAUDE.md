@@ -19,6 +19,8 @@ Functions with identical logic but different naming (e.g., English vs French var
 2. **Hash on logic, not names**: Docstrings excluded from hash computation to enable multilingual support
 3. **Bidirectional mapping**: Original names preserved for reconstruction in target language
 4. **Content-addressed storage**: Functions stored by hash in `.ouverture/objects/XX/YYYYYY.json`
+5. **Single-file architecture**: All code resides in `ouverture.py` - no modularization into separate packages. This keeps the tool simple, self-contained, and easy to distribute as a single script.
+6. **Native language debugging**: Tracebacks and debugger interactions show variable names in the original human language, not normalized forms
 
 ### Data Flow
 
@@ -117,19 +119,97 @@ hello-claude/
 
 ### CLI Commands
 
-#### `add` command
-```bash
-python3 ouverture.py add path/to/file.py@lang
-```
-- Parses file, normalizes AST, computes hash, saves to pool
-- Language code must be 3 characters (ISO 639-3)
+**Target CLI interface** (some commands not yet implemented):
 
-#### `get` command
+#### Configuration and Identity
 ```bash
-python3 ouverture.py get HASH@lang
+ouverture.py init                          # Initialize .ouverture/ directory and config
+ouverture.py whoami username [USERNAME]    # Get/set username
+ouverture.py whoami email [EMAIL]          # Get/set email
+ouverture.py whoami public-key [URL]       # Get/set public key URL
+ouverture.py whoami language [LANG...]     # Get/set preferred languages
 ```
-- Retrieves function from pool, denormalizes to target language
-- Prints reconstructed code to stdout
+
+#### Remote Repository Management
+```bash
+ouverture.py remote add NAME URL                    # Add HTTP/HTTPS remote
+ouverture.py remote add NAME file:///path/to/db     # Add SQLite file remote
+ouverture.py remote remove NAME                     # Remove remote
+ouverture.py remote pull NAME                       # Fetch functions from remote
+ouverture.py remote push NAME                       # Publish functions to remote
+```
+
+#### Function Operations
+```bash
+ouverture.py add FILENAME.py@LANG          # Add function to local pool
+ouverture.py get HASH[@LANG]               # Retrieve function (optionally in specific language)
+ouverture.py translate HASH@LANG LANG      # Add translation for existing function
+ouverture.py review HASH                   # Review function details and metadata
+ouverture.py run HASH@lang                 # Execute function interactively
+ouverture.py run HASH@lang --debug         # Execute with debugger (native language variables)
+```
+
+#### Discovery
+```bash
+ouverture.py log [NAME | URL]              # List available functions
+ouverture.py search [NAME | URL] [QUERY...]  # Search functions by query
+```
+
+**Currently implemented**:
+- `add` command: Parses file, normalizes AST, computes hash, saves to local pool
+- `get` command: Retrieves function from local pool, denormalizes to target language
+
+**Language codes**: Must be 3 characters (ISO 639-3: eng, fra, spa, etc.)
+
+## Native Language Debugging
+
+### Traceback Localization
+
+When executing functions from the pool, exceptions will show variable names in the original human language rather than normalized forms.
+
+**Example**:
+```python
+# Original French function
+def calculer_moyenne(nombres):
+    total = sum(nombres)
+    return total / len(nombres)
+
+# If executed and error occurs, traceback shows:
+# NameError: name 'nombres' is not defined
+# NOT: NameError: name '_ouverture_v_1' is not defined
+```
+
+**Implementation approach**:
+- Intercept exceptions during execution
+- Map `_ouverture_v_X` back to original names using stored mappings
+- Rewrite traceback with native language variable names
+- Preserve line numbers from original source
+- Show both normalized and native versions for debugging
+
+### Interactive Debugger Integration
+
+When using `ouverture.py run HASH@lang --debug`:
+- Variables displayed with native language names
+- Can set breakpoints using original function/variable names
+- Step through code with native language context
+- Inspect values using familiar names (e.g., `print(nombres)` not `print(_ouverture_v_1)`)
+
+**Integration with pdb**:
+```python
+# Debugging French function
+(Pdb) l
+  1  def calculer_moyenne(nombres):
+  2      total = sum(nombres)
+  3  ->  return total / len(nombres)
+
+(Pdb) p nombres
+[1, 2, 3, 4, 5]
+
+(Pdb) p total
+15
+```
+
+This makes debugging natural for developers working in their native language.
 
 ## Development Conventions
 

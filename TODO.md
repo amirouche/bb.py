@@ -4,42 +4,85 @@ This document tracks actionable items for Ouverture development.
 
 Context sources:
 - `FEATURES_LIMITATIONS.md` - Current capabilities and known limitations
-- `CLAUDE.md` - Technical architecture and development conventions
+- `CLAUDE.md` - Technical architecture and development conventions (single-file design)
 - `README.md` - Project vision and philosophy
 
-## Priority 1: Critical Bugs
+## Priority 1: User Identity and Configuration
 
-- Fix import rewriting typo: change 'couverture' to 'ouverture' in ouverture.py:205
+### Configuration System
+- Implement `ouverture.py init` command to create `.ouverture/` config
+- Create `~/.ouverture/config.yaml` for user settings
+- Implement `ouverture.py whoami username [USERNAME]` to set/get username
+- Implement `ouverture.py whoami email [EMAIL]` to set/get email
+- Implement `ouverture.py whoami public-key [URL]` to set/get public key location
+- Implement `ouverture.py whoami language [LANG...]` to set/get preferred languages
+- Store user identity in config for attribution
 
-## Priority 2: Code Quality (Refactoring)
+## Priority 2: Remote Repository System
 
-### Phase 1: Modularization (Week 1-2)
-- Extract `ASTNormalizer` class to `ouverture/ast_normalization.py`
-- Extract name mapping functions to `ouverture/name_mapping.py`
-- Extract import handling to `ouverture/import_handling.py`
-- Extract hash computation to `ouverture/hash_computation.py`
-- Extract storage functions to `ouverture/storage.py`
-- Extract denormalization to `ouverture/denormalization.py`
-- Extract CLI to `ouverture/cli.py`
-- Create `ouverture/config.py` for constants
-- Create `ouverture/exceptions.py` for custom exceptions
-- Create `ouverture/__init__.py` with public API exports
+### Remote Management
+- Implement `ouverture.py remote add NAME URL` for HTTP/HTTPS remotes
+- Implement `ouverture.py remote add NAME file:///path/to/win.sqlite` for SQLite remotes
+- Implement `ouverture.py remote remove NAME` to remove remotes
+- Implement `ouverture.py remote pull NAME` to fetch functions from remote
+- Implement `ouverture.py remote push NAME` to publish functions to remote
+- Store remote configuration in `.ouverture/config.yaml`
+- Support multiple remotes with priority/fallback
 
-### Phase 2: Packaging (Week 3-4)
+### Remote Storage Backends
+- Design SQLite schema for local/file-based remotes
+- Implement HTTP API client for HTTP/HTTPS remotes
+- Add authentication/authorization for push operations
+- Implement conflict resolution for remote operations
+- Add caching layer for remote fetches
+
+## Priority 3: Enhanced CLI Commands
+
+### Function Discovery
+- Implement `ouverture.py log [NAME | URL]` to show available functions
+- Implement `ouverture.py search [NAME | URL] [QUERY...]` to search functions
+- Add filtering by language, author, date
+- Display function statistics (downloads, ratings if available)
+
+### Function Operations
+- Implement `ouverture.py translate HASH@LANG LANG` to add translation to existing function
+- Implement `ouverture.py review HASH` to review function details
+- Implement `ouverture.py run HASH@lang` to execute function interactively
+- Keep existing `ouverture.py add FILENAME.py@LANG` command
+- Keep existing `ouverture.py get HASH` command (enhance to accept `HASH@LANG`)
+
+## Priority 4: Native Language Debugging
+
+### Traceback Localization
+- Implement traceback rewriting to show native language variable names
+- When exception occurs, map `_ouverture_v_X` back to original names
+- Show both normalized and native language versions of traceback
+- Preserve line numbers from original source
+
+### Interactive Debugger Integration
+- Integrate with Python debugger (pdb)
+- Show variables in native language during debugging
+- Allow setting breakpoints using native language names
+- Implement `ouverture.py run HASH@lang --debug` for interactive debugging
+- Support stepping through code with native language context
+
+## Priority 5: Code Quality
+
+### Documentation
+- Create `docs/API.md` with Python API documentation
+- Create `docs/INTERNALS.md` with architecture guide
+- Create `docs/CONTRIBUTING.md` for contributors
+- Add docstrings to all public functions
+- Document the single-file architecture philosophy in CLAUDE.md
+
+### Packaging
 - Create `pyproject.toml` for modern Python packaging
 - Add entry point: `ouverture` command
 - Test `pip install -e .` works correctly
 - Add mypy type checking configuration
 - Add ruff linting configuration
 
-### Phase 3: Documentation (Week 5-6)
-- Create `docs/API.md` with Python API documentation
-- Create `docs/INTERNALS.md` with architecture guide
-- Create `docs/CONTRIBUTING.md` for contributors
-- Add docstrings to all public functions
-- Deprecate `ouverture.py` as standalone script (keep as wrapper)
-
-## Priority 3: Testing Improvements
+## Priority 6: Testing Improvements
 
 ### Property-Based Testing
 - Implement normalization idempotence tests with Hypothesis
@@ -67,7 +110,7 @@ Context sources:
 - Mark known issues with `@pytest.mark.xfail`
 - Add regression test suite for bug fixes
 
-## Priority 4: Semantic Understanding
+## Priority 7: Semantic Understanding
 
 ### Short Term (6 months)
 - Implement basic pattern matching for top 10 equivalent patterns (sum() vs loop, etc.)
@@ -87,7 +130,7 @@ Context sources:
 - Implement hybrid syntactic → pattern → execution → ML pipeline
 - Add cross-language semantic matching (Python ≡ JavaScript)
 
-## Priority 5: Core Features
+## Priority 8: Core Features
 
 ### Language Support
 - Add support for async functions (ast.AsyncFunctionDef)
@@ -113,7 +156,7 @@ Context sources:
 - Add `--version` flag
 - Improve error messages with suggestions
 
-## Priority 6: Infrastructure (Microlibrary Vision)
+## Priority 9: Infrastructure (Microlibrary Vision)
 
 ### Phase 1: Centralized Registry (Months 4-6)
 - Design HTTP API for function registry
@@ -148,7 +191,7 @@ Context sources:
 - Implement registry priority and fallback
 - Add semantic search with ML embeddings
 
-## Priority 7: Research
+## Priority 10: Research
 
 ### Experiments to Run
 - Benchmark Top 100 equivalent patterns in real Python codebases
@@ -167,7 +210,7 @@ Context sources:
 - Write paper on impact of native-language programming on comprehension
 - Write paper on multilingual code sharing infrastructure
 
-## Priority 8: Documentation
+## Priority 11: Documentation
 
 ### User Documentation
 - Document workarounds for unsupported features (classes, globals, etc.)
@@ -183,7 +226,7 @@ Context sources:
 - Document plugin system design (future)
 - Create architecture decision records (ADRs)
 
-## Priority 9: Cross-Language Support
+## Priority 12: Cross-Language Support
 
 ### JavaScript Support
 - Implement JavaScript AST normalization
@@ -202,7 +245,7 @@ Context sources:
 - Map Python, JavaScript, Rust to IR
 - Compute hash on IR (true cross-language equivalence)
 
-## Priority 10: Production Readiness
+## Priority 13: Production Readiness
 
 ### Security
 - Implement static analysis for dangerous patterns (eval, exec, os.system)
@@ -227,8 +270,3 @@ Context sources:
 - Implement logging with appropriate levels
 - Add health check endpoints for registry
 - Create dashboard for pool statistics
-
-## Completed
-
-- ✅ Consolidate TODO.md with actionables from FEATURES_LIMITATIONS.md and development analysis
-- ✅ Organize priorities into 10 levels with clear timelines
