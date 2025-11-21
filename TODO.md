@@ -1,10 +1,11 @@
 # TODO
 
-This document tracks actionable items for Ouverture development. See analysis documents for detailed context:
-- `SEMANTIC_UNDERSTANDING.md` - Semantic equivalence strategies
-- `REFACTORING.md` - Code organization and modularization
-- `TESTING.md` - Advanced testing techniques
-- `MICROLIBRARY.md` - Infrastructure vision and roadmap
+This document tracks actionable items for Ouverture development.
+
+Context sources:
+- `FEATURES_LIMITATIONS.md` - Current capabilities and known limitations
+- `CLAUDE.md` - Technical architecture and development conventions
+- `README.md` - Project vision and philosophy
 
 ## Priority 1: Critical Bugs
 
