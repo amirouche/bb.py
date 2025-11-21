@@ -323,11 +323,25 @@ def compute_hash(code: str) -> str:
     return hashlib.sha256(code.encode('utf-8')).hexdigest()
 
 
+def get_ouverture_directory() -> Path:
+    """
+    Get the ouverture directory from environment variable or default to '$HOME/.local/ouverture/'.
+    Environment variable: OUVERTURE_DIRECTORY
+    """
+    env_dir = os.environ.get('OUVERTURE_DIRECTORY')
+    if env_dir:
+        return Path(env_dir)
+    # Default to $HOME/.local/ouverture/
+    home = os.environ.get('HOME', os.path.expanduser('~'))
+    return Path(home) / '.local' / 'ouverture'
+
+
 def save_function(hash_value: str, lang: str, normalized_code: str, docstring: str,
                   name_mapping: Dict[str, str], alias_mapping: Dict[str, str]):
     """Save the function to the ouverture objects directory"""
-    # Create directory structure: .ouverture/objects/XX/
-    objects_dir = Path('.ouverture/objects')
+    # Create directory structure: OUVERTURE_DIR/objects/XX/
+    ouverture_dir = get_ouverture_directory()
+    objects_dir = ouverture_dir / 'objects'
     hash_dir = objects_dir / hash_value[:2]
     hash_dir.mkdir(parents=True, exist_ok=True)
 
@@ -513,27 +527,14 @@ def replace_docstring(code: str, new_docstring: str) -> str:
     return ast.unparse(tree)
 
 
-def get_function(hash_with_lang: str):
-    """Get a function from the ouverture pool"""
-    # Parse the hash and language
-    if '@' not in hash_with_lang:
-        print("Error: Missing language suffix. Use format: HASH@lang", file=sys.stderr)
-        sys.exit(1)
-
-    hash_value, lang = hash_with_lang.rsplit('@', 1)
-
-    # Validate language code (should be 3 characters, ISO 639-3)
-    if len(lang) != 3:
-        print(f"Error: Language code must be 3 characters (ISO 639-3). Got: {lang}", file=sys.stderr)
-        sys.exit(1)
-
-    # Validate hash format (should be 64 hex characters for SHA256)
-    if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value.lower()):
-        print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}", file=sys.stderr)
-        sys.exit(1)
-
-    # Build file path: .ouverture/objects/XX/YYYYYY.json
-    objects_dir = Path('.ouverture/objects')
+def load_function(hash_value: str, lang: str) -> Tuple[str, Dict[str, str], Dict[str, str], str]:
+    """
+    Load a function from the ouverture pool.
+    Returns (normalized_code, name_mapping, alias_mapping, docstring)
+    """
+    # Build file path using configurable ouverture directory
+    ouverture_dir = get_ouverture_directory()
+    objects_dir = ouverture_dir / 'objects'
     hash_dir = objects_dir / hash_value[:2]
     json_path = hash_dir / f'{hash_value[2:]}.json'
 
@@ -562,6 +563,31 @@ def get_function(hash_with_lang: str):
     name_mapping = data['name_mappings'][lang]
     alias_mapping = data.get('alias_mappings', {}).get(lang, {})
     docstring = data.get('docstrings', {}).get(lang, '')
+
+    return normalized_code, name_mapping, alias_mapping, docstring
+
+
+def get_function(hash_with_lang: str):
+    """Get a function from the ouverture pool"""
+    # Parse the hash and language
+    if '@' not in hash_with_lang:
+        print("Error: Missing language suffix. Use format: HASH@lang", file=sys.stderr)
+        sys.exit(1)
+
+    hash_value, lang = hash_with_lang.rsplit('@', 1)
+
+    # Validate language code (should be 3 characters, ISO 639-3)
+    if len(lang) != 3:
+        print(f"Error: Language code must be 3 characters (ISO 639-3). Got: {lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate hash format (should be 64 hex characters for SHA256)
+    if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value.lower()):
+        print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Load function data from pool
+    normalized_code, name_mapping, alias_mapping, docstring = load_function(hash_value, lang)
 
     # Replace the docstring with the language-specific one
     try:

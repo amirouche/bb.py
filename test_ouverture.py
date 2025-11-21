@@ -16,6 +16,19 @@ import pytest
 import ouverture
 
 
+@pytest.fixture
+def mock_ouverture_dir(tmp_path, monkeypatch):
+    """
+    Fixture to monkey patch get_ouverture_directory to return a temp directory.
+    This ensures tests work with pytest-xdist (parallel test runner).
+    """
+    def _get_temp_ouverture_dir():
+        return tmp_path / '.ouverture'
+
+    monkeypatch.setattr(ouverture, 'get_ouverture_directory', _get_temp_ouverture_dir)
+    return tmp_path
+
+
 # Tests for ASTNormalizer class
 
 def test_ast_normalizer_visit_name_with_mapping():
@@ -644,73 +657,58 @@ def test_compute_hash_different_code_different_hash():
 
 # Tests for save_function function
 
-def test_save_function_new_function(tmp_path):
+def test_save_function_new_function(mock_ouverture_dir):
     """Test saving a new function"""
-    # Change to temp directory
-    original_cwd = os.getcwd()
-    os.chdir(tmp_path)
+    hash_value = "a" * 64
+    lang = "eng"
+    normalized_code = "def _ouverture_v_0(): return 42"
+    docstring = "Test function"
+    name_mapping = {"_ouverture_v_0": "foo"}
+    alias_mapping = {}
 
-    try:
-        hash_value = "a" * 64
-        lang = "eng"
-        normalized_code = "def _ouverture_v_0(): return 42"
-        docstring = "Test function"
-        name_mapping = {"_ouverture_v_0": "foo"}
-        alias_mapping = {}
+    # Capture stdout
+    with patch('sys.stdout'):
+        ouverture.save_function(hash_value, lang, normalized_code,
+                               docstring, name_mapping, alias_mapping)
 
-        # Capture stdout
-        with patch('sys.stdout'):
-            ouverture.save_function(hash_value, lang, normalized_code,
-                                   docstring, name_mapping, alias_mapping)
+    # Verify file was created
+    json_path = mock_ouverture_dir / '.ouverture/objects/aa' / (('a' * 62) + '.json')
+    assert json_path.exists()
 
-        # Verify file was created
-        json_path = Path('.ouverture/objects/aa') / (('a' * 62) + '.json')
-        assert json_path.exists()
+    # Verify content
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
 
-        # Verify content
-        with open(json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-
-        assert data['hash'] == hash_value
-        assert data['normalized_code'] == normalized_code
-        assert data['docstrings']['eng'] == docstring
-        assert data['name_mappings']['eng'] == name_mapping
-
-    finally:
-        os.chdir(original_cwd)
+    assert data['hash'] == hash_value
+    assert data['normalized_code'] == normalized_code
+    assert data['docstrings']['eng'] == docstring
+    assert data['name_mappings']['eng'] == name_mapping
 
 
-def test_save_function_additional_language(tmp_path):
+def test_save_function_additional_language(mock_ouverture_dir):
     """Test adding another language to existing function"""
-    original_cwd = os.getcwd()
-    os.chdir(tmp_path)
+    hash_value = "b" * 64
+    normalized_code = "def _ouverture_v_0(): return 42"
 
-    try:
-        hash_value = "b" * 64
-        normalized_code = "def _ouverture_v_0(): return 42"
+    # Save English version
+    with patch('sys.stdout'):
+        ouverture.save_function(hash_value, "eng", normalized_code,
+                               "English doc", {"_ouverture_v_0": "foo"}, {})
 
-        # Save English version
-        with patch('sys.stdout'):
-            ouverture.save_function(hash_value, "eng", normalized_code,
-                                   "English doc", {"_ouverture_v_0": "foo"}, {})
+    # Save French version
+    with patch('sys.stdout'):
+        ouverture.save_function(hash_value, "fra", normalized_code,
+                               "French doc", {"_ouverture_v_0": "foo"}, {})
 
-        # Save French version
-        with patch('sys.stdout'):
-            ouverture.save_function(hash_value, "fra", normalized_code,
-                                   "French doc", {"_ouverture_v_0": "foo"}, {})
+    # Verify both languages are present
+    json_path = mock_ouverture_dir / '.ouverture/objects/bb' / (('b' * 62) + '.json')
+    with open(json_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
 
-        # Verify both languages are present
-        json_path = Path('.ouverture/objects/bb') / (('b' * 62) + '.json')
-        with open(json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-
-        assert 'eng' in data['docstrings']
-        assert 'fra' in data['docstrings']
-        assert data['docstrings']['eng'] == "English doc"
-        assert data['docstrings']['fra'] == "French doc"
-
-    finally:
-        os.chdir(original_cwd)
+    assert 'eng' in data['docstrings']
+    assert 'fra' in data['docstrings']
+    assert data['docstrings']['eng'] == "English doc"
+    assert data['docstrings']['fra'] == "French doc"
 
 
 # Tests for replace_docstring function
@@ -846,31 +844,25 @@ def test_add_function_syntax_error(tmp_path):
             ouverture.add_function(f"{test_file}@eng")
 
 
-def test_add_function_success(tmp_path):
+def test_add_function_success(mock_ouverture_dir):
     """Test successfully adding a function"""
-    original_cwd = os.getcwd()
-    os.chdir(tmp_path)
-
-    try:
-        test_file = tmp_path / "test.py"
-        test_file.write_text('''
+    test_file = mock_ouverture_dir / "test.py"
+    test_file.write_text('''
 def calculate_sum(a, b):
     """Add two numbers"""
     return a + b
 ''', encoding='utf-8')
 
-        with patch('sys.stdout'):
-            ouverture.add_function(f"{test_file}@eng")
+    with patch('sys.stdout'):
+        ouverture.add_function(f"{test_file}@eng")
 
-        # Verify .ouverture directory was created
-        assert Path('.ouverture/objects').exists()
+    # Verify .ouverture directory was created
+    ouverture_objects = mock_ouverture_dir / '.ouverture/objects'
+    assert ouverture_objects.exists()
 
-        # Verify at least one JSON file was created
-        json_files = list(Path('.ouverture/objects').rglob('*.json'))
-        assert len(json_files) == 1
-
-    finally:
-        os.chdir(original_cwd)
+    # Verify at least one JSON file was created
+    json_files = list(ouverture_objects.rglob('*.json'))
+    assert len(json_files) == 1
 
 
 # Integration tests for get_function command
@@ -904,160 +896,132 @@ def test_get_function_not_found():
             ouverture.get_function(f"{hash_value}@eng")
 
 
-def test_get_function_language_not_found(tmp_path):
+def test_get_function_language_not_found(mock_ouverture_dir):
     """Test that requesting unavailable language causes error"""
-    original_cwd = os.getcwd()
-    os.chdir(tmp_path)
+    # Create a function with only English
+    hash_value = "c" * 64
+    with patch('sys.stdout'):
+        ouverture.save_function(hash_value, "eng",
+                               "def _ouverture_v_0(): return 42",
+                               "English doc",
+                               {"_ouverture_v_0": "foo"}, {})
 
-    try:
-        # Create a function with only English
-        hash_value = "c" * 64
-        with patch('sys.stdout'):
-            ouverture.save_function(hash_value, "eng",
-                                   "def _ouverture_v_0(): return 42",
-                                   "English doc",
-                                   {"_ouverture_v_0": "foo"}, {})
-
-        # Try to get it in French
-        with pytest.raises(SystemExit):
-            with patch('sys.stderr'):
-                ouverture.get_function(f"{hash_value}@fra")
-
-    finally:
-        os.chdir(original_cwd)
+    # Try to get it in French
+    with pytest.raises(SystemExit):
+        with patch('sys.stderr'):
+            ouverture.get_function(f"{hash_value}@fra")
 
 
-def test_get_function_success(tmp_path):
+def test_get_function_success(mock_ouverture_dir):
     """Test successfully retrieving a function"""
-    original_cwd = os.getcwd()
-    os.chdir(tmp_path)
-
-    try:
-        # Save a function
-        hash_value = "d" * 64
-        normalized_code = """
+    # Save a function
+    hash_value = "d" * 64
+    normalized_code = """
 def _ouverture_v_0(_ouverture_v_1, _ouverture_v_2):
     _ouverture_v_3 = _ouverture_v_1 + _ouverture_v_2
     return _ouverture_v_3
 """
-        name_mapping = {
-            "_ouverture_v_0": "add",
-            "_ouverture_v_1": "x",
-            "_ouverture_v_2": "y",
-            "_ouverture_v_3": "result"
-        }
+    name_mapping = {
+        "_ouverture_v_0": "add",
+        "_ouverture_v_1": "x",
+        "_ouverture_v_2": "y",
+        "_ouverture_v_3": "result"
+    }
 
-        with patch('sys.stdout'):
-            ouverture.save_function(hash_value, "eng", normalized_code,
-                                   "Add two numbers", name_mapping, {})
+    with patch('sys.stdout'):
+        ouverture.save_function(hash_value, "eng", normalized_code,
+                               "Add two numbers", name_mapping, {})
 
-        # Retrieve it
-        with patch('sys.stdout') as mock_stdout:
-            ouverture.get_function(f"{hash_value}@eng")
+    # Retrieve it
+    with patch('sys.stdout') as mock_stdout:
+        ouverture.get_function(f"{hash_value}@eng")
 
-            # Verify it was printed (can't easily capture print output)
-            # Just verify no exception was raised
-
-    finally:
-        os.chdir(original_cwd)
+        # Verify it was printed (can't easily capture print output)
+        # Just verify no exception was raised
 
 
 # End-to-end integration tests
 
-def test_end_to_end_roundtrip_simple_function(tmp_path):
+def test_end_to_end_roundtrip_simple_function(mock_ouverture_dir):
     """Test add then get produces equivalent code"""
-    original_cwd = os.getcwd()
-    os.chdir(tmp_path)
-
-    try:
-        # Create test file
-        test_file = tmp_path / "test.py"
-        original_code = '''def calculate_sum(first, second):
+    # Create test file
+    test_file = mock_ouverture_dir / "test.py"
+    original_code = '''def calculate_sum(first, second):
     """Add two numbers"""
     result = first + second
     return result'''
-        test_file.write_text(original_code, encoding='utf-8')
+    test_file.write_text(original_code, encoding='utf-8')
 
-        # Add function
-        hash_value = None
-        with patch('sys.stdout') as mock_stdout:
-            with patch('builtins.print') as mock_print:
-                ouverture.add_function(f"{test_file}@eng")
-                # Extract hash from print calls
-                for call in mock_print.call_args_list:
-                    args = str(call)
-                    if 'Hash:' in args:
-                        hash_value = args.split('Hash: ')[1].split("'")[0]
+    # Add function
+    hash_value = None
+    with patch('sys.stdout') as mock_stdout:
+        with patch('builtins.print') as mock_print:
+            ouverture.add_function(f"{test_file}@eng")
+            # Extract hash from print calls
+            for call in mock_print.call_args_list:
+                args = str(call)
+                if 'Hash:' in args:
+                    hash_value = args.split('Hash: ')[1].split("'")[0]
 
-        assert hash_value is not None
+    assert hash_value is not None
 
-        # Get function back
-        output = []
-        with patch('builtins.print', side_effect=lambda x: output.append(x)):
-            ouverture.get_function(f"{hash_value}@eng")
+    # Get function back
+    output = []
+    with patch('builtins.print', side_effect=lambda x: output.append(x)):
+        ouverture.get_function(f"{hash_value}@eng")
 
-        retrieved_code = '\n'.join(output)
+    retrieved_code = '\n'.join(output)
 
-        # Parse both to compare structure
-        original_tree = ast.parse(original_code)
-        retrieved_tree = ast.parse(retrieved_code)
+    # Parse both to compare structure
+    original_tree = ast.parse(original_code)
+    retrieved_tree = ast.parse(retrieved_code)
 
-        # Should have same structure (function name, args, etc.)
-        orig_func = original_tree.body[0]
-        retr_func = retrieved_tree.body[0]
+    # Should have same structure (function name, args, etc.)
+    orig_func = original_tree.body[0]
+    retr_func = retrieved_tree.body[0]
 
-        assert orig_func.name == retr_func.name
-        assert len(orig_func.args.args) == len(retr_func.args.args)
-
-    finally:
-        os.chdir(original_cwd)
+    assert orig_func.name == retr_func.name
+    assert len(orig_func.args.args) == len(retr_func.args.args)
 
 
-def test_end_to_end_multilingual_same_hash(tmp_path):
+def test_end_to_end_multilingual_same_hash(mock_ouverture_dir):
     """Test that equivalent functions in different languages produce same hash"""
-    original_cwd = os.getcwd()
-    os.chdir(tmp_path)
-
-    try:
-        # English version
-        eng_file = tmp_path / "english.py"
-        eng_file.write_text('''def calculate_sum(first_number, second_number):
+    # English version
+    eng_file = mock_ouverture_dir / "english.py"
+    eng_file.write_text('''def calculate_sum(first_number, second_number):
     """Calculate the sum of two numbers."""
     result = first_number + second_number
     return result''', encoding='utf-8')
 
-        # French version (same logic, different names/docstring)
-        fra_file = tmp_path / "french.py"
-        fra_file.write_text('''def calculate_sum(first_number, second_number):
+    # French version (same logic, different names/docstring)
+    fra_file = mock_ouverture_dir / "french.py"
+    fra_file.write_text('''def calculate_sum(first_number, second_number):
     """Calculer la somme de deux nombres."""
     result = first_number + second_number
     return result''', encoding='utf-8')
 
-        # Add both
-        eng_hash = None
-        fra_hash = None
+    # Add both
+    eng_hash = None
+    fra_hash = None
 
-        with patch('builtins.print') as mock_print:
-            ouverture.add_function(f"{eng_file}@eng")
-            for call in mock_print.call_args_list:
-                args = str(call)
-                if 'Hash:' in args:
-                    eng_hash = args.split('Hash: ')[1].split("'")[0]
+    with patch('builtins.print') as mock_print:
+        ouverture.add_function(f"{eng_file}@eng")
+        for call in mock_print.call_args_list:
+            args = str(call)
+            if 'Hash:' in args:
+                eng_hash = args.split('Hash: ')[1].split("'")[0]
 
-        with patch('builtins.print') as mock_print:
-            ouverture.add_function(f"{fra_file}@fra")
-            for call in mock_print.call_args_list:
-                args = str(call)
-                if 'Hash:' in args:
-                    fra_hash = args.split('Hash: ')[1].split("'")[0]
+    with patch('builtins.print') as mock_print:
+        ouverture.add_function(f"{fra_file}@fra")
+        for call in mock_print.call_args_list:
+            args = str(call)
+            if 'Hash:' in args:
+                fra_hash = args.split('Hash: ')[1].split("'")[0]
 
-        # Should have the same hash
-        assert eng_hash == fra_hash
+    # Should have the same hash
+    assert eng_hash == fra_hash
 
-        # Should be able to retrieve in both languages
-        with patch('builtins.print'):
-            ouverture.get_function(f"{eng_hash}@eng")
-            ouverture.get_function(f"{fra_hash}@fra")
-
-    finally:
-        os.chdir(original_cwd)
+    # Should be able to retrieve in both languages
+    with patch('builtins.print'):
+        ouverture.get_function(f"{eng_hash}@eng")
+        ouverture.get_function(f"{fra_hash}@fra")
