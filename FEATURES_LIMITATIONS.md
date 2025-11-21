@@ -15,7 +15,7 @@ This document provides a comprehensive overview of what Ouverture currently supp
 
 Example:
 ```bash
-python3 ouverture.py add example_simple.py@eng
+python3 ouverture.py add examples/example_simple.py@eng
 python3 ouverture.py get <HASH>@fra
 ```
 

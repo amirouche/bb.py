@@ -62,9 +62,9 @@ When you retrieve a function, it's reconstructed in your target language:
 
 ```bash
 # Add functions in different languages
-python3 ouverture.py add example_simple.py@eng
-python3 ouverture.py add example_simple_french.py@fra
-python3 ouverture.py add example_simple_spanish.py@spa
+python3 ouverture.py add examples/example_simple.py@eng
+python3 ouverture.py add examples/example_simple_french.py@fra
+python3 ouverture.py add examples/example_simple_spanish.py@spa
 
 # All three produce the same hash!
 # Retrieve in any language
@@ -95,12 +95,12 @@ This is research software. The current implementation:
 
 ```bash
 # View examples
-cat example_simple.py          # English
-cat example_simple_french.py   # French
-cat example_simple_spanish.py  # Spanish
+cat examples/example_simple.py          # English
+cat examples/example_simple_french.py   # French
+cat examples/example_simple_spanish.py  # Spanish
 
 # Add a function to the pool
-python3 ouverture.py add example_simple.py@eng
+python3 ouverture.py add examples/example_simple.py@eng
 
 # Get the hash (stored in .ouverture/objects/)
 find .ouverture/objects -name "*.json"
@@ -113,7 +113,7 @@ python3 ouverture.py get <HASH>@fra
 
 ### Simple Function (No Imports)
 
-**English** (`example_simple.py`):
+**English** (`examples/example_simple.py`):
 ```python
 def sum_list(items):
     """Sum a list of numbers"""
@@ -123,7 +123,7 @@ def sum_list(items):
     return total
 ```
 
-**French** (`example_simple_french.py`):
+**French** (`examples/example_simple_french.py`):
 ```python
 def somme_liste(elements):
     """Somme une liste de nombres"""
@@ -137,7 +137,7 @@ These hash to the same value.
 
 ### With Standard Library Imports
 
-**English** (`example_with_import.py`):
+**English** (`examples/example_with_import.py`):
 ```python
 from collections import Counter
 

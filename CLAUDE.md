@@ -43,11 +43,13 @@ Store in .ouverture/objects/ with:
 ```
 hello-claude/
 ├── ouverture.py              # Main CLI tool (600+ lines)
-├── example_simple.py          # English example
-├── example_simple_french.py   # French example (same logic)
-├── example_simple_spanish.py  # Spanish example (same logic)
-├── example_with_import.py     # Example with stdlib imports
-├── example_with_ouverture.py  # Example calling other pool functions
+├── examples/                  # Example functions directory
+│   ├── README.md              # Testing documentation
+│   ├── example_simple.py          # English example
+│   ├── example_simple_french.py   # French example (same logic)
+│   ├── example_simple_spanish.py  # Spanish example (same logic)
+│   ├── example_with_import.py     # Example with stdlib imports
+│   └── example_with_ouverture.py  # Example calling other pool functions
 ├── README_TESTING.md          # Testing documentation
 ├── .gitignore                 # Ignores .ouverture/, __pycache__, etc.
 └── .ouverture/                # Generated function pool (gitignored)
@@ -200,9 +202,9 @@ The test suite covers:
 
 ```bash
 # Add examples to pool
-python3 ouverture.py add example_simple.py@eng
-python3 ouverture.py add example_simple_french.py@fra
-python3 ouverture.py add example_simple_spanish.py@spa
+python3 ouverture.py add examples/example_simple.py@eng
+python3 ouverture.py add examples/example_simple_french.py@fra
+python3 ouverture.py add examples/example_simple_spanish.py@spa
 
 # Verify they share the same hash
 find .ouverture/objects -name "*.json"
