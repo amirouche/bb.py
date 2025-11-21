@@ -1,190 +1,146 @@
-# Testing ouverture
+# Ouverture Examples
+
+Learn by doing! Copy and paste these commands to see how ouverture works.
 
 ## Quick Start
 
-### Run the examples:
+### 1. Add functions to the pool
 
 ```bash
-# Add a simple function (English names)
+# Add a simple function (English)
 python3 ouverture.py add examples/example_simple.py@eng
 
-# Add a function with imports (French names)
-python3 ouverture.py add examples/example_with_import.py@fra
-
-# Add a function with ouverture imports (Spanish names)
-python3 ouverture.py add examples/example_with_ouverture.py@spa
-```
-
-### View the results:
-
-```bash
-# List all normalized functions
-find .ouverture/objects -name "*.json"
-
-# View the normalized code and mappings
-cat .ouverture/objects/da/93b591dac76f2b71be05a0479b2eed1cb7052e106ecd231b272123b0451468.json | python3 -m json.tool
-```
-
-## Create Your Own Test
-
-**Example 1: Simple function**
-
-```python
-# my_function.py
-def calculate_area(width, height):
-    """Calculate rectangle area."""
-    area = width * height
-    return area
-```
-
-```bash
-python3 ouverture.py add my_function.py@eng
-```
-
-**Expected result:**
-- Function renamed to `_ouverture_v_0`
-- Variables renamed to `_ouverture_v_1`, `_ouverture_v_2`, etc.
-- JSON file created with hash and mappings
-
-**Example 2: Function with imports**
-
-```python
-# my_math.py
-import math
-
-def calculate_circle_area(radius):
-    """Calculate circle area."""
-    result = math.pi * radius ** 2
-    return result
-```
-
-```bash
-python3 ouverture.py add my_math.py@eng
-```
-
-**Expected result:**
-- Import statement preserved and sorted
-- `math` is NOT renamed (it's imported)
-- Local variables ARE renamed
-
-**Example 3: Function calling another ouverture function**
-
-```python
-# my_compose.py
-from ouverture.pool import abc123def as helper
-
-def process_data(items):
-    """Process items using helper."""
-    cleaned = helper(items)
-    return cleaned
-```
-
-```bash
-python3 ouverture.py add my_compose.py@eng
-```
-
-**Expected result:**
-- Import rewritten: `from ouverture.pool import abc123def`
-- Call rewritten: `helper(items)` → `abc123def._ouverture_v_0(items)`
-- Alias mapping stored: `{"abc123def": "helper"}`
-
-## Test Error Handling
-
-```bash
-# Missing @lang suffix
-python3 ouverture.py add examples/example_simple.py
-# Error: Missing language suffix
-
-# Invalid language code (not 3 chars)
-python3 ouverture.py add examples/example_simple.py@en
-# Error: Language code must be 3 characters
-
-# File not found
-python3 ouverture.py add nonexistent.py@eng
-# Error: File not found
-```
-
-## Understanding the JSON Output
-
-Each function is stored as JSON with support for **multiple languages**:
-
-```json
-{
-  "version": 0,
-  "hash": "b4f52910...",
-  "normalized_code": "def _ouverture_v_0(_ouverture_v_1, _ouverture_v_3):...",
-  "docstrings": {
-    "eng": "Calculate the sum of two numbers.",
-    "fra": "Calculer la somme de deux nombres.",
-    "spa": "Calcular la suma de dos números."
-  },
-  "name_mappings": {
-    "eng": {
-      "_ouverture_v_0": "calculate_sum",
-      "_ouverture_v_1": "first_number",
-      "_ouverture_v_2": "result"
-    },
-    "fra": { ... },
-    "spa": { ... }
-  },
-  "alias_mappings": {
-    "eng": {},
-    "fra": {},
-    "spa": {}
-  }
-}
-```
-
-Key features:
-
-- **hash**: SHA256 of the normalized code **WITHOUT docstring** (so same logic = same hash)
-- **normalized_code**: AST unparsed after normalization (includes docstring for display)
-- **docstrings**: Language-specific docstrings extracted separately
-- **name_mappings**: Per-language mapping from normalized names to originals
-- **alias_mappings**: Per-language mapping of ouverture function hashes to their aliases
-
-**Important**: The hash is computed on code **without the docstring**. This means:
-- Same function logic in different languages → **same hash**
-- Multiple language versions stored in one JSON file
-- Each language has its own docstring and name mappings
-
-## Testing Multilingual Support
-
-You can add the same function in multiple languages:
-
-```bash
-# Add English version
-python3 ouverture.py add examples/example_simple.py@eng
-
-# Add French version (same logic, different docstring)
+# Add the same function in French (same code, different docstring)
 python3 ouverture.py add examples/example_simple_french.py@fra
 
-# Add Spanish version
+# Add the same function in Spanish (same code, different docstring)
 python3 ouverture.py add examples/example_simple_spanish.py@spa
 ```
 
-All three versions will be stored in the **same JSON file** because they have the same hash (same logic). Check the file to see all three docstrings:
-
-```bash
-find .ouverture/objects -name "*.json" | head -1 | xargs cat | python3 -m json.tool
+**Expected output:**
+```
+Function saved (v1): /root/.local/ouverture/objects/sha256/b4/f52910fb4b02ce1d65269bd404a5fcf66451f79d28e0094303f9e66f1e6faf/object.json
+Hash: b4f52910fb4b02ce1d65269bd404a5fcf66451f79d28e0094303f9e66f1e6faf
+Mapping saved (v1): /root/.local/ouverture/objects/sha256/b4/.../eng/sha256/ab/80a39719e18c484a7b4f2394c0431e238eb93e8d7257a1ce3515a7b705d8b1/mapping.json
+Language: eng
+Mapping hash: ab80a39719e18c484a7b4f2394c0431e238eb93e8d7257a1ce3515a7b705d8b1
 ```
 
-## Verify Normalization
+All three versions share the same **function hash** but have different **mapping hashes**!
 
-You can verify the normalization by checking:
+### 2. View the function
 
-1. **Imports are sorted**: `from collections` before `import math`
-2. **Function is `_ouverture_v_0`**: Main function always gets index 0
-3. **Variables are sequential**: `_ouverture_v_1`, `_ouverture_v_2`, etc.
-4. **Built-ins preserved**: `sum`, `len`, `print` are NOT renamed
-5. **Imports preserved**: Imported names like `math`, `Counter` are NOT renamed
+```bash
+# Show the English version
+python3 ouverture.py show b4f52910fb4b02ce1d65269bd404a5fcf66451f79d28e0094303f9e66f1e6faf@eng
+
+# Show the French version (same hash, different docstring)
+python3 ouverture.py show b4f52910fb4b02ce1d65269bd404a5fcf66451f79d28e0094303f9e66f1e6faf@fra
+```
+
+**Expected output (English):**
+```python
+def calculate_sum(first_number, second_number):
+    """Calculate the sum of two numbers."""
+    result = first_number + second_number
+    return result
+```
+
+**Expected output (French):**
+```python
+def calculate_sum(first_number, second_number):
+    """Calculer la somme de deux nombres."""
+    result = first_number + second_number
+    return result
+```
+
+The French version has the same variable names but a French docstring!
+
+### 3. Explore the function pool
+
+```bash
+# List all stored functions and mappings
+find ~/.local/ouverture/objects -name "*.json"
+```
+
+**Expected output:**
+```
+/root/.local/ouverture/objects/sha256/b4/f52910fb4b02ce1d65269bd404a5fcf66451f79d28e0094303f9e66f1e6faf/object.json
+/root/.local/ouverture/objects/sha256/b4/f52910fb4b02ce1d65269bd404a5fcf66451f79d28e0094303f9e66f1e6faf/eng/sha256/ab/80a39719e18c484a7b4f2394c0431e238eb93e8d7257a1ce3515a7b705d8b1/mapping.json
+/root/.local/ouverture/objects/sha256/b4/f52910fb4b02ce1d65269bd404a5fcf66451f79d28e0094303f9e66f1e6faf/fra/sha256/e1/474c45d29c2f3c825082a7f240a2cecd335df9f5375391ec309451705bb98f/mapping.json
+/root/.local/ouverture/objects/sha256/b4/f52910fb4b02ce1d65269bd404a5fcf66451f79d28e0094303f9e66f1e6faf/spa/sha256/a0/9ad2e8f3c5fa4065d05bcea5678eba7607c32827c0911acb6f69851a26cf96/mapping.json
+```
+
+**What's in `~/.local/ouverture/`?**
+```
+~/.local/ouverture/objects/
+  sha256/                    # Hash algorithm
+    b4/                      # First 2 chars of function hash
+      f52910fb4b.../         # Full function hash (directory)
+        object.json          # Normalized function code
+        eng/                 # English language mappings
+          sha256/ab/80a39.../mapping.json
+        fra/                 # French language mappings
+          sha256/e1/474c.../mapping.json
+        spa/                 # Spanish language mappings
+          sha256/a0/9ad2.../mapping.json
+```
+
+- One `object.json` per function (stores normalized code)
+- Separate `mapping.json` files for each language variant (stores variable names and docstrings)
+- Content-addressed: identical logic = same function hash, identical mappings = same mapping hash
+
+## Try More Examples
+
+### Function with imports
+
+```bash
+# Add a function that uses the standard library
+python3 ouverture.py add examples/example_with_import.py@fra
+```
+
+The `show` command will reveal that imported names (like `Counter`) are NOT renamed:
+
+```bash
+python3 ouverture.py show <HASH>@fra
+```
+
+### Function calling another ouverture function
+
+```bash
+# Add a function that calls another function from the pool
+python3 ouverture.py add examples/example_with_ouverture.py@spa
+```
+
+View it to see how ouverture handles function composition:
+
+```bash
+python3 ouverture.py show <HASH>@spa
+```
+
+## What Just Happened?
+
+When you add a function, ouverture:
+
+1. **Normalizes** the code: Variables get renamed to `_ouverture_v_0`, `_ouverture_v_1`, etc.
+2. **Computes a function hash** based on logic (not variable names or docstrings)
+3. **Stores** the normalized code in `object.json`
+4. **Computes a mapping hash** based on variable names and docstring
+5. **Stores** the language-specific mapping in `mapping.json`
+
+The magic:
+- Same logic → same **function hash** (shared across languages)
+- Same variable names + docstring → same **mapping hash** (deduplication)
 
 ## Clean Up
 
-To start fresh:
+To start fresh and remove all stored functions:
 
 ```bash
-rm -rf .ouverture
+rm -rf ~/.local/ouverture
 ```
 
-Then re-run the add commands to regenerate the function pool.
+## Learn More
+
+- Run `python3 ouverture.py --help` to see all commands
+- Check out the main README.md for the full project documentation
