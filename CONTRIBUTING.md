@@ -51,11 +51,11 @@ Try adding your own examples in different human languages!
 # Add an example function
 python3 ouverture.py add examples/example_simple.py@eng
 
-# Verify it was stored
-find .ouverture/objects -name "*.json"
+# Verify it was stored (default location: $HOME/.local/ouverture)
+find $HOME/.local/ouverture/objects -name "*.json"
 
 # Clean up
-rm -rf .ouverture
+rm -rf $HOME/.local/ouverture
 ```
 
 ## Roadmap: Creative Coding for User Reach
@@ -236,7 +236,7 @@ The test suite covers:
 - **Name mapping**: Function and variable name mapping/unmapping
 - **Import handling**: Both standard and ouverture imports
 - **Hash computation**: Deterministic hashing excluding docstrings
-- **Storage**: Content-addressed storage in .ouverture/objects/
+- **Storage**: Content-addressed storage in $HOME/.local/ouverture/objects/
 - **CLI commands**: Both `add` and `get` commands with error cases
 - **End-to-end workflows**: Complete add/get cycles and multilingual support
 
@@ -278,8 +278,8 @@ Tests verify proper error messages for:
 
 The tests use `tmp_path` pytest fixture for:
 - Creating temporary test files
-- Creating temporary .ouverture directories
-- Ensuring test isolation (no pollution of actual .ouverture)
+- Creating temporary ouverture directories
+- Ensuring test isolation (no pollution of actual ouverture pool in $HOME/.local/ouverture)
 
 ## Mocking
 
@@ -334,7 +334,7 @@ Tests use temporary directories for isolation. If tests fail with path issues, e
 ### Git Ignores
 
 The following directories/files should be in .gitignore:
-- `.ouverture/` - Generated function pool
+- `.ouverture/` - Local function pool (if used for testing; default is $HOME/.local/ouverture)
 - `__pycache__/` - Python bytecode
 - `.pytest_cache/` - Pytest cache
 - `htmlcov/` - Coverage reports
@@ -344,7 +344,7 @@ The following directories/files should be in .gitignore:
 
 The full test suite should complete in under 10 seconds on modern hardware. If tests are slow:
 
-1. Check for accidentally committed .ouverture directories
+1. Check for large ouverture pools in $HOME/.local/ouverture or local .ouverture directories
 2. Ensure tmp_path fixtures are being used correctly
 3. Consider using pytest-xdist for parallel execution:
    ```bash
