@@ -181,8 +181,8 @@ That's the Mobius transformation: code that flows continuously between linguisti
 ## Architecture
 
 - **Single file**: `mobius.py` (~600 lines)
-- **Storage**: `$HOME/.local/mobius/objects/XX/YYYYYY.json` (content-addressed, configurable via `MOBIUS_DIRECTORY`)
-- **Language codes**: ISO 639-3 (eng, fra, spa, etc.)
+- **Storage**: `$HOME/.local/mobius/objects/sha256/XX/YYYYYY.../object.json` (content-addressed, configurable via `MOBIUS_DIRECTORY`)
+- **Language codes**: Any string up to 256 characters (e.g., eng, fra, español, 日本語)
 - **Hash algorithm**: SHA256 on normalized AST
 
 See `CLAUDE.md` for detailed technical documentation.
