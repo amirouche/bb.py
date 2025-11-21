@@ -38,17 +38,6 @@ def calculate_average(numbers):
 
 **These three functions produce the same hash** because they implement identical logic. They're stored together in a content-addressed pool, preserving each language's perspective while recognizing their logical equivalence.
 
-## Not About Blockchain
-
-**Important clarification**: Mobius is **not related to Bitcoin, blockchain, or cryptocurrency** in any way. Yes, we use content-addressed storage and hashing. No, this is not a blockchain project.
-
-The vision is about **multilingual programming and code reuse**, not distributed ledgers or tokens. Content-addressed storage existed long before blockchain (see: Git, which we use daily). The value proposition is:
-- Enabling programmers to think in their native languages
-- Making code reuse language-agnostic for both humans and LLMs
-- Preserving linguistic perspectives while recognizing logical equivalence
-
-This vision holds value completely independent of blockchain technology. We're building tools to open doors for more people to participate in code.
-
 ## How It Works
 
 Mobius normalizes Python functions by:
