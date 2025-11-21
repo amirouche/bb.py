@@ -511,6 +511,17 @@ This makes debugging natural for developers working in their native language.
 - **Test naming**: Use descriptive names like `test_<component>_<behavior>` (e.g., `test_ast_normalizer_visit_name_with_mapping`)
 - **Test file**: `test_ouverture.py` contains 50+ test functions
 - **Documentation**: See `README_PYTEST.md` for comprehensive testing guide
+- **Normalized code strings**: All normalized code strings in tests MUST use the `normalize_code_for_test()` helper function. This ensures the code format matches `ast.unparse()` output (with proper line breaks and indentation).
+
+**Example of normalize_code_for_test usage**:
+```python
+# Wrong - this format never exists in practice:
+normalized_code = "def _ouverture_v_0(): return 42"
+
+# Correct - use the helper function:
+normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 42")
+# Returns: "def _ouverture_v_0():\n    return 42"
+```
 
 ### Important Invariants
 
