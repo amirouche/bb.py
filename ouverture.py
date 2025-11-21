@@ -448,6 +448,135 @@ def directory_get_ouverture() -> Path:
     return Path(home) / '.local' / 'ouverture'
 
 
+def config_get_path() -> Path:
+    """
+    Get the path to the config file.
+    Config is stored in ~/.config/ouverture/config.json (XDG Base Directory spec)
+    """
+    home = os.environ.get('HOME', os.path.expanduser('~'))
+    config_dir = Path(home) / '.config' / 'ouverture'
+    return config_dir / 'config.json'
+
+
+def config_read() -> Dict[str, any]:
+    """
+    Read the configuration file.
+    Returns default config if file doesn't exist.
+    """
+    config_path = config_get_path()
+
+    if not config_path.exists():
+        return {
+            'user': {
+                'username': '',
+                'email': '',
+                'public_key': '',
+                'languages': []
+            },
+            'remotes': {}
+        }
+
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (IOError, json.JSONDecodeError) as e:
+        print(f"Error: Failed to read config file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def config_write(config: Dict[str, any]):
+    """
+    Write the configuration file.
+    """
+    config_path = config_get_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+    except IOError as e:
+        print(f"Error: Failed to write config file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def command_init():
+    """
+    Initialize ouverture directory and config file.
+    """
+    # Create ouverture directory
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+    objects_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create config file with defaults
+    config_path = config_get_path()
+    if config_path.exists():
+        print(f"Config file already exists: {config_path}")
+    else:
+        config = {
+            'user': {
+                'username': os.environ.get('USER', os.environ.get('USERNAME', '')),
+                'email': '',
+                'public_key': '',
+                'languages': ['eng']
+            },
+            'remotes': {}
+        }
+        config_write(config)
+        print(f"Created config file: {config_path}")
+
+    print(f"Initialized ouverture directory: {ouverture_dir}")
+
+
+def command_whoami(subcommand: str, value: list = None):
+    """
+    Get or set user configuration.
+
+    Args:
+        subcommand: One of 'username', 'email', 'public-key', 'language'
+        value: New value(s) to set (None to get current value)
+    """
+    config = config_read()
+
+    # Map CLI subcommand to config key
+    key_map = {
+        'username': 'username',
+        'email': 'email',
+        'public-key': 'public_key',
+        'language': 'languages'
+    }
+
+    if subcommand not in key_map:
+        print(f"Error: Unknown subcommand: {subcommand}", file=sys.stderr)
+        print("Valid subcommands: username, email, public-key, language", file=sys.stderr)
+        sys.exit(1)
+
+    config_key = key_map[subcommand]
+
+    # Get current value
+    if value is None or len(value) == 0:
+        current = config['user'][config_key]
+        if isinstance(current, list):
+            print(' '.join(current) if current else '')
+        else:
+            print(current if current else '')
+    else:
+        # Set new value
+        if subcommand == 'language':
+            # Languages is a list
+            config['user'][config_key] = value
+        else:
+            # Other fields are strings (take first value)
+            config['user'][config_key] = value[0]
+
+        config_write(config)
+
+        if subcommand == 'language':
+            print(f"Set {subcommand}: {' '.join(value)}")
+        else:
+            print(f"Set {subcommand}: {value[0]}")
+
+
 def function_save_v0(hash_value: str, lang: str, normalized_code: str, docstring: str,
                      name_mapping: Dict[str, str], alias_mapping: Dict[str, str]):
     """
@@ -677,6 +806,707 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
     tree = denormalizer.visit(tree)
 
     return ast.unparse(tree)
+
+
+def command_remote_add(name: str, url: str):
+    """
+    Add a remote repository.
+
+    Args:
+        name: Remote name
+        url: Remote URL (HTTP/HTTPS or file://)
+    """
+    config = config_read()
+
+    if name in config['remotes']:
+        print(f"Error: Remote '{name}' already exists", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate URL format
+    if not (url.startswith('http://') or url.startswith('https://') or url.startswith('file://')):
+        print(f"Error: Invalid URL format. Must start with http://, https://, or file://", file=sys.stderr)
+        sys.exit(1)
+
+    config['remotes'][name] = {
+        'url': url
+    }
+
+    config_write(config)
+    print(f"Added remote '{name}': {url}")
+
+
+def command_remote_remove(name: str):
+    """
+    Remove a remote repository.
+
+    Args:
+        name: Remote name to remove
+    """
+    config = config_read()
+
+    if name not in config['remotes']:
+        print(f"Error: Remote '{name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    del config['remotes'][name]
+    config_write(config)
+    print(f"Removed remote '{name}'")
+
+
+def command_remote_list():
+    """
+    List all configured remotes.
+    """
+    config = config_read()
+
+    if not config['remotes']:
+        print("No remotes configured")
+        return
+
+    print("Configured remotes:")
+    for name, remote in config['remotes'].items():
+        print(f"  {name}: {remote['url']}")
+
+
+def command_remote_pull(name: str):
+    """
+    Fetch functions from a remote repository.
+
+    Args:
+        name: Remote name to pull from
+    """
+    config = config_read()
+
+    if name not in config['remotes']:
+        print(f"Error: Remote '{name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    remote = config['remotes'][name]
+    url = remote['url']
+
+    print(f"Pulling from remote '{name}': {url}")
+    print()
+
+    # TODO: Implement actual network operations
+    # For file:// URLs, we could copy from local filesystem
+    # For http:// and https:// URLs, we would need a server API
+
+    if url.startswith('file://'):
+        # Local file system remote
+        import shutil
+        remote_path = Path(url[7:])  # Remove file:// prefix
+
+        if not remote_path.exists():
+            print(f"Error: Remote path does not exist: {remote_path}", file=sys.stderr)
+            sys.exit(1)
+
+        # Copy functions from remote to local pool
+        local_ouverture = directory_get_ouverture()
+        local_objects = local_ouverture / 'objects'
+        remote_objects = remote_path / 'objects'
+
+        if not remote_objects.exists():
+            print(f"Error: Remote objects directory not found: {remote_objects}", file=sys.stderr)
+            sys.exit(1)
+
+        # Copy all objects
+        pulled_count = 0
+        for item in remote_objects.rglob('*.json'):
+            # Compute relative path
+            rel_path = item.relative_to(remote_objects)
+            local_item = local_objects / rel_path
+
+            # Only copy if doesn't exist locally
+            if not local_item.exists():
+                local_item.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, local_item)
+                pulled_count += 1
+
+        print(f"Pulled {pulled_count} new functions from '{name}'")
+    else:
+        # HTTP/HTTPS remote
+        print("Error: HTTP/HTTPS remotes not yet implemented", file=sys.stderr)
+        print("TODO: Implement REST API client for pulling functions", file=sys.stderr)
+        sys.exit(1)
+
+
+def command_remote_push(name: str):
+    """
+    Publish functions to a remote repository.
+
+    Args:
+        name: Remote name to push to
+    """
+    config = config_read()
+
+    if name not in config['remotes']:
+        print(f"Error: Remote '{name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    remote = config['remotes'][name]
+    url = remote['url']
+
+    print(f"Pushing to remote '{name}': {url}")
+    print()
+
+    # TODO: Implement actual network operations
+    # For file:// URLs, we could copy to local filesystem
+    # For http:// and https:// URLs, we would need a server API
+
+    if url.startswith('file://'):
+        # Local file system remote
+        import shutil
+        remote_path = Path(url[7:])  # Remove file:// prefix
+
+        # Create remote directory if it doesn't exist
+        remote_path.mkdir(parents=True, exist_ok=True)
+
+        # Copy functions from local pool to remote
+        local_ouverture = directory_get_ouverture()
+        local_objects = local_ouverture / 'objects'
+        remote_objects = remote_path / 'objects'
+
+        if not local_objects.exists():
+            print("Error: Local objects directory not found", file=sys.stderr)
+            sys.exit(1)
+
+        # Copy all objects
+        pushed_count = 0
+        for item in local_objects.rglob('*.json'):
+            # Compute relative path
+            rel_path = item.relative_to(local_objects)
+            remote_item = remote_objects / rel_path
+
+            # Only copy if doesn't exist remotely
+            if not remote_item.exists():
+                remote_item.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, remote_item)
+                pushed_count += 1
+
+        print(f"Pushed {pushed_count} new functions to '{name}'")
+    else:
+        # HTTP/HTTPS remote
+        print("Error: HTTP/HTTPS remotes not yet implemented", file=sys.stderr)
+        print("TODO: Implement REST API client for pushing functions", file=sys.stderr)
+        sys.exit(1)
+
+
+def dependencies_extract(normalized_code: str) -> List[str]:
+    """
+    Extract ouverture dependencies from normalized code.
+
+    Returns:
+        List of function hashes that this function depends on
+    """
+    dependencies = []
+    tree = ast.parse(normalized_code)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == 'ouverture.pool':
+            for alias in node.names:
+                # alias.name is the hash
+                dependencies.append(alias.name)
+
+    return dependencies
+
+
+def command_review(hash_value: str):
+    """
+    Recursively review a function and its dependencies.
+
+    Shows the function and all functions it depends on (recursively)
+    in the user's preferred languages.
+
+    Args:
+        hash_value: Function hash to review
+    """
+    # Validate hash format
+    if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value.lower()):
+        print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Get user's preferred languages
+    config = config_read()
+    preferred_langs = config['user'].get('languages', ['eng'])
+
+    if not preferred_langs:
+        preferred_langs = ['eng']
+
+    # Track visited functions to avoid cycles
+    visited = set()
+    review_queue = [hash_value]
+
+    print("Function Review")
+    print("=" * 80)
+    print()
+
+    while review_queue:
+        current_hash = review_queue.pop(0)
+
+        if current_hash in visited:
+            continue
+
+        visited.add(current_hash)
+
+        # Detect schema version
+        version = schema_detect_version(current_hash)
+        if version is None:
+            print(f"Warning: Function {current_hash} not found in local pool", file=sys.stderr)
+            continue
+
+        # Try to load in user's preferred languages
+        loaded = False
+        for lang in preferred_langs:
+            try:
+                normalized_code, name_mapping, alias_mapping, docstring = function_load(current_hash, lang)
+                func_name = name_mapping.get('_ouverture_v_0', 'unknown')
+
+                # Show function
+                print(f"Function: {func_name} ({lang})")
+                print(f"Hash: {current_hash}")
+                print("-" * 80)
+
+                # Denormalize and show code
+                normalized_code_with_doc = docstring_replace(normalized_code, docstring)
+                original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
+                print(original_code)
+                print()
+
+                # Extract dependencies
+                deps = dependencies_extract(normalized_code)
+                if deps:
+                    print(f"Dependencies: {len(deps)}")
+                    for dep in deps:
+                        print(f"  - {dep}")
+                        if dep not in visited:
+                            review_queue.append(dep)
+                else:
+                    print("Dependencies: None")
+
+                print("=" * 80)
+                print()
+
+                loaded = True
+                break
+            except SystemExit:
+                # Language not available, try next one
+                continue
+
+        if not loaded:
+            print(f"Warning: Function {current_hash} not available in any preferred language", file=sys.stderr)
+            print(f"Preferred languages: {', '.join(preferred_langs)}", file=sys.stderr)
+            print()
+
+
+def command_log():
+    """
+    Show a git-like commit log of the function pool.
+
+    Lists all functions with metadata (timestamp, author, hash).
+    """
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+
+    if not objects_dir.exists():
+        print("No functions in pool")
+        return
+
+    functions = []
+
+    # Scan for v1 functions (objects/sha256/XX/YYY.../object.json)
+    v1_dir = objects_dir / 'sha256'
+    if v1_dir.exists():
+        for hash_prefix_dir in v1_dir.iterdir():
+            if not hash_prefix_dir.is_dir():
+                continue
+
+            for func_dir in hash_prefix_dir.iterdir():
+                if not func_dir.is_dir():
+                    continue
+
+                object_json = func_dir / 'object.json'
+                if not object_json.exists():
+                    continue
+
+                # Load function metadata
+                try:
+                    with open(object_json, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+
+                    func_hash = data['hash']
+                    metadata = data.get('metadata', {})
+                    created = metadata.get('created', 'unknown')
+                    author = metadata.get('author', 'unknown')
+
+                    # Get available languages
+                    langs = []
+                    for item in func_dir.iterdir():
+                        if item.is_dir() and len(item.name) == 3:
+                            langs.append(item.name)
+
+                    functions.append({
+                        'hash': func_hash,
+                        'created': created,
+                        'author': author,
+                        'langs': sorted(langs),
+                        'version': 1
+                    })
+                except (IOError, json.JSONDecodeError):
+                    continue
+
+    # Scan for v0 functions (objects/XX/YYY.json)
+    for hash_prefix_dir in objects_dir.iterdir():
+        if not hash_prefix_dir.is_dir():
+            continue
+        if hash_prefix_dir.name == 'sha256':
+            continue
+
+        for json_file in hash_prefix_dir.glob('*.json'):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                func_hash = data['hash']
+                langs = list(data.get('name_mappings', {}).keys())
+
+                functions.append({
+                    'hash': func_hash,
+                    'created': 'unknown',
+                    'author': 'unknown',
+                    'langs': sorted(langs),
+                    'version': 0
+                })
+            except (IOError, json.JSONDecodeError):
+                continue
+
+    # Sort by created timestamp (newest first)
+    functions.sort(key=lambda x: x['created'], reverse=True)
+
+    # Display log
+    print(f"Function Pool Log ({len(functions)} functions)")
+    print("=" * 80)
+    print()
+
+    for func in functions:
+        langs_str = ', '.join(func['langs']) if func['langs'] else 'none'
+        version_str = f"v{func['version']}"
+        print(f"Hash: {func['hash']}")
+        print(f"Date: {func['created']}")
+        print(f"Author: {func['author']}")
+        print(f"Languages: {langs_str}")
+        print(f"Schema: {version_str}")
+        print()
+
+
+def command_search(query: List[str]):
+    """
+    Search and list functions by query.
+
+    Searches in function names, docstrings, and code content.
+
+    Args:
+        query: List of search terms
+    """
+    if not query:
+        print("Error: No search query provided", file=sys.stderr)
+        sys.exit(1)
+
+    search_terms = [term.lower() for term in query]
+
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+
+    if not objects_dir.exists():
+        print("No functions in pool")
+        return
+
+    results = []
+
+    # Scan for v1 functions
+    v1_dir = objects_dir / 'sha256'
+    if v1_dir.exists():
+        for hash_prefix_dir in v1_dir.iterdir():
+            if not hash_prefix_dir.is_dir():
+                continue
+
+            for func_dir in hash_prefix_dir.iterdir():
+                if not func_dir.is_dir():
+                    continue
+
+                object_json = func_dir / 'object.json'
+                if not object_json.exists():
+                    continue
+
+                # Load function
+                try:
+                    with open(object_json, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+
+                    func_hash = data['hash']
+                    normalized_code = data['normalized_code']
+
+                    # Search in code
+                    code_lower = normalized_code.lower()
+                    if any(term in code_lower for term in search_terms):
+                        # Get available languages and load first available
+                        for lang_dir in func_dir.iterdir():
+                            if lang_dir.is_dir() and len(lang_dir.name) == 3:
+                                lang = lang_dir.name
+                                try:
+                                    _, name_mapping, _, docstring = function_load(func_hash, lang)
+                                    func_name = name_mapping.get('_ouverture_v_0', 'unknown')
+
+                                    # Check if search term in function name or docstring
+                                    match_in = []
+                                    if any(term in func_name.lower() for term in search_terms):
+                                        match_in.append('name')
+                                    if any(term in docstring.lower() for term in search_terms):
+                                        match_in.append('docstring')
+                                    if not match_in:
+                                        match_in.append('code')
+
+                                    results.append({
+                                        'hash': func_hash,
+                                        'name': func_name,
+                                        'lang': lang,
+                                        'docstring': docstring[:100],  # First 100 chars
+                                        'match_in': match_in
+                                    })
+                                    break
+                                except SystemExit:
+                                    continue
+                except (IOError, json.JSONDecodeError):
+                    continue
+
+    # Scan for v0 functions
+    for hash_prefix_dir in objects_dir.iterdir():
+        if not hash_prefix_dir.is_dir():
+            continue
+        if hash_prefix_dir.name == 'sha256':
+            continue
+
+        for json_file in hash_prefix_dir.glob('*.json'):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                func_hash = data['hash']
+                normalized_code = data['normalized_code']
+
+                # Search in code
+                code_lower = normalized_code.lower()
+                if any(term in code_lower for term in search_terms):
+                    # Get first available language
+                    langs = list(data.get('name_mappings', {}).keys())
+                    if langs:
+                        lang = langs[0]
+                        name_mapping = data['name_mappings'][lang]
+                        docstring = data.get('docstrings', {}).get(lang, '')
+                        func_name = name_mapping.get('_ouverture_v_0', 'unknown')
+
+                        match_in = []
+                        if any(term in func_name.lower() for term in search_terms):
+                            match_in.append('name')
+                        if any(term in docstring.lower() for term in search_terms):
+                            match_in.append('docstring')
+                        if not match_in:
+                            match_in.append('code')
+
+                        results.append({
+                            'hash': func_hash,
+                            'name': func_name,
+                            'lang': lang,
+                            'docstring': docstring[:100],
+                            'match_in': match_in
+                        })
+            except (IOError, json.JSONDecodeError):
+                continue
+
+    # Display results
+    print(f"Search Results ({len(results)} matches for: {' '.join(query)})")
+    print("=" * 80)
+    print()
+
+    if not results:
+        print("No matches found")
+        return
+
+    for result in results:
+        match_str = ', '.join(result['match_in'])
+        print(f"Name: {result['name']} ({result['lang']})")
+        print(f"Hash: {result['hash']}")
+        print(f"Match: {match_str}")
+        if result['docstring']:
+            print(f"Description: {result['docstring']}...")
+        print(f"View: ouverture.py show {result['hash']}@{result['lang']}")
+        print()
+
+
+def command_run(hash_with_lang: str, debug: bool = False):
+    """
+    Execute a function from the pool interactively.
+
+    Args:
+        hash_with_lang: Function hash with language (e.g., "abc123...@eng")
+        debug: If True, run with debugger (pdb)
+    """
+    # Parse hash and language
+    if '@' not in hash_with_lang:
+        print("Error: Missing language suffix. Use format: HASH@lang", file=sys.stderr)
+        sys.exit(1)
+
+    hash_value, lang = hash_with_lang.rsplit('@', 1)
+
+    # Validate language code
+    if len(lang) != 3:
+        print(f"Error: Language code must be 3 characters (ISO 639-3). Got: {lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate hash format
+    if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value.lower()):
+        print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Load function from pool
+    try:
+        normalized_code, name_mapping, alias_mapping, docstring = function_load(hash_value, lang)
+    except SystemExit:
+        print(f"Error: Could not load function {hash_value}@{lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # Denormalize to original language
+    normalized_code_with_doc = docstring_replace(normalized_code, docstring)
+    original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
+
+    # Get function name from mapping
+    func_name = name_mapping.get('_ouverture_v_0', 'unknown_function')
+
+    print(f"Running function: {func_name} ({lang})")
+    print("=" * 60)
+    print(original_code)
+    print("=" * 60)
+    print()
+
+    # Create execution namespace
+    namespace = {}
+
+    # Execute the code
+    try:
+        exec(original_code, namespace)
+    except Exception as e:
+        print(f"Error executing function: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+    # Get the function object
+    if func_name not in namespace:
+        print(f"Error: Function '{func_name}' not found in namespace", file=sys.stderr)
+        sys.exit(1)
+
+    func = namespace[func_name]
+
+    if debug:
+        # Run with debugger
+        import pdb
+        print("Starting debugger...")
+        print(f"The function '{func_name}' is available in the namespace.")
+        print(f"Call it with: {func_name}(...)")
+        print()
+        pdb.set_trace()
+    else:
+        # Interactive mode
+        print(f"Function '{func_name}' is loaded and ready to use.")
+        print(f"Call it with: {func_name}(...)")
+        print()
+
+        # Start interactive Python shell with the function available
+        import code
+        code.interact(local=namespace, banner="")
+
+
+def command_translate(hash_with_lang: str, target_lang: str):
+    """
+    Add a translation for an existing function.
+
+    This command helps translate a function from one language to another
+    by prompting for new variable names and docstring.
+
+    Args:
+        hash_with_lang: Function hash with source language (e.g., "abc123...@eng")
+        target_lang: Target language code (e.g., "fra", "spa")
+    """
+    # Parse hash and source language
+    if '@' not in hash_with_lang:
+        print("Error: Missing language suffix. Use format: HASH@source_lang", file=sys.stderr)
+        sys.exit(1)
+
+    hash_value, source_lang = hash_with_lang.rsplit('@', 1)
+
+    # Validate language codes
+    if len(source_lang) != 3:
+        print(f"Error: Source language code must be 3 characters (ISO 639-3). Got: {source_lang}", file=sys.stderr)
+        sys.exit(1)
+
+    if len(target_lang) != 3:
+        print(f"Error: Target language code must be 3 characters (ISO 639-3). Got: {target_lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate hash format
+    if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value.lower()):
+        print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Load source function
+    try:
+        normalized_code, name_mapping_source, alias_mapping_source, docstring_source = function_load(hash_value, source_lang)
+    except SystemExit:
+        print(f"Error: Could not load function {hash_value}@{source_lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # Show source code for reference
+    print(f"Source function ({source_lang}):")
+    print("=" * 60)
+    normalized_code_with_doc = docstring_replace(normalized_code, docstring_source)
+    source_code = code_denormalize(normalized_code_with_doc, name_mapping_source, alias_mapping_source)
+    print(source_code)
+    print("=" * 60)
+    print()
+
+    # Create target name mapping by prompting user
+    print(f"Creating translation to {target_lang}...")
+    print()
+
+    name_mapping_target = {}
+
+    # Translate each name
+    for norm_name, orig_name in sorted(name_mapping_source.items()):
+        while True:
+            target_name = input(f"Translate '{orig_name}' ({norm_name}): ").strip()
+            if target_name:
+                name_mapping_target[norm_name] = target_name
+                break
+            else:
+                print("  Name cannot be empty. Please try again.")
+
+    # Translate docstring
+    print()
+    print(f"Source docstring:\n{docstring_source}")
+    print()
+    target_docstring = input(f"Target docstring ({target_lang}): ").strip()
+
+    # Use the same alias mapping (hash-based imports are language-independent)
+    alias_mapping_target = alias_mapping_source
+
+    # Optionally add a comment
+    comment = input("Optional comment for this translation (press Enter to skip): ").strip()
+
+    # Save the translation
+    mapping_save_v1(hash_value, target_lang, target_docstring, name_mapping_target, alias_mapping_target, comment)
+
+    print()
+    print(f"Translation saved: {hash_value}@{target_lang}")
+    print(f"View with: ouverture.py show {hash_value}@{target_lang}")
 
 
 def function_add(file_path_with_lang: str, comment: str = ""):
@@ -1339,6 +2169,15 @@ def main():
     parser = argparse.ArgumentParser(description='ouverture - Function pool manager')
     subparsers = parser.add_subparsers(dest='command', help='Commands')
 
+    # Init command
+    init_parser = subparsers.add_parser('init', help='Initialize ouverture directory and config')
+
+    # Whoami command
+    whoami_parser = subparsers.add_parser('whoami', help='Get or set user configuration')
+    whoami_parser.add_argument('subcommand', choices=['username', 'email', 'public-key', 'language'],
+                               help='Configuration field to get/set')
+    whoami_parser.add_argument('value', nargs='*', help='New value(s) to set (omit to get current value)')
+
     # Add command
     add_parser = subparsers.add_parser('add', help='Add a function to the pool')
     add_parser.add_argument('file', help='Path to Python file with @lang suffix (e.g., file.py@eng)')
@@ -1352,6 +2191,51 @@ def main():
     show_parser = subparsers.add_parser('show', help='Show a function with mapping selection support')
     show_parser.add_argument('hash', help='Function hash with @lang[@mapping_hash] (e.g., abc123...@eng or abc123...@eng@xyz789...)')
 
+    # Translate command
+    translate_parser = subparsers.add_parser('translate', help='Add translation for existing function')
+    translate_parser.add_argument('hash', help='Function hash with source language (e.g., abc123...@eng)')
+    translate_parser.add_argument('target_lang', help='Target language code (e.g., fra, spa)')
+
+    # Run command
+    run_parser = subparsers.add_parser('run', help='Execute function interactively')
+    run_parser.add_argument('hash', help='Function hash with language (e.g., abc123...@eng)')
+    run_parser.add_argument('--debug', action='store_true', help='Run with debugger (pdb)')
+
+    # Review command
+    review_parser = subparsers.add_parser('review', help='Recursively review function and dependencies')
+    review_parser.add_argument('hash', help='Function hash to review')
+
+    # Log command
+    log_parser = subparsers.add_parser('log', help='Show git-like commit log of pool')
+
+    # Search command
+    search_parser = subparsers.add_parser('search', help='Search and list functions by query')
+    search_parser.add_argument('query', nargs='+', help='Search terms')
+
+    # Remote command
+    remote_parser = subparsers.add_parser('remote', help='Manage remote repositories')
+    remote_subparsers = remote_parser.add_subparsers(dest='remote_command', help='Remote subcommands')
+
+    # Remote add
+    remote_add_parser = remote_subparsers.add_parser('add', help='Add remote repository')
+    remote_add_parser.add_argument('name', help='Remote name')
+    remote_add_parser.add_argument('url', help='Remote URL (http://, https://, or file://)')
+
+    # Remote remove
+    remote_remove_parser = remote_subparsers.add_parser('remove', help='Remove remote repository')
+    remote_remove_parser.add_argument('name', help='Remote name to remove')
+
+    # Remote list
+    remote_list_parser = remote_subparsers.add_parser('list', help='List configured remotes')
+
+    # Remote pull
+    remote_pull_parser = remote_subparsers.add_parser('pull', help='Fetch functions from remote')
+    remote_pull_parser.add_argument('name', help='Remote name to pull from')
+
+    # Remote push
+    remote_push_parser = remote_subparsers.add_parser('push', help='Publish functions to remote')
+    remote_push_parser.add_argument('name', help='Remote name to push to')
+
     # Migrate command
     migrate_parser = subparsers.add_parser('migrate', help='Migrate functions from v0 to v1')
     migrate_parser.add_argument('hash', nargs='?', help='Specific function hash to migrate (optional, migrates all if omitted)')
@@ -1364,12 +2248,39 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == 'add':
+    if args.command == 'init':
+        command_init()
+    elif args.command == 'whoami':
+        command_whoami(args.subcommand, args.value)
+    elif args.command == 'add':
         function_add(args.file, args.comment)
     elif args.command == 'get':
         function_get(args.hash)
     elif args.command == 'show':
         function_show(args.hash)
+    elif args.command == 'translate':
+        command_translate(args.hash, args.target_lang)
+    elif args.command == 'run':
+        command_run(args.hash, debug=args.debug)
+    elif args.command == 'review':
+        command_review(args.hash)
+    elif args.command == 'log':
+        command_log()
+    elif args.command == 'search':
+        command_search(args.query)
+    elif args.command == 'remote':
+        if args.remote_command == 'add':
+            command_remote_add(args.name, args.url)
+        elif args.remote_command == 'remove':
+            command_remote_remove(args.name)
+        elif args.remote_command == 'list':
+            command_remote_list()
+        elif args.remote_command == 'pull':
+            command_remote_pull(args.name)
+        elif args.remote_command == 'push':
+            command_remote_push(args.name)
+        else:
+            remote_parser.print_help()
     elif args.command == 'migrate':
         if args.hash:
             # Migrate specific function

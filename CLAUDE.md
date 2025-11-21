@@ -395,11 +395,23 @@ ouverture.py search [NAME | URL] [QUERY...]    # Search and list functions by qu
 ```
 
 **Currently implemented**:
+- `init` command: Initialize ouverture directory and config file
+- `whoami` command: Get/set user configuration (username, email, public-key, language)
 - `add` command: Parses file, normalizes AST, computes hash, saves to local pool
 - `show` command: Shows function with mapping exploration and selection (v0 and v1 compatible)
 - `get` command: Retrieves function from local pool, denormalizes to target language
+- `translate` command: Add translation for existing function (interactive prompts)
+- `run` command: Execute function interactively
+- `run --debug` command: Execute with debugger using native language variables
+- `review` command: Recursively review function and dependencies
+- `log` command: Show git-like commit log of pool
+- `search` command: Search and list functions by query
+- `remote add/remove/list` commands: Manage remote repositories
+- `remote pull/push` commands: Fetch/publish functions (file:// URLs supported, HTTP/HTTPS planned)
 - `migrate` command: Migrates functions from v0 to v1 schema format
 - `validate` command: Validates v1 function structure
+
+**Status**: All commands from the target CLI interface are now implemented. HTTP/HTTPS remotes are planned for future development.
 
 **Language codes**: Currently 3 characters (ISO 639-3: eng, fra, spa, etc.), future support for any string <256 chars
 
