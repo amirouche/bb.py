@@ -2,8 +2,16 @@
 Shared pytest fixtures for ouverture tests.
 
 This module provides common fixtures used across all test modules.
+
+Test Philosophy:
+- Most tests should be integration tests (grey-box style)
+- Setup: Use CLI commands (ouverture.py add, init, etc.)
+- Test: Call CLI commands
+- Assert: Check CLI output and/or files directly
+- Unit tests only for complex low-level aspects (AST, hashing, schema, migration)
 """
 import ast
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,9 +22,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import ouverture
 
-# Export normalize_code_for_test for use in test modules
+# Export fixtures and helpers
 __all__ = ['normalize_code_for_test', 'mock_ouverture_dir', 'sample_function_code',
-           'sample_function_file', 'sample_async_function_code', 'sample_async_function_file']
+           'sample_function_file', 'sample_async_function_code', 'sample_async_function_file',
+           'cli_run', 'cli_runner']
 
 
 def normalize_code_for_test(code: str) -> str:
@@ -48,6 +57,77 @@ def normalize_code_for_test(code: str) -> str:
     return ast.unparse(tree)
 
 
+def cli_run(args: list, env: dict = None, cwd: str = None) -> subprocess.CompletedProcess:
+    """
+    Run ouverture.py CLI command.
+
+    Args:
+        args: Command arguments (without 'python ouverture.py' prefix)
+        env: Environment variables (merged with current env)
+        cwd: Working directory
+
+    Returns:
+        CompletedProcess with stdout, stderr, returncode
+
+    Example:
+        result = cli_run(['add', 'test.py@eng'])
+        assert result.returncode == 0
+        assert 'Hash:' in result.stdout
+    """
+    import os
+
+    cmd = [sys.executable, str(Path(__file__).parent.parent / 'ouverture.py')] + args
+
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
+
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        env=run_env,
+        cwd=cwd
+    )
+
+
+class CLIRunner:
+    """Helper class for running CLI commands with a specific ouverture directory."""
+
+    def __init__(self, ouverture_dir: Path):
+        self.ouverture_dir = ouverture_dir
+        self.env = {'OUVERTURE_DIRECTORY': str(ouverture_dir)}
+
+    def run(self, args: list, cwd: str = None) -> subprocess.CompletedProcess:
+        """Run CLI command with this runner's ouverture directory."""
+        return cli_run(args, env=self.env, cwd=cwd)
+
+    def add(self, file_path: str, lang: str) -> str:
+        """Add a function and return its hash."""
+        result = self.run(['add', f'{file_path}@{lang}'])
+        if result.returncode != 0:
+            raise RuntimeError(f"add failed: {result.stderr}")
+        # Extract hash from output
+        for line in result.stdout.split('\n'):
+            if 'Hash:' in line:
+                return line.split('Hash:')[1].strip()
+        raise RuntimeError(f"Could not find hash in output: {result.stdout}")
+
+    def show(self, hash_lang: str) -> str:
+        """Show a function and return its code."""
+        result = self.run(['show', hash_lang])
+        if result.returncode != 0:
+            raise RuntimeError(f"show failed: {result.stderr}")
+        return result.stdout
+
+    def get(self, hash_lang: str) -> str:
+        """Get a function and return its code."""
+        result = self.run(['get', hash_lang])
+        if result.returncode != 0:
+            raise RuntimeError(f"get failed: {result.stderr}")
+        return result.stdout
+
+
 @pytest.fixture
 def mock_ouverture_dir(tmp_path, monkeypatch):
     """
@@ -59,6 +139,18 @@ def mock_ouverture_dir(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ouverture, 'directory_get_ouverture', _get_temp_ouverture_dir)
     return tmp_path
+
+
+@pytest.fixture
+def cli_runner(tmp_path):
+    """
+    Fixture providing a CLIRunner with isolated ouverture directory.
+
+    Use this for integration tests that call CLI commands.
+    """
+    ouverture_dir = tmp_path / '.ouverture'
+    ouverture_dir.mkdir(parents=True, exist_ok=True)
+    return CLIRunner(ouverture_dir)
 
 
 @pytest.fixture

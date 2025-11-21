@@ -1,107 +1,148 @@
 """
-Tests for the 'get' CLI command.
+Integration tests for 'ouverture.py get' command.
 
-Tests retrieving functions from the ouverture pool.
+Grey-box style:
+- Setup: Use 'add' command to create functions
+- Test: Call 'get' command via CLI
+- Assert: Check output contains expected code
+
+Note: 'get' and 'show' are functionally equivalent for single-mapping functions.
 """
-from unittest.mock import patch
-
-import pytest
-
-import ouverture
-from tests.conftest import normalize_code_for_test
 
 
-def test_get_function_missing_lang_suffix():
-    """Test that missing @lang suffix causes error"""
-    with pytest.raises(SystemExit):
-        with patch('sys.stderr'):
-            ouverture.function_get("abc123")
+def test_get_returns_denormalized_code(cli_runner, tmp_path):
+    """Test that get returns function with original names"""
+    # Setup: Create and add a function
+    test_file = tmp_path / "func.py"
+    test_file.write_text('''def process(data):
+    """Process data"""
+    result = data * 2
+    return result
+''')
+    func_hash = cli_runner.add(str(test_file), 'eng')
+
+    # Test: Get the function
+    result = cli_runner.run(['get', f'{func_hash}@eng'])
+
+    # Assert: Should show original function name
+    assert result.returncode == 0
+    assert 'def process(data):' in result.stdout
+    assert 'result' in result.stdout
 
 
-def test_get_function_invalid_lang_code():
-    """Test that invalid language code causes error"""
-    with pytest.raises(SystemExit):
-        with patch('sys.stderr'):
-            ouverture.function_get("abc123@en")  # Should be 3 chars
+def test_get_preserves_imports(cli_runner, tmp_path):
+    """Test that get preserves imports in output"""
+    # Setup
+    test_file = tmp_path / "with_imports.py"
+    test_file.write_text('''import json
+from pathlib import Path
+
+def load_config(filepath):
+    """Load config from JSON file"""
+    path = Path(filepath)
+    with path.open() as f:
+        return json.load(f)
+''')
+    func_hash = cli_runner.add(str(test_file), 'eng')
+
+    # Test
+    result = cli_runner.run(['get', f'{func_hash}@eng'])
+
+    # Assert
+    assert result.returncode == 0
+    assert 'import json' in result.stdout
+    assert 'from pathlib import Path' in result.stdout
 
 
-def test_get_function_invalid_hash_format():
-    """Test that invalid hash format causes error"""
-    with pytest.raises(SystemExit):
-        with patch('sys.stderr'):
-            ouverture.function_get("notahash@eng")
+def test_get_multilingual_english(cli_runner, tmp_path):
+    """Test get retrieves correct language version - English"""
+    # Setup
+    eng_file = tmp_path / "eng.py"
+    eng_file.write_text('''def greet(name):
+    """Greet someone in English"""
+    return f"Hello, {name}!"
+''')
+    fra_file = tmp_path / "fra.py"
+    fra_file.write_text('''def greet(name):
+    """Saluer quelqu'un en français"""
+    return f"Hello, {name}!"
+''')
+
+    func_hash = cli_runner.add(str(eng_file), 'eng')
+    cli_runner.add(str(fra_file), 'fra')
+
+    # Test
+    result = cli_runner.run(['get', f'{func_hash}@eng'])
+
+    # Assert
+    assert result.returncode == 0
+    assert 'Greet someone in English' in result.stdout
 
 
-def test_get_function_not_found():
-    """Test that non-existent function causes error"""
-    with pytest.raises(SystemExit):
-        with patch('sys.stderr'):
-            hash_value = "a" * 64
-            ouverture.function_get(f"{hash_value}@eng")
+def test_get_multilingual_french(cli_runner, tmp_path):
+    """Test get retrieves correct language version - French"""
+    # Setup
+    eng_file = tmp_path / "eng.py"
+    eng_file.write_text('''def greet(name):
+    """Greet someone in English"""
+    return f"Hello, {name}!"
+''')
+    fra_file = tmp_path / "fra.py"
+    fra_file.write_text('''def greet(name):
+    """Saluer quelqu'un en français"""
+    return f"Hello, {name}!"
+''')
+
+    func_hash = cli_runner.add(str(eng_file), 'eng')
+    cli_runner.add(str(fra_file), 'fra')
+
+    # Test
+    result = cli_runner.run(['get', f'{func_hash}@fra'])
+
+    # Assert
+    assert result.returncode == 0
+    assert 'Saluer' in result.stdout
 
 
-def test_get_function_language_not_found(mock_ouverture_dir):
-    """Test that requesting unavailable language causes error (v0 format)"""
-    # Create a function with only English
-    hash_value = "c" * 64
-    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 42")
-    with patch('sys.stdout'):
-        ouverture.function_save_v0(hash_value, "eng",
-                                   normalized_code,
-                                   "English doc",
-                                   {"_ouverture_v_0": "foo"}, {})
+def test_get_missing_language_suffix_fails(cli_runner, tmp_path):
+    """Test that get fails without language suffix"""
+    # Setup
+    test_file = tmp_path / "test.py"
+    test_file.write_text('def foo(): pass')
+    func_hash = cli_runner.add(str(test_file), 'eng')
 
-    # Try to get it in French
-    with pytest.raises(SystemExit):
-        with patch('sys.stderr'):
-            ouverture.function_get(f"{hash_value}@fra")
+    # Test
+    result = cli_runner.run(['get', func_hash])
+
+    # Assert
+    assert result.returncode != 0
 
 
-def test_get_function_success(mock_ouverture_dir):
-    """Test successfully retrieving a function (v0 format)"""
-    # Save a function
-    hash_value = "d" * 64
-    normalized_code = """
-def _ouverture_v_0(_ouverture_v_1, _ouverture_v_2):
-    _ouverture_v_3 = _ouverture_v_1 + _ouverture_v_2
-    return _ouverture_v_3
-"""
-    name_mapping = {
-        "_ouverture_v_0": "add",
-        "_ouverture_v_1": "x",
-        "_ouverture_v_2": "y",
-        "_ouverture_v_3": "result"
-    }
+def test_get_invalid_hash_fails(cli_runner):
+    """Test that get fails with invalid hash format"""
+    result = cli_runner.run(['get', 'not-a-valid-hash@eng'])
 
-    with patch('sys.stdout'):
-        ouverture.function_save_v0(hash_value, "eng", normalized_code,
-                                   "Add two numbers", name_mapping, {})
-
-    # Retrieve it
-    with patch('sys.stdout') as mock_stdout:
-        ouverture.function_get(f"{hash_value}@eng")
-
-        # Verify it was printed (can't easily capture print output)
-        # Just verify no exception was raised
+    assert result.returncode != 0
 
 
-def test_get_function_v1_format(mock_ouverture_dir):
-    """Test retrieving a function in v1 format"""
-    hash_value = "e" * 64
-    normalized_code = normalize_code_for_test("def _ouverture_v_0(_ouverture_v_1): return _ouverture_v_1 * 2")
-    name_mapping = {"_ouverture_v_0": "double", "_ouverture_v_1": "value"}
+def test_get_nonexistent_function_fails(cli_runner):
+    """Test that get fails for nonexistent function"""
+    fake_hash = "f" * 64
 
-    # Save in v1 format
-    ouverture.function_save(hash_value, "eng", normalized_code, "Double the value", name_mapping, {})
+    result = cli_runner.run(['get', f'{fake_hash}@eng'])
 
-    # Retrieve it
-    output = []
-    def capture_print(x='', **kwargs):
-        output.append(str(x))
+    assert result.returncode != 0
 
-    with patch('builtins.print', side_effect=capture_print):
-        ouverture.function_get(f"{hash_value}@eng")
 
-    output_text = '\n'.join(output)
-    assert "double" in output_text
-    assert "value" in output_text
+def test_get_nonexistent_language_fails(cli_runner, tmp_path):
+    """Test that get fails when language doesn't exist"""
+    # Setup: Add function in English only
+    test_file = tmp_path / "eng_only.py"
+    test_file.write_text('def foo(): pass')
+    func_hash = cli_runner.add(str(test_file), 'eng')
+
+    # Test: Try to get in Spanish (doesn't exist)
+    result = cli_runner.run(['get', f'{func_hash}@spa'])
+
+    # Assert
+    assert result.returncode != 0

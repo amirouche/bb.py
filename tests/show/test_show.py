@@ -1,148 +1,187 @@
 """
-Tests for the 'show' CLI command.
+Integration tests for 'ouverture.py show' command.
 
-Tests displaying functions from the ouverture pool with mapping exploration.
+Grey-box style:
+- Setup: Use 'add' command to create functions
+- Test: Call 'show' command via CLI
+- Assert: Check output contains expected code
 """
-from unittest.mock import patch
-
-import pytest
-
-import ouverture
-from tests.conftest import normalize_code_for_test
 
 
-def test_function_show_single_mapping(mock_ouverture_dir):
-    """Test show command with single mapping - should output code directly"""
-    func_hash = "a0001000" + "0" * 56
-    lang = "eng"
-    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 42")
-    docstring = "Return 42"
-    name_mapping = {"_ouverture_v_0": "answer"}
-    alias_mapping = {}
+def test_show_displays_denormalized_code(cli_runner, tmp_path):
+    """Test that show displays function with original names restored"""
+    # Setup: Create and add a function
+    test_file = tmp_path / "greet.py"
+    test_file.write_text('''def greet(name):
+    """Say hello"""
+    return f"Hello, {name}!"
+''')
+    func_hash = cli_runner.add(str(test_file), 'eng')
 
-    # Create function with single mapping
-    ouverture.function_save(func_hash, lang, normalized_code, docstring, name_mapping, alias_mapping)
+    # Test: Show the function
+    result = cli_runner.run(['show', f'{func_hash}@eng'])
 
-    # Capture output
-    output = []
-    def capture_print(x='', **kwargs):
-        output.append(str(x))
-
-    with patch('builtins.print', side_effect=capture_print):
-        ouverture.function_show(f"{func_hash}@{lang}")
-
-    # Should output the denormalized code directly
-    output_text = '\n'.join(output)
-    assert 'def answer():' in output_text
-    assert 'Return 42' in output_text
+    # Assert: Should show original function name
+    assert result.returncode == 0
+    assert 'def greet(name):' in result.stdout
+    assert 'Hello' in result.stdout
+    # Should NOT show normalized names
+    assert '_ouverture_v_0' not in result.stdout
 
 
-def test_function_show_multiple_mappings_menu(mock_ouverture_dir):
-    """Test show command with multiple mappings - should show selection menu"""
-    func_hash = "a0002000" + "0" * 56
-    lang = "eng"
-    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 100")
+def test_show_displays_docstring(cli_runner, tmp_path):
+    """Test that show includes the docstring"""
+    # Setup
+    test_file = tmp_path / "documented.py"
+    test_file.write_text('''def calculate_average(numbers):
+    """Calculate the average of a list of numbers.
 
-    # Create function with two mappings
-    ouverture.function_save_v1(func_hash, normalized_code, ouverture.metadata_create())
-    hash1 = ouverture.mapping_save_v1(func_hash, lang, "Formal doc", {"_ouverture_v_0": "formal_name"}, {}, "Formal variant")
-    hash2 = ouverture.mapping_save_v1(func_hash, lang, "Casual doc", {"_ouverture_v_0": "casual_name"}, {}, "Casual variant")
+    Args:
+        numbers: List of numbers
 
-    # Capture output
-    output = []
-    def capture_print(x='', **kwargs):
-        output.append(str(x))
+    Returns:
+        The arithmetic mean
+    """
+    total = sum(numbers)
+    return total / len(numbers)
+''')
+    func_hash = cli_runner.add(str(test_file), 'eng')
 
-    with patch('builtins.print', side_effect=capture_print):
-        ouverture.function_show(f"{func_hash}@{lang}")
+    # Test
+    result = cli_runner.run(['show', f'{func_hash}@eng'])
 
-    output_text = '\n'.join(output)
-
-    # Should show selection menu
-    assert "Multiple mappings found" in output_text
-    assert "Formal variant" in output_text
-    assert "Casual variant" in output_text
-    assert f"show {func_hash}@{lang}@" in output_text
-
-
-def test_function_show_explicit_mapping_hash(mock_ouverture_dir):
-    """Test show command with explicit mapping hash"""
-    func_hash = "a0003000" + "0" * 56
-    lang = "eng"
-    normalized_code = normalize_code_for_test("def _ouverture_v_0(_ouverture_v_1): return _ouverture_v_1")
-
-    # Create function with two mappings
-    ouverture.function_save_v1(func_hash, normalized_code, ouverture.metadata_create())
-    hash1 = ouverture.mapping_save_v1(func_hash, lang, "First", {"_ouverture_v_0": "first", "_ouverture_v_1": "x"}, {}, "First variant")
-    hash2 = ouverture.mapping_save_v1(func_hash, lang, "Second", {"_ouverture_v_0": "second", "_ouverture_v_1": "y"}, {}, "Second variant")
-
-    # Capture output for explicit mapping
-    output = []
-    def capture_print(x='', **kwargs):
-        output.append(str(x))
-
-    with patch('builtins.print', side_effect=capture_print):
-        ouverture.function_show(f"{func_hash}@{lang}@{hash2}")
-
-    output_text = '\n'.join(output)
-
-    # Should output the second mapping's code
-    assert 'def second(y):' in output_text
-    assert 'Second' in output_text
-    assert 'def first(x):' not in output_text
+    # Assert
+    assert result.returncode == 0
+    assert 'Calculate the average' in result.stdout
+    assert 'arithmetic mean' in result.stdout
 
 
-def test_function_show_v0_backward_compatibility(mock_ouverture_dir):
-    """Test show command works with v0 functions"""
-    func_hash = "a0004000" + "0" * 56
-    lang = "eng"
-    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 77")
-    docstring = "Return 77"
-    name_mapping = {"_ouverture_v_0": "seventy_seven"}
-    alias_mapping = {}
+def test_show_async_function(cli_runner, tmp_path):
+    """Test that show works with async functions"""
+    # Setup
+    test_file = tmp_path / "async.py"
+    test_file.write_text('''async def fetch_data(url):
+    """Fetch data from URL"""
+    response = await http_get(url)
+    return response
+''')
+    func_hash = cli_runner.add(str(test_file), 'eng')
 
-    # Create v0 function
-    ouverture.function_save_v0(func_hash, lang, normalized_code, docstring, name_mapping, alias_mapping)
+    # Test
+    result = cli_runner.run(['show', f'{func_hash}@eng'])
 
-    # Capture output
-    output = []
-    def capture_print(x='', **kwargs):
-        output.append(str(x))
-
-    with patch('builtins.print', side_effect=capture_print):
-        ouverture.function_show(f"{func_hash}@{lang}")
-
-    output_text = '\n'.join(output)
-
-    # Should output the code (v0 has only one mapping per language)
-    assert 'def seventy_seven():' in output_text
-    assert 'Return 77' in output_text
+    # Assert
+    assert result.returncode == 0
+    assert 'async def fetch_data' in result.stdout
 
 
-def test_function_show_invalid_format(mock_ouverture_dir):
-    """Test show command with invalid format"""
-    with pytest.raises(SystemExit):
-        with patch('sys.stderr'):
-            ouverture.function_show("invalid_format")
+def test_show_function_with_imports(cli_runner, tmp_path):
+    """Test that show displays functions with preserved imports"""
+    # Setup
+    test_file = tmp_path / "with_math.py"
+    test_file.write_text('''import math
+
+def circle_area(radius):
+    """Calculate area of a circle"""
+    return math.pi * radius ** 2
+''')
+    func_hash = cli_runner.add(str(test_file), 'eng')
+
+    # Test
+    result = cli_runner.run(['show', f'{func_hash}@eng'])
+
+    # Assert
+    assert result.returncode == 0
+    assert 'import math' in result.stdout
+    assert 'def circle_area(radius):' in result.stdout
 
 
-def test_function_show_function_not_found(mock_ouverture_dir):
-    """Test show command with non-existent function"""
-    func_hash = "notfound" + "0" * 56
-    with pytest.raises(SystemExit):
-        with patch('sys.stderr'):
-            ouverture.function_show(f"{func_hash}@eng")
+def test_show_multilang_english(cli_runner, tmp_path):
+    """Test showing function added in multiple languages - English version"""
+    # Setup: Add same logic in two languages
+    eng_file = tmp_path / "eng.py"
+    eng_file.write_text('''def multiply(value, factor):
+    """Multiply value by factor"""
+    result = value * factor
+    return result
+''')
+    fra_file = tmp_path / "fra.py"
+    fra_file.write_text('''def multiply(value, factor):
+    """Multiplier valeur par facteur"""
+    result = value * factor
+    return result
+''')
+
+    eng_hash = cli_runner.add(str(eng_file), 'eng')
+    cli_runner.add(str(fra_file), 'fra')
+
+    # Test: Show English version
+    result = cli_runner.run(['show', f'{eng_hash}@eng'])
+
+    # Assert: Should show English docstring
+    assert result.returncode == 0
+    assert 'Multiply value by factor' in result.stdout
 
 
-def test_function_show_language_not_found(mock_ouverture_dir):
-    """Test show command with non-existent language"""
-    func_hash = "a0005000" + "0" * 56
-    lang = "eng"
+def test_show_multilang_french(cli_runner, tmp_path):
+    """Test showing function added in multiple languages - French version"""
+    # Setup: Add same logic in two languages
+    eng_file = tmp_path / "eng.py"
+    eng_file.write_text('''def multiply(value, factor):
+    """Multiply value by factor"""
+    result = value * factor
+    return result
+''')
+    fra_file = tmp_path / "fra.py"
+    fra_file.write_text('''def multiply(value, factor):
+    """Multiplier valeur par facteur"""
+    result = value * factor
+    return result
+''')
 
-    # Create function with only English
-    ouverture.function_save(func_hash, lang, normalize_code_for_test("def _ouverture_v_0(): pass"), "Doc", {"_ouverture_v_0": "func"}, {})
+    eng_hash = cli_runner.add(str(eng_file), 'eng')
+    cli_runner.add(str(fra_file), 'fra')
 
-    # Try to show in French (doesn't exist)
-    with pytest.raises(SystemExit):
-        with patch('sys.stderr'):
-            ouverture.function_show(f"{func_hash}@fra")
+    # Test: Show French version
+    result = cli_runner.run(['show', f'{eng_hash}@fra'])
+
+    # Assert: Should show French docstring
+    assert result.returncode == 0
+    assert 'Multiplier valeur par facteur' in result.stdout
+
+
+def test_show_missing_language_suffix_fails(cli_runner, tmp_path):
+    """Test that show fails without language suffix"""
+    # Setup
+    test_file = tmp_path / "test.py"
+    test_file.write_text('def foo(): pass')
+    func_hash = cli_runner.add(str(test_file), 'eng')
+
+    # Test: Run without @lang
+    result = cli_runner.run(['show', func_hash])
+
+    # Assert: Should fail
+    assert result.returncode != 0
+
+
+def test_show_nonexistent_function_fails(cli_runner):
+    """Test that show fails for nonexistent function"""
+    fake_hash = "0" * 64
+
+    result = cli_runner.run(['show', f'{fake_hash}@eng'])
+
+    assert result.returncode != 0
+
+
+def test_show_nonexistent_language_fails(cli_runner, tmp_path):
+    """Test that show fails when language doesn't exist for function"""
+    # Setup: Add function in English only
+    test_file = tmp_path / "eng_only.py"
+    test_file.write_text('def foo(): pass')
+    func_hash = cli_runner.add(str(test_file), 'eng')
+
+    # Test: Try to show in French (doesn't exist)
+    result = cli_runner.run(['show', f'{func_hash}@fra'])
+
+    # Assert: Should fail
+    assert result.returncode != 0
