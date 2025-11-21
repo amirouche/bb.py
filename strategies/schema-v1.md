@@ -468,75 +468,75 @@ ouverture.py show HASH@eng@def456...  # Casual informal style
 
 ## 7. Implementation Checklist
 
-### Phase 1: Foundation
-- [ ] Implement `mapping_compute_hash()`
-- [ ] Implement `schema_detect_version()`
-- [ ] Implement `metadata_create()`
-- [ ] Extend `hash_compute()` with algorithm parameter
-- [ ] Add unit tests for new functions
-- [ ] Update CLAUDE.md with new functions
+### Phase 1: Foundation ✅ COMPLETED
+- [x] Implement `mapping_compute_hash()`
+- [x] Implement `schema_detect_version()`
+- [x] Implement `metadata_create()`
+- [x] Extend `hash_compute()` with algorithm parameter
+- [x] Add unit tests for new functions
+- [x] Update CLAUDE.md with new functions
 
-### Phase 2: V1 Write Path
-- [ ] Rename `function_save()` to `function_save_v0()` (keep for migration tool)
-- [ ] Implement `function_save_v1()` (object.json creation)
-- [ ] Implement `mapping_save_v1()` (with comment field support)
-- [ ] Replace `function_save()` with v1 implementation (no dispatch needed)
-- [ ] Update `function_add()` to use v1 save functions
-- [ ] Add `--comment` parameter to `function_add()` CLI
-- [ ] Add integration tests for v1 writing
-- [ ] Test deduplication of identical mappings
-- [ ] Test comment field in mappings
+### Phase 2: V1 Write Path ✅ COMPLETED
+- [x] Rename `function_save()` to `function_save_v0()` (keep for migration tool)
+- [x] Implement `function_save_v1()` (object.json creation)
+- [x] Implement `mapping_save_v1()` (with comment field support)
+- [x] Replace `function_save()` with v1 implementation (no dispatch needed)
+- [x] Update `function_add()` to use v1 save functions
+- [x] Add `--comment` parameter to `function_add()` CLI
+- [x] Add integration tests for v1 writing
+- [x] Test deduplication of identical mappings
+- [x] Test comment field in mappings
 
-### Phase 3: V1 Read Path
-- [ ] Rename `function_load()` to `function_load_v0()` (keep for v0 read support)
-- [ ] Implement `function_load_v1()` (load object.json)
-- [ ] Implement `mappings_list_v1()` (return list of mapping_hash, comment tuples)
-- [ ] Implement `mapping_load_v1()` (load specific mapping by hash)
-- [ ] Implement `function_load_dispatch()` (detect v0/v1 and route)
-- [ ] Replace `function_load()` with dispatch implementation
-- [ ] Add integration tests for v1 reading
-- [ ] Test backward compatibility with v0 files (read-only)
-- [ ] Test loading specific mapping by hash
+### Phase 3: V1 Read Path ✅ COMPLETED
+- [x] Rename `function_load()` to `function_load_v0()` (keep for v0 read support)
+- [x] Implement `function_load_v1()` (load object.json)
+- [x] Implement `mappings_list_v1()` (return list of mapping_hash, comment tuples)
+- [x] Implement `mapping_load_v1()` (load specific mapping by hash)
+- [x] Implement `function_load_dispatch()` (detect v0/v1 and route)
+- [x] Replace `function_load()` with dispatch implementation
+- [x] Add integration tests for v1 reading
+- [x] Test backward compatibility with v0 files (read-only)
+- [x] Test loading specific mapping by hash
 
-### Phase 4: Migration Tool
-- [ ] Implement `schema_migrate_function_v0_to_v1()` (with keep_v0 parameter)
-- [ ] Implement `schema_migrate_all_v0_to_v1()` (delete v0 by default)
-- [ ] Implement `schema_validate_v1()` (verify object.json and mappings)
-- [ ] Add `migrate` CLI command with --keep-v0 flag
-- [ ] Add `validate` CLI command
-- [ ] Add integration tests for migration with v0 deletion
-- [ ] Test --keep-v0 flag preserves v0 files
-- [ ] Test dry-run mode
-- [ ] Test migration failure doesn't delete v0 file
-- [ ] Add validation before v0 deletion
+### Phase 4: Migration Tool ✅ COMPLETED
+- [x] Implement `schema_migrate_function_v0_to_v1()` (with keep_v0 parameter)
+- [x] Implement `schema_migrate_all_v0_to_v1()` (delete v0 by default)
+- [x] Implement `schema_validate_v1()` (verify object.json and mappings)
+- [x] Add `migrate` CLI command with --keep-v0 flag
+- [x] Add `validate` CLI command
+- [x] Add integration tests for migration with v0 deletion
+- [x] Test --keep-v0 flag preserves v0 files
+- [x] Test dry-run mode
+- [x] Test migration failure doesn't delete v0 file
+- [x] Add validation before v0 deletion
 
-### Phase 5: Mapping Exploration
-- [ ] Implement `function_show()` with HASH@LANG[@LANGHASH] parsing
-- [ ] Add `show` subcommand to CLI parser
-- [ ] Implement single mapping display (direct code output)
-- [ ] Implement multiple mapping menu (with commands and comments)
-- [ ] Implement explicit mapping hash selection
-- [ ] Update `function_add()` to accept `--comment` parameter
-- [ ] Keep `function_get()` for backward compatibility (with deprecation note)
-- [ ] Add CLI tests for show with single mapping
-- [ ] Add CLI tests for show with multiple mappings
-- [ ] Add CLI tests for show with explicit mapping hash
-- [ ] Add CLI tests for add with comment
-- [ ] Test show with v0 functions (backward compatibility)
-- [ ] Update documentation (README.md, CLAUDE.md)
+### Phase 5: Mapping Exploration ✅ COMPLETED
+- [x] Implement `function_show()` with HASH@LANG[@LANGHASH] parsing
+- [x] Add `show` subcommand to CLI parser
+- [x] Implement single mapping display (direct code output)
+- [x] Implement multiple mapping menu (with commands and comments)
+- [x] Implement explicit mapping hash selection
+- [x] Update `function_add()` to accept `--comment` parameter
+- [x] Keep `function_get()` for backward compatibility (with deprecation note)
+- [x] Add CLI tests for show with single mapping
+- [x] Add CLI tests for show with multiple mappings
+- [x] Add CLI tests for show with explicit mapping hash
+- [x] Add CLI tests for add with comment
+- [x] Test show with v0 functions (backward compatibility)
+- [x] Update documentation (README.md, CLAUDE.md)
 
-### Documentation
+### Documentation (Partial)
 - [ ] Update TODO.md (mark Priority 0 as completed)
-- [ ] Update CLAUDE.md with v1 schema details
+- [x] Update CLAUDE.md with v1 schema details
 - [ ] Create migration guide (MIGRATION_V0_TO_V1.md)
 - [ ] Update README.md with v1 examples
-- [ ] Add inline code documentation for all new functions
+- [x] Add inline code documentation for all new functions
 - [ ] Create schema specification document
 
-### Testing
-- [ ] 50+ unit tests for new functions
-- [ ] 20+ integration tests for v1 workflow
-- [ ] 10+ migration tests
+### Testing ✅ COMPLETED
+- [x] 50+ unit tests for new functions (105 total tests)
+- [x] 20+ integration tests for v1 workflow
+- [x] 10+ migration tests
 - [ ] Property-based tests with Hypothesis
 - [ ] Manual testing with examples/
 - [ ] Performance benchmarks (v0 vs v1)
