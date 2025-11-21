@@ -164,7 +164,7 @@ The import is normalized to `from ouverture import abc123def`, making it languag
 
 French for "opening" or "overture" - the beginning of something larger. A door that was previously closed. Also a nod to the multilingual nature of the project.
 
-## Origins & Vision
+## Origins, Vision & Philosophy
 
 This idea has been brewing for over a decade, long before the current LLM revolution. The core goals were:
 
@@ -177,6 +177,14 @@ This idea has been brewing for over a decade, long before the current LLM revolu
 If Ouverture succeeds, it could become infrastructure like npmjs—but with **less friction, less drama, and fewer barriers**. The irony? The vision remains relevant even without LLMs. The core idea—content-addressable, multilingual code—stands on its own.
 
 This explains why the hash-on-logic-not-names design is so critical—it's not just a technical detail, it's the **enabler of the entire multilingual vision**. A French developer writing `calculer_somme(nombres)` and an English developer writing `calculate_sum(numbers)` are contributing the **same** function to the same pool.
+
+### Why This Matters
+
+Code is thought made explicit. Language shapes thought. If code can only be "readable" in one language, we're limiting who can think clearly in code.
+
+As AI systems trained predominantly on English codebases become ubiquitous, there's a subtle risk: we might optimize code for machine readability while narrowing the range of human expression. Ouverture explores whether we can have both—tools that work *with* multilingual thinking instead of requiring everyone to think the same way.
+
+That's the opening ("ouverture"): a door that was previously closed, now made possible.
 
 ## Architecture
 
@@ -210,14 +218,6 @@ We especially welcome:
 - No semantic analysis (purely syntactic)
 - Limited testing on edge cases
 - No package distribution yet
-
-## Philosophy
-
-Code is thought made explicit. Language shapes thought. If code can only be "readable" in one language, we're limiting who can think clearly in code.
-
-As AI systems trained predominantly on English codebases become ubiquitous, there's a subtle risk: we might optimize code for machine readability while narrowing the range of human expression. Ouverture explores whether we can have both—tools that work *with* multilingual thinking instead of requiring everyone to think the same way.
-
-That's the opening ("ouverture"): a door that was previously closed, now made possible.
 
 ## License
 
