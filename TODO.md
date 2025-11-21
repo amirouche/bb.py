@@ -9,18 +9,26 @@ Context sources:
 
 ## Priority 0: Git Remotes, async def / await Support, Compilation and Applications
 
-### Git Remotes
-- Implement `ouverture.py remote add NAME git@host:user/repo.git` for Git remotes
-- Implement `ouverture.py remote add NAME https://host/user/repo.git` for Git HTTPS remotes
-- Store functions in a Git repository structure compatible with ouverture pool format
-- Support authentication via SSH keys and Git credential helpers
-- Implement `remote pull` and `remote push` for Git remotes
-
 ### Async/Await Support
 - Add support for `async def` functions (ast.AsyncFunctionDef)
 - Handle `await` expressions in normalization
 - Normalize async function names to `_ouverture_v_0` like regular functions
 - Document async function behavior and limitations
+
+### Git Remotes
+- Implement `ouverture.py remote add NAME git@host:user/repo.git` for Git SSH remotes
+- Implement `ouverture.py remote add NAME git+https://host/user/repo.git` for Git HTTPS remotes
+- Implement `ouverture.py remote add NAME git+file:///path/to/repo` for local Git remotes
+- Store functions in a Git repository structure compatible with ouverture pool format
+- Support authentication via SSH keys and Git credential helpers
+- Implement `remote pull` and `remote push` for Git remotes
+
+### Test Reorganization
+- Reorganize tests into directory structure based on CLI commands
+- Create `tests/` directory with subdirectory per command (e.g., `tests/add/`, `tests/show/`, `tests/run/`)
+- Each command directory contains test cases specific to that CLI command
+- Keep `test_ouverture.py` for complex internal tests (AST rewriting, on-disk schema validation, hash computation)
+- Add integration tests that exercise full CLI workflows
 
 ### Compilation
 - Implement `ouverture.py compile HASH@lang` command to generate standalone executable
