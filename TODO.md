@@ -155,6 +155,25 @@ Mapping files are content-addressed by hashing their content, enabling deduplica
 - Add filtering by language, author, date
 - Display function statistics (downloads, ratings if available)
 
+### Search Indexing (Performance Enhancement)
+- Implement local index for faster search operations
+- Index structure: metadata cache (function hashes, docstrings, tags, dependencies)
+- Index file: `$OUVERTURE_DIRECTORY/index.db` (SQLite or JSON-based)
+- Automatically update index on `add`, `translate`, and `get` operations
+- Implement `ouverture.py index rebuild` command to rebuild index from objects directory
+- Implement `ouverture.py index verify` command to check index consistency
+- Support incremental indexing (only reindex changed functions)
+- Search query optimization:
+  - Full-text search on docstrings across all languages
+  - Prefix/substring matching on function names
+  - Tag-based filtering
+  - Dependency graph traversal
+- Fallback to direct filesystem scan if index is missing or corrupted
+- Design considerations:
+  - Keep index schema compatible with future v1 storage format
+  - Index should be optional (search works without it, just slower)
+  - Consider memory-mapped index for large repositories (10,000+ functions)
+
 ### Function Operations
 - Implement `ouverture.py translate HASH@LANG LANG` to add translation to existing function
 - Implement `ouverture.py review HASH` to recursively review function and dependencies (in user's preferred languages)
