@@ -117,6 +117,48 @@ hello-claude/
 - Rewrites imports: `from ouverture import X` → `from ouverture import X as alias` (restores alias)
 - Transforms calls: `HASH._ouverture_v_0(...)` → `alias(...)`
 
+### Storage Schema
+
+#### Current Schema (v0)
+
+Functions are stored in `.ouverture/objects/XX/YYYYYY.json` where XX is the first 2 characters of the hash.
+
+```json
+{
+  "version": 0,
+  "hash": "abc123def456...",
+  "normalized_code": "def _ouverture_v_0(...):\n    ...",
+  "docstrings": {
+    "eng": "Calculate the average...",
+    "fra": "Calculer la moyenne..."
+  },
+  "name_mappings": {
+    "eng": {"_ouverture_v_0": "calculate_average", "_ouverture_v_1": "numbers"},
+    "fra": {"_ouverture_v_0": "calculer_moyenne", "_ouverture_v_1": "nombres"}
+  },
+  "alias_mappings": {
+    "eng": {"abc123": "helper"},
+    "fra": {"abc123": "assistant"}
+  }
+}
+```
+
+**Current limitations**:
+- Language codes limited to 3 characters (ISO 639-3)
+- Only one mapping per language
+- Mappings stored inline (no deduplication)
+- Limited extensibility
+
+#### Future Schema (v1) - Planned
+
+See `TODO.md` Priority 0 for the comprehensive redesign plan. Key improvements:
+- Language identifiers up to 256 characters
+- Multiple mappings per language (array of mapping hashes)
+- Content-addressed mapping storage (separate files, deduplicated)
+- Extensible metadata (author, timestamp, tags, dependencies)
+- Alternative hash algorithms support
+- Optional compression
+
 ### CLI Commands
 
 **Target CLI interface** (some commands not yet implemented):

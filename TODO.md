@@ -7,6 +7,106 @@ Context sources:
 - `CLAUDE.md` - Technical architecture and development conventions (single-file design)
 - `README.md` - Project vision and philosophy
 
+## Priority 0: Future-Proof On-Disk Schema
+
+**Current schema issues**:
+- Language codes limited to 3 characters (ISO 639-3)
+- Only one name/alias mapping per language
+- Mappings stored inline (no deduplication)
+- Limited extensibility for metadata
+
+**Schema redesign requirements**:
+
+### Language Support
+- Support language identifiers up to 256 characters
+- Enable custom language tags (e.g., "eng-formal", "fra-canadian", "python-3.12")
+- Allow arbitrary metadata per language variant
+
+### Multiple Mappings Per Language
+- Support multiple name mappings for same function in same language
+- Use case: Different naming conventions (camelCase vs snake_case)
+- Use case: Formal vs informal variable names
+- Store array of mappings rather than single mapping per language
+
+### Content-Addressed Mappings
+- Hash the content of each name/alias mapping
+- Store mappings by hash: `.ouverture/mappings/XX/YYYYYY.json`
+- Reference mappings from function metadata by hash
+- Deduplication: identical mappings across functions stored once
+- Structure: `{mapping_hash, lang, name_mapping, alias_mapping}`
+
+### Schema Versioning and Migration
+- Implement schema version migration strategy
+- Support reading old schema versions
+- Provide migration tool: `ouverture.py migrate`
+- Document migration path from v0 to v1+
+
+### Extensible Metadata
+- Add `metadata` field for extensible key-value pairs
+- Support: author, timestamp, tags, description
+- Support: dependencies (list of function hashes this depends on)
+- Support: test_cases, examples
+- Support: performance_characteristics (time/space complexity)
+- Keep backward compatibility (optional fields)
+
+### Alternative Hash Algorithms
+- Support multiple hash algorithms (SHA256, BLAKE2b, etc.)
+- Store hash algorithm in metadata: `hash_algorithm: "sha256"`
+- Enable migration to stronger algorithms in future
+- Verify hash on load using specified algorithm
+
+### Compression and Encoding
+- Add optional compression for large normalized_code
+- Store encoding type in metadata: `encoding: "gzip" | "none"`
+- Transparent decompression on load
+
+### Proposed Schema v1
+
+```json
+{
+  "schema_version": 1,
+  "hash": "abc123...",
+  "hash_algorithm": "sha256",
+  "normalized_code": "...",
+  "encoding": "none",
+  "metadata": {
+    "created": "2025-11-21T10:00:00Z",
+    "author": "username",
+    "tags": ["math", "statistics"],
+    "dependencies": ["def456...", "ghi789..."]
+  },
+  "languages": {
+    "eng": {
+      "docstring": "...",
+      "mappings": ["mapping_hash_1", "mapping_hash_2"]
+    },
+    "fra-canadian": {
+      "docstring": "...",
+      "mappings": ["mapping_hash_3"]
+    }
+  }
+}
+```
+
+### Mapping Storage (Separate Files)
+
+```json
+{
+  "mapping_hash": "xyz789...",
+  "lang": "eng",
+  "variant": "formal",
+  "name_mapping": {"_ouverture_v_0": "calculate_average", ...},
+  "alias_mapping": {"abc123": "helper"}
+}
+```
+
+### Implementation Plan
+- Design schema v1 with all future-proofing features
+- Implement backward compatibility: read v0, write v1
+- Create migration tool for existing pools
+- Add validation for schema integrity
+- Document schema in detail for external implementations
+
 ## Priority 1: User Identity and Configuration
 
 ### Configuration System
