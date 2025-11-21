@@ -215,9 +215,9 @@ We especially welcome:
 
 Code is thought made explicit. Language shapes thought. If code can only be "readable" in one language, we're limiting who can think clearly in code.
 
-Ouverture doesn't mandate multilingual code—it makes it *possible*. That's the opening ("ouverture"): a door that was previously closed.
+As AI systems trained predominantly on English codebases become ubiquitous, there's a subtle risk: we might optimize code for machine readability while narrowing the range of human expression. Ouverture explores whether we can have both—tools that work *with* multilingual thinking instead of requiring everyone to think the same way.
 
-In a world where AI systems are trained predominantly on English codebases, we wanted to build tools that work *with* multilingual thinking instead of requiring everyone to think the same way.
+That's the opening ("ouverture"): a door that was previously closed, now made possible.
 
 ## License
 
