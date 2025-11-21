@@ -102,8 +102,9 @@ cat examples/example_simple_spanish.py  # Spanish
 # Add a function to the pool
 python3 ouverture.py add examples/example_simple.py@eng
 
-# Get the hash (stored in .ouverture/objects/)
-find .ouverture/objects -name "*.json"
+# Get the hash (stored in $HOME/.local/ouverture/objects/ by default)
+# Note: Use $OUVERTURE_DIRECTORY to customize the location
+find ~/.local/ouverture/objects -name "*.json"
 
 # Retrieve in different language
 python3 ouverture.py get <HASH>@fra
@@ -191,7 +192,7 @@ That's the opening ("ouverture"): a door that was previously closed, now made po
 ## Architecture
 
 - **Single file**: `ouverture.py` (~600 lines)
-- **Storage**: `.ouverture/objects/XX/YYYYYY.json` (content-addressed)
+- **Storage**: `$HOME/.local/ouverture/objects/XX/YYYYYY.json` (content-addressed, configurable via `OUVERTURE_DIRECTORY`)
 - **Language codes**: ISO 639-3 (eng, fra, spa, etc.)
 - **Hash algorithm**: SHA256 on normalized AST
 

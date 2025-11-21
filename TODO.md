@@ -30,7 +30,8 @@ Context sources:
 
 ### Content-Addressed Mappings
 - Hash the content of each name/alias mapping (docstring + name_mapping + alias_mapping)
-- Store mappings within function directory: `.ouverture/objects/ab/c123.../lang-code/XX/YYYYYY.json`
+- Store mappings within function directory: `$OUVERTURE_DIRECTORY/objects/ab/c123.../lang-code/XX/YYYYYY.json`
+  (default: `$HOME/.local/ouverture/objects/ab/c123.../lang-code/XX/YYYYYY.json`)
 - No hash references in object.json - mappings discovered by scanning language directories
 - Deduplication: identical mappings share same hash/file within language directory
 - Structure: `{docstring, name_mapping, alias_mapping}`
@@ -64,7 +65,7 @@ Context sources:
 ### Proposed Schema v1 - Directory Structure
 
 ```
-.ouverture/objects/
+$OUVERTURE_DIRECTORY/objects/          # Default: $HOME/.local/ouverture/objects/
   ab/                                    # First 2 chars of function hash
     c123def456.../                       # Function directory (remaining hash chars)
       object.json                        # Core function data (no language data)
@@ -120,8 +121,8 @@ Mapping files are content-addressed by hashing their content, enabling deduplica
 ## Priority 1: User Identity and Configuration
 
 ### Configuration System
-- Implement `ouverture.py init` command to create `.ouverture/` config
-- Create `~/.ouverture/config.yaml` for user settings
+- Implement `ouverture.py init` command to initialize ouverture directory (default: `$HOME/.local/ouverture/`)
+- Create `~/.config/ouverture/config.yaml` for user settings (follows XDG Base Directory spec)
 - Implement `ouverture.py whoami username [USERNAME]` to set/get username
 - Implement `ouverture.py whoami email [EMAIL]` to set/get email
 - Implement `ouverture.py whoami public-key [URL]` to set/get public key location
@@ -136,7 +137,7 @@ Mapping files are content-addressed by hashing their content, enabling deduplica
 - Implement `ouverture.py remote remove NAME` to remove remotes
 - Implement `ouverture.py remote pull NAME` to fetch functions from remote
 - Implement `ouverture.py remote push NAME` to publish functions to remote
-- Store remote configuration in `.ouverture/config.yaml`
+- Store remote configuration in `~/.config/ouverture/config.yaml`
 - Support multiple remotes with priority/fallback
 
 ### Remote Storage Backends
@@ -298,7 +299,7 @@ Mapping files are content-addressed by hashing their content, enabling deduplica
 ### Phase 4: Federation (Year 2)
 - Design federated registry protocol
 - Implement private registry support
-- Add registry configuration in `~/.ouverture/config.yaml`
+- Add registry configuration in `~/.config/ouverture/config.yaml`
 - Implement registry priority and fallback
 - Add semantic search with ML embeddings
 

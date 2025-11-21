@@ -18,9 +18,36 @@ Functions with identical logic but different naming (e.g., English vs French var
 1. **AST-based normalization**: Source code is parsed into an AST, normalized, then unparsed
 2. **Hash on logic, not names**: Docstrings excluded from hash computation to enable multilingual support
 3. **Bidirectional mapping**: Original names preserved for reconstruction in target language
-4. **Content-addressed storage**: Functions stored by hash in `.ouverture/objects/XX/YYYYYY.json`
+4. **Content-addressed storage**: Functions stored by hash in `$HOME/.local/ouverture/objects/XX/YYYYYY.json` (configurable via `OUVERTURE_DIRECTORY` environment variable)
 5. **Single-file architecture**: All code resides in `ouverture.py` - no modularization into separate packages. This keeps the tool simple, self-contained, and easy to distribute as a single script.
 6. **Native language debugging**: Tracebacks and debugger interactions show variable names in the original human language, not normalized forms
+
+### Storage Location Configuration
+
+The ouverture function pool location is controlled by the `OUVERTURE_DIRECTORY` environment variable:
+
+- **Default**: `$HOME/.local/ouverture/` (follows XDG Base Directory specification)
+- **Custom location**: Set `OUVERTURE_DIRECTORY=/path/to/pool` to override
+- **Legacy behavior**: Set `OUVERTURE_DIRECTORY=.ouverture` to use project-local storage (pre-v1.0 behavior)
+
+**Examples**:
+```bash
+# Use default location
+python3 ouverture.py add example.py@eng
+
+# Use custom location
+export OUVERTURE_DIRECTORY=/shared/pool
+python3 ouverture.py add example.py@eng
+
+# Use project-local directory
+export OUVERTURE_DIRECTORY=.ouverture
+python3 ouverture.py add example.py@eng
+```
+
+**Migration note**: If you have existing `.ouverture/` directories in your projects, you can either:
+1. Copy them to `$HOME/.local/ouverture/` to consolidate into a global pool
+2. Set `OUVERTURE_DIRECTORY=.ouverture` to continue using project-local storage
+3. Re-add your functions to the new default location
 
 ### Data Flow
 
@@ -35,7 +62,7 @@ Normalize AST (rename vars, sort imports, rewrite ouverture imports)
     ↓
 Compute hash (on code WITHOUT docstring)
     ↓
-Store in .ouverture/objects/ with:
+Store in $HOME/.local/ouverture/objects/ (or $OUVERTURE_DIRECTORY/objects/) with:
     - normalized_code (with docstring for display)
     - per-language mappings (name_mappings, alias_mappings, docstrings)
 ```
@@ -53,8 +80,10 @@ hello-claude/
 │   ├── example_with_import.py     # Example with stdlib imports
 │   └── example_with_ouverture.py  # Example calling other pool functions
 ├── README_TESTING.md          # Testing documentation
-├── .gitignore                 # Ignores .ouverture/, __pycache__, etc.
-└── .ouverture/                # Generated function pool (gitignored)
+└── .gitignore                 # Ignores __pycache__, etc.
+
+# Function pool (default location, configurable via OUVERTURE_DIRECTORY):
+$HOME/.local/ouverture/
     └── objects/
         └── XX/                # First 2 chars of hash
             └── YYYYYY.json    # Remaining 62 chars + .json
@@ -107,7 +136,7 @@ hello-claude/
 
 #### `function_save(hash_value, lang, ...)` (lines 326-362)
 **Stores function in content-addressed pool**
-- Path: `.ouverture/objects/XX/YYYYYY.json` (XX = first 2 chars of hash)
+- Path: `$OUVERTURE_DIRECTORY/objects/XX/YYYYYY.json` (default: `$HOME/.local/ouverture/`, XX = first 2 chars of hash)
 - Merges with existing data if hash already exists
 - Stores per-language: docstrings, name_mappings, alias_mappings
 
@@ -121,7 +150,7 @@ hello-claude/
 
 #### Current Schema (v0)
 
-Functions are stored in `.ouverture/objects/XX/YYYYYY.json` where XX is the first 2 characters of the hash.
+Functions are stored in `$OUVERTURE_DIRECTORY/objects/XX/YYYYYY.json` (default: `$HOME/.local/ouverture/objects/XX/YYYYYY.json`) where XX is the first 2 characters of the hash.
 
 ```json
 {
@@ -155,7 +184,7 @@ See `TODO.md` Priority 0 for the comprehensive redesign plan.
 
 **Directory Structure:**
 ```
-.ouverture/objects/
+$OUVERTURE_DIRECTORY/objects/  # Default: $HOME/.local/ouverture/objects/
   ab/c123def456.../              # Function directory
     object.json                  # Core function data (no language data)
     eng/xy/z789.../mapping.json  # Language mapping (content-addressed)
@@ -203,7 +232,7 @@ Key improvements:
 
 #### Configuration and Identity
 ```bash
-ouverture.py init                          # Initialize .ouverture/ directory and config
+ouverture.py init                          # Initialize ouverture directory (default: $HOME/.local/ouverture/) and config
 ouverture.py whoami username [USERNAME]    # Get/set username
 ouverture.py whoami email [EMAIL]          # Get/set email
 ouverture.py whoami public-key [URL]       # Get/set public key URL
@@ -388,7 +417,7 @@ python3 ouverture.py add examples/example_simple_french.py@fra
 python3 ouverture.py add examples/example_simple_spanish.py@spa
 
 # Verify they share the same hash
-find .ouverture/objects -name "*.json"
+find ~/.local/ouverture/objects -name "*.json"  # or $OUVERTURE_DIRECTORY/objects/
 
 # Retrieve in different language
 python3 ouverture.py get HASH@eng
@@ -430,9 +459,10 @@ Based on recent commits:
 
 ### Ignored Files
 
-- `.ouverture/`: Generated function pool (never commit)
 - `__pycache__/`, `*.pyc`: Python bytecode
 - `.venv/`, `.env`: Virtual environments and secrets
+
+**Note:** The function pool is now stored in `$HOME/.local/ouverture/` by default (configurable via `OUVERTURE_DIRECTORY`), so it's no longer in the project directory and doesn't need to be in `.gitignore`.
 
 ## Import Handling Rules
 
