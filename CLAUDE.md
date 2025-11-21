@@ -21,6 +21,7 @@ Functions with identical logic but different naming (e.g., English vs French var
 4. **Content-addressed storage**: Functions stored by hash in `$HOME/.local/ouverture/objects/XX/YYYYYY.json` (configurable via `OUVERTURE_DIRECTORY` environment variable)
 5. **Single-file architecture**: All code resides in `ouverture.py` - no modularization into separate packages. This keeps the tool simple, self-contained, and easy to distribute as a single script.
 6. **Native language debugging**: Tracebacks and debugger interactions show variable names in the original human language, not normalized forms
+7. **Object prefix for valid identifiers**: Ouverture imports use `object_` prefix (e.g., `from ouverture.pool import object_abc123 as func`) to ensure valid Python identifiers since SHA256 hashes can start with digits (0-9)
 
 ### Storage Location Configuration
 
@@ -395,11 +396,23 @@ ouverture.py search [NAME | URL] [QUERY...]    # Search and list functions by qu
 ```
 
 **Currently implemented**:
+- `init` command: Initialize ouverture directory and config file
+- `whoami` command: Get/set user configuration (username, email, public-key, language)
 - `add` command: Parses file, normalizes AST, computes hash, saves to local pool
 - `show` command: Shows function with mapping exploration and selection (v0 and v1 compatible)
 - `get` command: Retrieves function from local pool, denormalizes to target language
+- `translate` command: Add translation for existing function (interactive prompts)
+- `run` command: Execute function interactively
+- `run --debug` command: Execute with debugger using native language variables
+- `review` command: Recursively review function and dependencies
+- `log` command: Show git-like commit log of pool
+- `search` command: Search and list functions by query
+- `remote add/remove/list` commands: Manage remote repositories
+- `remote pull/push` commands: Fetch/publish functions (file:// URLs supported, HTTP/HTTPS planned)
 - `migrate` command: Migrates functions from v0 to v1 schema format
 - `validate` command: Validates v1 function structure
+
+**Status**: All commands from the target CLI interface are now implemented. HTTP/HTTPS remotes are planned for future development.
 
 **Language codes**: Currently 3 characters (ISO 639-3: eng, fra, spa, etc.), future support for any string <256 chars
 
@@ -498,6 +511,17 @@ This makes debugging natural for developers working in their native language.
 - **Test naming**: Use descriptive names like `test_<component>_<behavior>` (e.g., `test_ast_normalizer_visit_name_with_mapping`)
 - **Test file**: `test_ouverture.py` contains 50+ test functions
 - **Documentation**: See `README_PYTEST.md` for comprehensive testing guide
+- **Normalized code strings**: All normalized code strings in tests MUST use the `normalize_code_for_test()` helper function. This ensures the code format matches `ast.unparse()` output (with proper line breaks and indentation).
+
+**Example of normalize_code_for_test usage**:
+```python
+# Wrong - this format never exists in practice:
+normalized_code = "def _ouverture_v_0(): return 42"
+
+# Correct - use the helper function:
+normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 42")
+# Returns: "def _ouverture_v_0():\n    return 42"
+```
 
 ### Important Invariants
 
@@ -620,42 +644,46 @@ import math
 ```
 
 #### 2. Ouverture Imports (Pool Functions)
-**Examples**: `from ouverture.pool import abc123def as helper`
+**Examples**: `from ouverture.pool import object_abc123def as helper`
+
+**Important**: Ouverture imports must use the `object_` prefix followed by the hash. This ensures valid Python identifiers since SHA256 hashes can start with digits (0-9), which would otherwise be invalid identifiers.
 
 **Processing**:
 
 **Before storage (normalization)**:
 ```python
-from ouverture.pool import abc123def as helper
+from ouverture.pool import object_abc123def as helper
 ```
 ↓ becomes ↓
 ```python
-from ouverture.pool import abc123def
+from ouverture.pool import object_abc123def
 ```
 - Alias removed: `as helper` is dropped
-- Alias tracked in `alias_mapping`: `{"abc123def": "helper"}`
-- Function calls transformed: `helper(x)` → `abc123def._ouverture_v_0(x)`
+- Alias tracked in `alias_mapping`: `{"abc123def": "helper"}` (actual hash without prefix)
+- Function calls transformed: `helper(x)` → `object_abc123def._ouverture_v_0(x)`
 
 **From storage (denormalization)**:
 ```python
-from ouverture.pool import abc123def
+from ouverture.pool import object_abc123def
 ```
 ↓ becomes ↓
 ```python
-from ouverture.pool import abc123def as helper
+from ouverture.pool import object_abc123def as helper
 ```
 - Language-specific alias restored: `as helper` (from `alias_mapping[lang]`)
-- Function calls transformed back: `abc123def._ouverture_v_0(x)` → `helper(x)`
+- Function calls transformed back: `object_abc123def._ouverture_v_0(x)` → `helper(x)`
 
 ### Why This Design?
 
 - **Standard imports** are universal (same across all languages)
 - **Ouverture imports** have language-specific aliases:
-  - English: `from ouverture.pool import abc123 as helper`
-  - French: `from ouverture.pool import abc123 as assistant`
-  - Spanish: `from ouverture.pool import abc123 as ayudante`
+  - English: `from ouverture.pool import object_abc123 as helper`
+  - French: `from ouverture.pool import object_abc123 as assistant`
+  - Spanish: `from ouverture.pool import object_abc123 as ayudante`
 
-All normalize to: `from ouverture.pool import abc123`, ensuring identical hashes.
+All normalize to: `from ouverture.pool import object_abc123`, ensuring identical hashes.
+
+The `object_` prefix is required because SHA256 hashes can start with digits (0-9), which would make them invalid Python identifiers.
 
 ## Key Algorithms
 

@@ -16,6 +16,35 @@ import pytest
 import ouverture
 
 
+def normalize_code_for_test(code: str) -> str:
+    """
+    Normalize code string to match ast.unparse() output format.
+
+    All normalized code strings in tests MUST go through this function to ensure
+    they match the format that ouverture produces. This is because ast.unparse()
+    always outputs code with proper line breaks and indentation, regardless of
+    the input format.
+
+    The function:
+    1. Parses code into AST
+    2. Clears all line/column information recursively (using ouverture.ast_clear_locations)
+    3. Fixes missing locations
+    4. Unparses back to string
+
+    Example:
+        # Wrong - this format never exists in practice:
+        normalized_code = "def _ouverture_v_0(): return 42"
+
+        # Correct - use this helper:
+        normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 42")
+        # Returns: "def _ouverture_v_0():\\n    return 42"
+    """
+    tree = ast.parse(code)
+    ouverture.ast_clear_locations(tree)
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
+
+
 @pytest.fixture
 def mock_ouverture_dir(tmp_path, monkeypatch):
     """
@@ -661,7 +690,7 @@ def test_save_function_new_function(mock_ouverture_dir):
     """Test saving a new function (v0 format - legacy)"""
     hash_value = "a" * 64
     lang = "eng"
-    normalized_code = "def _ouverture_v_0(): return 42"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 42")
     docstring = "Test function"
     name_mapping = {"_ouverture_v_0": "foo"}
     alias_mapping = {}
@@ -688,7 +717,7 @@ def test_save_function_new_function(mock_ouverture_dir):
 def test_save_function_additional_language(mock_ouverture_dir):
     """Test adding another language to existing function (v0 format - legacy)"""
     hash_value = "b" * 64
-    normalized_code = "def _ouverture_v_0(): return 42"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 42")
 
     # Save English version
     with patch('sys.stdout'):
@@ -900,9 +929,10 @@ def test_get_function_language_not_found(mock_ouverture_dir):
     """Test that requesting unavailable language causes error (v0 format)"""
     # Create a function with only English
     hash_value = "c" * 64
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 42")
     with patch('sys.stdout'):
         ouverture.function_save_v0(hash_value, "eng",
-                                   "def _ouverture_v_0(): return 42",
+                                   normalized_code,
                                    "English doc",
                                    {"_ouverture_v_0": "foo"}, {})
 
@@ -1208,7 +1238,7 @@ def test_hash_compute_algorithm_deterministic():
 def test_function_save_v1_creates_object_json(mock_ouverture_dir):
     """Test that function_save_v1 creates proper object.json"""
     test_hash = "abcd1234" + "0" * 56
-    normalized_code = "def _ouverture_v_0(): pass"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): pass")
     metadata = {
         'created': '2025-01-01T00:00:00Z',
         'author': 'testuser',
@@ -1241,7 +1271,7 @@ def test_function_save_v1_creates_object_json(mock_ouverture_dir):
 def test_function_save_v1_no_language_data(mock_ouverture_dir):
     """Test that function_save_v1 does NOT include language-specific data"""
     test_hash = "abcd1234" + "0" * 56
-    normalized_code = "def _ouverture_v_0(): pass"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): pass")
     metadata = ouverture.metadata_create()
 
     ouverture.function_save_v1(test_hash, normalized_code, metadata)
@@ -1270,7 +1300,7 @@ def test_mapping_save_v1_creates_mapping_json(mock_ouverture_dir):
     comment = "Test variant"
 
     # First create the function (object.json must exist)
-    normalized_code = "def _ouverture_v_0(): pass"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): pass")
     metadata = ouverture.metadata_create()
     ouverture.function_save_v1(func_hash, normalized_code, metadata)
 
@@ -1306,7 +1336,7 @@ def test_mapping_save_v1_returns_hash(mock_ouverture_dir):
     comment = ""
 
     # Create function first
-    ouverture.function_save_v1(func_hash, "def _ouverture_v_0(): pass", ouverture.metadata_create())
+    ouverture.function_save_v1(func_hash, normalize_code_for_test("def _ouverture_v_0(): pass"), ouverture.metadata_create())
 
     # Save mapping
     mapping_hash = ouverture.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
@@ -1331,8 +1361,8 @@ def test_mapping_save_v1_deduplication(mock_ouverture_dir):
     comment = "Same comment"
 
     # Create two different functions
-    ouverture.function_save_v1(func_hash1, "def _ouverture_v_0(): pass", ouverture.metadata_create())
-    ouverture.function_save_v1(func_hash2, "def _ouverture_v_0(): return 42", ouverture.metadata_create())
+    ouverture.function_save_v1(func_hash1, normalize_code_for_test("def _ouverture_v_0(): pass"), ouverture.metadata_create())
+    ouverture.function_save_v1(func_hash2, normalize_code_for_test("def _ouverture_v_0(): return 42"), ouverture.metadata_create())
 
     # Save identical mappings for both
     mapping_hash1 = ouverture.mapping_save_v1(func_hash1, lang, docstring, name_mapping, alias_mapping, comment)
@@ -1370,7 +1400,7 @@ def test_mapping_save_v1_different_comments_different_hashes(mock_ouverture_dir)
     alias_mapping = {}
 
     # Create function
-    ouverture.function_save_v1(func_hash, "def _ouverture_v_0(): pass", ouverture.metadata_create())
+    ouverture.function_save_v1(func_hash, normalize_code_for_test("def _ouverture_v_0(): pass"), ouverture.metadata_create())
 
     # Save two mappings with different comments
     hash1 = ouverture.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, "Formal")
@@ -1383,7 +1413,7 @@ def test_mapping_save_v1_different_comments_different_hashes(mock_ouverture_dir)
 def test_v1_write_integration_full_structure(mock_ouverture_dir):
     """Integration test: verify complete v1 directory structure"""
     func_hash = "test1234" + "0" * 56
-    normalized_code = "def _ouverture_v_0(_ouverture_v_1):\n    return _ouverture_v_1 * 2"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(_ouverture_v_1): return _ouverture_v_1 * 2")
     metadata = {
         'created': '2025-01-01T00:00:00Z',
         'author': 'testuser',
@@ -1435,7 +1465,7 @@ def test_v1_write_integration_full_structure(mock_ouverture_dir):
 def test_function_load_v1_loads_object_json(mock_ouverture_dir):
     """Test that function_load_v1 loads object.json correctly"""
     func_hash = "test5678" + "0" * 56
-    normalized_code = "def _ouverture_v_0(_ouverture_v_1):\n    return _ouverture_v_1 * 2"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(_ouverture_v_1): return _ouverture_v_1 * 2")
     metadata = {
         'created': '2025-01-01T00:00:00Z',
         'author': 'testuser',
@@ -1468,7 +1498,7 @@ def test_mappings_list_v1_single_mapping(mock_ouverture_dir):
     comment = "Test variant"
 
     # Create function and mapping
-    ouverture.function_save_v1(func_hash, "def _ouverture_v_0(): pass", ouverture.metadata_create())
+    ouverture.function_save_v1(func_hash, normalize_code_for_test("def _ouverture_v_0(): pass"), ouverture.metadata_create())
     ouverture.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
 
     # List mappings
@@ -1487,7 +1517,7 @@ def test_mappings_list_v1_multiple_mappings(mock_ouverture_dir):
     lang = "eng"
 
     # Create function
-    ouverture.function_save_v1(func_hash, "def _ouverture_v_0(): pass", ouverture.metadata_create())
+    ouverture.function_save_v1(func_hash, normalize_code_for_test("def _ouverture_v_0(): pass"), ouverture.metadata_create())
 
     # Add two mappings with different comments
     ouverture.mapping_save_v1(func_hash, lang, "Doc 1", {"_ouverture_v_0": "func1"}, {}, "Formal")
@@ -1510,7 +1540,7 @@ def test_mappings_list_v1_no_mappings(mock_ouverture_dir):
     func_hash = "nomaps12" + "0" * 56
 
     # Create function without any mappings
-    ouverture.function_save_v1(func_hash, "def _ouverture_v_0(): pass", ouverture.metadata_create())
+    ouverture.function_save_v1(func_hash, normalize_code_for_test("def _ouverture_v_0(): pass"), ouverture.metadata_create())
 
     # List mappings for a language that doesn't exist
     mappings = ouverture.mappings_list_v1(func_hash, "fra")
@@ -1529,7 +1559,7 @@ def test_mapping_load_v1_loads_correctly(mock_ouverture_dir):
     comment = "Test variant"
 
     # Create function and mapping
-    ouverture.function_save_v1(func_hash, "def _ouverture_v_0(): pass", ouverture.metadata_create())
+    ouverture.function_save_v1(func_hash, normalize_code_for_test("def _ouverture_v_0(): pass"), ouverture.metadata_create())
     mapping_hash = ouverture.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
 
     # Load the mapping
@@ -1546,7 +1576,7 @@ def test_function_load_v1_integration(mock_ouverture_dir):
     """Integration test: write v1, read v1, verify correctness"""
     func_hash = "integ123" + "0" * 56
     lang = "eng"
-    normalized_code = "def _ouverture_v_0(_ouverture_v_1):\n    return _ouverture_v_1 + 1"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(_ouverture_v_1): return _ouverture_v_1 + 1")
     docstring = "Increment by one"
     name_mapping = {"_ouverture_v_0": "increment", "_ouverture_v_1": "value"}
     alias_mapping = {}
@@ -1569,7 +1599,7 @@ def test_function_load_v0_backward_compatibility(mock_ouverture_dir):
     """Integration test: read v0 file, verify backward compatibility"""
     func_hash = "v0compat" + "0" * 56
     lang = "eng"
-    normalized_code = "def _ouverture_v_0(): return 42"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 42")
     docstring = "Return 42"
     name_mapping = {"_ouverture_v_0": "get_answer"}
     alias_mapping = {}
@@ -1591,7 +1621,7 @@ def test_function_load_dispatch_multiple_mappings(mock_ouverture_dir):
     """Test that dispatch with multiple mappings defaults to first one"""
     func_hash = "multi123" + "0" * 56
     lang = "eng"
-    normalized_code = "def _ouverture_v_0(): pass"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): pass")
 
     # Create function with two mappings
     ouverture.function_save_v1(func_hash, normalized_code, ouverture.metadata_create())
@@ -1611,7 +1641,7 @@ def test_function_load_dispatch_explicit_mapping(mock_ouverture_dir):
     """Test that dispatch can load specific mapping by hash"""
     func_hash = "explicit1" + "0" * 56
     lang = "eng"
-    normalized_code = "def _ouverture_v_0(): pass"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): pass")
 
     # Create function with two mappings
     ouverture.function_save_v1(func_hash, normalized_code, ouverture.metadata_create())
@@ -1635,7 +1665,7 @@ def test_schema_migrate_function_v0_to_v1_basic(mock_ouverture_dir):
     """Test basic function migration from v0 to v1"""
     func_hash = "migrate01" + "0" * 56
     lang = "eng"
-    normalized_code = "def _ouverture_v_0(): return 42"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 42")
     docstring = "Return 42"
     name_mapping = {"_ouverture_v_0": "get_answer"}
     alias_mapping = {}
@@ -1667,7 +1697,7 @@ def test_schema_migrate_function_v0_to_v1_delete_v0(mock_ouverture_dir):
     """Test migration with v0 deletion"""
     func_hash = "migrate02" + "0" * 56
     lang = "eng"
-    normalized_code = "def _ouverture_v_0(): return 100"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 100")
     docstring = "Return 100"
     name_mapping = {"_ouverture_v_0": "get_hundred"}
     alias_mapping = {}
@@ -1698,7 +1728,7 @@ def test_schema_migrate_function_v0_to_v1_delete_v0(mock_ouverture_dir):
 def test_schema_migrate_function_v0_to_v1_multiple_languages(mock_ouverture_dir):
     """Test migration with multiple languages"""
     func_hash = "migrate03" + "0" * 56
-    normalized_code = "def _ouverture_v_0(): return 50"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 50")
 
     # Create v0 function with two languages
     ouverture.function_save_v0(func_hash, "eng", normalized_code, "English doc", {"_ouverture_v_0": "fifty"}, {})
@@ -1723,9 +1753,10 @@ def test_schema_migrate_function_v0_to_v1_multiple_languages(mock_ouverture_dir)
 def test_schema_migrate_all_v0_to_v1(mock_ouverture_dir):
     """Test migrating all v0 functions at once"""
     # Create three v0 functions
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): pass")
     for i in range(3):
         func_hash = f"migrall{i}" + "0" * 56
-        ouverture.function_save_v0(func_hash, "eng", "def _ouverture_v_0(): pass", f"Doc {i}", {"_ouverture_v_0": f"func{i}"}, {})
+        ouverture.function_save_v0(func_hash, "eng", normalized_code, f"Doc {i}", {"_ouverture_v_0": f"func{i}"}, {})
 
     # Migrate all
     ouverture.schema_migrate_all_v0_to_v1(keep_v0=False, dry_run=False)
@@ -1745,7 +1776,7 @@ def test_schema_migrate_all_v0_to_v1(mock_ouverture_dir):
 def test_schema_migrate_all_v0_to_v1_dry_run(mock_ouverture_dir):
     """Test dry-run doesn't actually migrate"""
     func_hash = "dryrun01" + "0" * 56
-    ouverture.function_save_v0(func_hash, "eng", "def _ouverture_v_0(): pass", "Doc", {"_ouverture_v_0": "func"}, {})
+    ouverture.function_save_v0(func_hash, "eng", normalize_code_for_test("def _ouverture_v_0(): pass"), "Doc", {"_ouverture_v_0": "func"}, {})
 
     # Dry run
     result = ouverture.schema_migrate_all_v0_to_v1(keep_v0=True, dry_run=True)
@@ -1763,7 +1794,7 @@ def test_schema_validate_v1_valid_function(mock_ouverture_dir):
     """Test validation of valid v1 function"""
     func_hash = "valid001" + "0" * 56
     lang = "eng"
-    normalized_code = "def _ouverture_v_0(): return 1"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 1")
     docstring = "Return 1"
     name_mapping = {"_ouverture_v_0": "one"}
     alias_mapping = {}
@@ -1793,7 +1824,7 @@ def test_schema_validate_v1_missing_object_json(mock_ouverture_dir):
 def test_schema_validate_v1_missing_mappings(mock_ouverture_dir):
     """Test validation detects function with no mappings"""
     func_hash = "invalid02" + "0" * 56
-    normalized_code = "def _ouverture_v_0(): return 1"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 1")
     metadata = ouverture.metadata_create()
 
     # Create function without any mappings
@@ -1811,7 +1842,7 @@ def test_schema_migrate_function_preserves_alias_mappings(mock_ouverture_dir):
     """Test migration preserves alias mappings"""
     func_hash = "alias001" + "0" * 56
     lang = "eng"
-    normalized_code = "def _ouverture_v_0(): return abc123._ouverture_v_0()"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return abc123._ouverture_v_0()")
     docstring = "Call helper"
     name_mapping = {"_ouverture_v_0": "caller"}
     alias_mapping = {"abc123": "helper"}
@@ -1835,7 +1866,7 @@ def test_function_show_single_mapping(mock_ouverture_dir):
     """Test show command with single mapping - should output code directly"""
     func_hash = "a0001000" + "0" * 56
     lang = "eng"
-    normalized_code = "def _ouverture_v_0(): return 42"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 42")
     docstring = "Return 42"
     name_mapping = {"_ouverture_v_0": "answer"}
     alias_mapping = {}
@@ -1861,7 +1892,7 @@ def test_function_show_multiple_mappings_menu(mock_ouverture_dir):
     """Test show command with multiple mappings - should show selection menu"""
     func_hash = "a0002000" + "0" * 56
     lang = "eng"
-    normalized_code = "def _ouverture_v_0(): return 100"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 100")
 
     # Create function with two mappings
     ouverture.function_save_v1(func_hash, normalized_code, ouverture.metadata_create())
@@ -1889,7 +1920,7 @@ def test_function_show_explicit_mapping_hash(mock_ouverture_dir):
     """Test show command with explicit mapping hash"""
     func_hash = "a0003000" + "0" * 56
     lang = "eng"
-    normalized_code = "def _ouverture_v_0(_ouverture_v_1): return _ouverture_v_1"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(_ouverture_v_1): return _ouverture_v_1")
 
     # Create function with two mappings
     ouverture.function_save_v1(func_hash, normalized_code, ouverture.metadata_create())
@@ -1916,7 +1947,7 @@ def test_function_show_v0_backward_compatibility(mock_ouverture_dir):
     """Test show command works with v0 functions"""
     func_hash = "a0004000" + "0" * 56
     lang = "eng"
-    normalized_code = "def _ouverture_v_0(): return 77"
+    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 77")
     docstring = "Return 77"
     name_mapping = {"_ouverture_v_0": "seventy_seven"}
     alias_mapping = {}
@@ -1960,7 +1991,7 @@ def test_function_show_language_not_found(mock_ouverture_dir):
     lang = "eng"
 
     # Create function with only English
-    ouverture.function_save(func_hash, lang, "def _ouverture_v_0(): pass", "Doc", {"_ouverture_v_0": "func"}, {})
+    ouverture.function_save(func_hash, lang, normalize_code_for_test("def _ouverture_v_0(): pass"), "Doc", {"_ouverture_v_0": "func"}, {})
 
     # Try to show in French (doesn't exist)
     with pytest.raises(SystemExit):

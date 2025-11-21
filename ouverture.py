@@ -16,6 +16,11 @@ from typing import Dict, Set, Tuple, List
 # Get all Python built-in names
 PYTHON_BUILTINS = set(dir(builtins))
 
+# Prefix for ouverture.pool imports to ensure valid Python identifiers
+# SHA256 hashes can start with digits (0-9), which are invalid as Python identifiers
+# By prefixing with "object_", we ensure all import names are valid
+OUVERTURE_IMPORT_PREFIX = "object_"
+
 
 class ASTNormalizer(ast.NodeTransformer):
     """Normalizes an AST by renaming variables and functions"""
@@ -184,22 +189,39 @@ def imports_rewrite_ouverture(imports: List[ast.stmt]) -> Tuple[List[ast.stmt], 
     """
     Remove aliases from 'ouverture' imports and track them for later restoration.
     Returns (new_imports, alias_mapping)
-    alias_mapping maps: imported_function_hash -> alias_in_lang
+    alias_mapping maps: actual_function_hash (without prefix) -> alias_in_lang
+
+    Input format expected:
+        from ouverture.pool import object_c0ff33 as kawa
+
+    Output:
+        - import becomes: from ouverture.pool import object_c0ff33
+        - alias_mapping stores: {"c0ff33...": "kawa"} (actual hash without object_ prefix)
     """
     new_imports = []
     alias_mapping = {}
 
     for imp in imports:
         if isinstance(imp, ast.ImportFrom) and imp.module == 'ouverture.pool':
-            # Rewrite: from ouverture.pool import c0ffeebad as kawa
-            # To: from ouverture.pool import c0ffeebad
+            # Rewrite: from ouverture.pool import object_c0ffeebad as kawa
+            # To: from ouverture.pool import object_c0ffeebad
             new_names = []
             for alias in imp.names:
-                # Track the alias mapping
+                import_name = alias.name  # e.g., "object_c0ff33..."
+
+                # Extract actual hash by stripping the prefix
+                if import_name.startswith(OUVERTURE_IMPORT_PREFIX):
+                    actual_hash = import_name[len(OUVERTURE_IMPORT_PREFIX):]
+                else:
+                    # Backward compatibility: no prefix (shouldn't happen in new code)
+                    actual_hash = import_name
+
+                # Track the alias mapping using actual hash
                 if alias.asname:
-                    alias_mapping[alias.name] = alias.asname
-                # Create new import without alias
-                new_names.append(ast.alias(name=alias.name, asname=None))
+                    alias_mapping[actual_hash] = alias.asname
+
+                # Create new import without alias (but keep object_ prefix in import name)
+                new_names.append(ast.alias(name=import_name, asname=None))
 
             new_imp = ast.ImportFrom(
                 module='ouverture.pool',
@@ -216,16 +238,21 @@ def imports_rewrite_ouverture(imports: List[ast.stmt]) -> Tuple[List[ast.stmt], 
 def calls_replace_ouverture(tree: ast.AST, alias_mapping: Dict[str, str], name_mapping: Dict[str, str]):
     """
     Replace calls to aliased ouverture functions.
-    E.g., kawa(...) becomes c0ffeebad._ouverture_v_0(...)
+    E.g., kawa(...) becomes object_c0ffeebad._ouverture_v_0(...)
+
+    alias_mapping maps actual hash (without prefix) -> alias name
+    The replacement uses object_<hash> to match the import name.
     """
     class OuvertureCallReplacer(ast.NodeTransformer):
         def visit_Name(self, node):
             # If this name is an alias for an ouverture function
             for func_hash, alias in alias_mapping.items():
                 if node.id == alias:
-                    # Replace with c0ffeebad._ouverture_v_0
+                    # Replace with object_c0ffeebad._ouverture_v_0
+                    # Use prefixed name to match the import statement
+                    prefixed_name = OUVERTURE_IMPORT_PREFIX + func_hash
                     return ast.Attribute(
-                        value=ast.Name(id=func_hash, ctx=ast.Load()),
+                        value=ast.Name(id=prefixed_name, ctx=ast.Load()),
                         attr='_ouverture_v_0',
                         ctx=node.ctx
                     )
@@ -448,6 +475,135 @@ def directory_get_ouverture() -> Path:
     return Path(home) / '.local' / 'ouverture'
 
 
+def config_get_path() -> Path:
+    """
+    Get the path to the config file.
+    Config is stored in ~/.config/ouverture/config.json (XDG Base Directory spec)
+    """
+    home = os.environ.get('HOME', os.path.expanduser('~'))
+    config_dir = Path(home) / '.config' / 'ouverture'
+    return config_dir / 'config.json'
+
+
+def config_read() -> Dict[str, any]:
+    """
+    Read the configuration file.
+    Returns default config if file doesn't exist.
+    """
+    config_path = config_get_path()
+
+    if not config_path.exists():
+        return {
+            'user': {
+                'username': '',
+                'email': '',
+                'public_key': '',
+                'languages': []
+            },
+            'remotes': {}
+        }
+
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (IOError, json.JSONDecodeError) as e:
+        print(f"Error: Failed to read config file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def config_write(config: Dict[str, any]):
+    """
+    Write the configuration file.
+    """
+    config_path = config_get_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+    except IOError as e:
+        print(f"Error: Failed to write config file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def command_init():
+    """
+    Initialize ouverture directory and config file.
+    """
+    # Create ouverture directory
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+    objects_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create config file with defaults
+    config_path = config_get_path()
+    if config_path.exists():
+        print(f"Config file already exists: {config_path}")
+    else:
+        config = {
+            'user': {
+                'username': os.environ.get('USER', os.environ.get('USERNAME', '')),
+                'email': '',
+                'public_key': '',
+                'languages': ['eng']
+            },
+            'remotes': {}
+        }
+        config_write(config)
+        print(f"Created config file: {config_path}")
+
+    print(f"Initialized ouverture directory: {ouverture_dir}")
+
+
+def command_whoami(subcommand: str, value: list = None):
+    """
+    Get or set user configuration.
+
+    Args:
+        subcommand: One of 'username', 'email', 'public-key', 'language'
+        value: New value(s) to set (None to get current value)
+    """
+    config = config_read()
+
+    # Map CLI subcommand to config key
+    key_map = {
+        'username': 'username',
+        'email': 'email',
+        'public-key': 'public_key',
+        'language': 'languages'
+    }
+
+    if subcommand not in key_map:
+        print(f"Error: Unknown subcommand: {subcommand}", file=sys.stderr)
+        print("Valid subcommands: username, email, public-key, language", file=sys.stderr)
+        sys.exit(1)
+
+    config_key = key_map[subcommand]
+
+    # Get current value
+    if value is None or len(value) == 0:
+        current = config['user'][config_key]
+        if isinstance(current, list):
+            print(' '.join(current) if current else '')
+        else:
+            print(current if current else '')
+    else:
+        # Set new value
+        if subcommand == 'language':
+            # Languages is a list
+            config['user'][config_key] = value
+        else:
+            # Other fields are strings (take first value)
+            config['user'][config_key] = value[0]
+
+        config_write(config)
+
+        if subcommand == 'language':
+            print(f"Set {subcommand}: {' '.join(value)}")
+        else:
+            print(f"Set {subcommand}: {value[0]}")
+
+
 def function_save_v0(hash_value: str, lang: str, normalized_code: str, docstring: str,
                      name_mapping: Dict[str, str], alias_mapping: Dict[str, str]):
     """
@@ -615,11 +771,14 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
     """
     Denormalize code by applying reverse name mappings.
     name_mapping: maps normalized names (_ouverture_v_X) to original names
-    alias_mapping: maps hash IDs to alias names (for ouverture imports)
+    alias_mapping: maps actual hash IDs (without object_ prefix) to alias names
+
+    Normalized code uses object_<hash> in imports and attributes.
+    This function restores the original aliases.
     """
     tree = ast.parse(normalized_code)
 
-    # Create reverse alias mapping: _ouverture_v_0 -> alias
+    # Create reverse alias mapping: actual_hash -> alias
     # We need to track which hashes should become which aliases
     hash_to_alias = {}
     for hash_id, alias in alias_mapping.items():
@@ -646,27 +805,43 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
             return node
 
         def visit_Attribute(self, node):
-            # Replace c0ffeebad._ouverture_v_0(...) with alias(...)
+            # Replace object_c0ffeebad._ouverture_v_0(...) with alias(...)
             if (isinstance(node.value, ast.Name) and
-                node.value.id in hash_to_alias and
                 node.attr == '_ouverture_v_0'):
-                # Return just the alias name
-                return ast.Name(id=hash_to_alias[node.value.id], ctx=node.ctx)
+                prefixed_name = node.value.id
+                # Strip object_ prefix to get actual hash
+                if prefixed_name.startswith(OUVERTURE_IMPORT_PREFIX):
+                    actual_hash = prefixed_name[len(OUVERTURE_IMPORT_PREFIX):]
+                else:
+                    actual_hash = prefixed_name  # Backward compatibility
+
+                if actual_hash in hash_to_alias:
+                    # Return just the alias name
+                    return ast.Name(id=hash_to_alias[actual_hash], ctx=node.ctx)
             self.generic_visit(node)
             return node
 
         def visit_ImportFrom(self, node):
-            # Add aliases back to 'from ouverture.pool import X'
+            # Add aliases back to 'from ouverture.pool import object_X'
             if node.module == 'ouverture.pool':
                 node.module = 'ouverture.pool'
                 # Add aliases back
                 new_names = []
                 for alias_node in node.names:
-                    if alias_node.name in hash_to_alias:
+                    import_name = alias_node.name  # e.g., "object_c0ff33..."
+
+                    # Strip object_ prefix to get actual hash
+                    if import_name.startswith(OUVERTURE_IMPORT_PREFIX):
+                        actual_hash = import_name[len(OUVERTURE_IMPORT_PREFIX):]
+                    else:
+                        actual_hash = import_name  # Backward compatibility
+
+                    if actual_hash in hash_to_alias:
                         # This hash should have an alias
+                        # Keep object_ prefix in import name
                         new_names.append(ast.alias(
-                            name=alias_node.name,
-                            asname=hash_to_alias[alias_node.name]
+                            name=import_name,
+                            asname=hash_to_alias[actual_hash]
                         ))
                     else:
                         new_names.append(alias_node)
@@ -677,6 +852,873 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
     tree = denormalizer.visit(tree)
 
     return ast.unparse(tree)
+
+
+def command_remote_add(name: str, url: str):
+    """
+    Add a remote repository.
+
+    Args:
+        name: Remote name
+        url: Remote URL (HTTP/HTTPS or file://)
+    """
+    config = config_read()
+
+    if name in config['remotes']:
+        print(f"Error: Remote '{name}' already exists", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate URL format
+    if not (url.startswith('http://') or url.startswith('https://') or url.startswith('file://')):
+        print(f"Error: Invalid URL format. Must start with http://, https://, or file://", file=sys.stderr)
+        sys.exit(1)
+
+    config['remotes'][name] = {
+        'url': url
+    }
+
+    config_write(config)
+    print(f"Added remote '{name}': {url}")
+
+
+def command_remote_remove(name: str):
+    """
+    Remove a remote repository.
+
+    Args:
+        name: Remote name to remove
+    """
+    config = config_read()
+
+    if name not in config['remotes']:
+        print(f"Error: Remote '{name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    del config['remotes'][name]
+    config_write(config)
+    print(f"Removed remote '{name}'")
+
+
+def command_remote_list():
+    """
+    List all configured remotes.
+    """
+    config = config_read()
+
+    if not config['remotes']:
+        print("No remotes configured")
+        return
+
+    print("Configured remotes:")
+    for name, remote in config['remotes'].items():
+        print(f"  {name}: {remote['url']}")
+
+
+def command_remote_pull(name: str):
+    """
+    Fetch functions from a remote repository.
+
+    Args:
+        name: Remote name to pull from
+    """
+    config = config_read()
+
+    if name not in config['remotes']:
+        print(f"Error: Remote '{name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    remote = config['remotes'][name]
+    url = remote['url']
+
+    print(f"Pulling from remote '{name}': {url}")
+    print()
+
+    # TODO: Implement actual network operations
+    # For file:// URLs, we could copy from local filesystem
+    # For http:// and https:// URLs, we would need a server API
+
+    if url.startswith('file://'):
+        # Local file system remote
+        import shutil
+        remote_path = Path(url[7:])  # Remove file:// prefix
+
+        if not remote_path.exists():
+            print(f"Error: Remote path does not exist: {remote_path}", file=sys.stderr)
+            sys.exit(1)
+
+        # Copy functions from remote to local pool
+        local_ouverture = directory_get_ouverture()
+        local_objects = local_ouverture / 'objects'
+        remote_objects = remote_path / 'objects'
+
+        if not remote_objects.exists():
+            print(f"Error: Remote objects directory not found: {remote_objects}", file=sys.stderr)
+            sys.exit(1)
+
+        # Copy all objects
+        pulled_count = 0
+        for item in remote_objects.rglob('*.json'):
+            # Compute relative path
+            rel_path = item.relative_to(remote_objects)
+            local_item = local_objects / rel_path
+
+            # Only copy if doesn't exist locally
+            if not local_item.exists():
+                local_item.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, local_item)
+                pulled_count += 1
+
+        print(f"Pulled {pulled_count} new functions from '{name}'")
+    else:
+        # HTTP/HTTPS remote
+        print("Error: HTTP/HTTPS remotes not yet implemented", file=sys.stderr)
+        print("TODO: Implement REST API client for pulling functions", file=sys.stderr)
+        sys.exit(1)
+
+
+def command_remote_push(name: str):
+    """
+    Publish functions to a remote repository.
+
+    Args:
+        name: Remote name to push to
+    """
+    config = config_read()
+
+    if name not in config['remotes']:
+        print(f"Error: Remote '{name}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    remote = config['remotes'][name]
+    url = remote['url']
+
+    print(f"Pushing to remote '{name}': {url}")
+    print()
+
+    # TODO: Implement actual network operations
+    # For file:// URLs, we could copy to local filesystem
+    # For http:// and https:// URLs, we would need a server API
+
+    if url.startswith('file://'):
+        # Local file system remote
+        import shutil
+        remote_path = Path(url[7:])  # Remove file:// prefix
+
+        # Create remote directory if it doesn't exist
+        remote_path.mkdir(parents=True, exist_ok=True)
+
+        # Copy functions from local pool to remote
+        local_ouverture = directory_get_ouverture()
+        local_objects = local_ouverture / 'objects'
+        remote_objects = remote_path / 'objects'
+
+        if not local_objects.exists():
+            print("Error: Local objects directory not found", file=sys.stderr)
+            sys.exit(1)
+
+        # Copy all objects
+        pushed_count = 0
+        for item in local_objects.rglob('*.json'):
+            # Compute relative path
+            rel_path = item.relative_to(local_objects)
+            remote_item = remote_objects / rel_path
+
+            # Only copy if doesn't exist remotely
+            if not remote_item.exists():
+                remote_item.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, remote_item)
+                pushed_count += 1
+
+        print(f"Pushed {pushed_count} new functions to '{name}'")
+    else:
+        # HTTP/HTTPS remote
+        print("Error: HTTP/HTTPS remotes not yet implemented", file=sys.stderr)
+        print("TODO: Implement REST API client for pushing functions", file=sys.stderr)
+        sys.exit(1)
+
+
+def dependencies_extract(normalized_code: str) -> List[str]:
+    """
+    Extract ouverture dependencies from normalized code.
+
+    Returns:
+        List of actual function hashes (without object_ prefix) that this function depends on
+    """
+    dependencies = []
+    tree = ast.parse(normalized_code)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == 'ouverture.pool':
+            for alias in node.names:
+                import_name = alias.name  # e.g., "object_c0ff33..."
+                # Strip object_ prefix to get actual hash
+                if import_name.startswith(OUVERTURE_IMPORT_PREFIX):
+                    actual_hash = import_name[len(OUVERTURE_IMPORT_PREFIX):]
+                else:
+                    actual_hash = import_name  # Backward compatibility
+                dependencies.append(actual_hash)
+
+    return dependencies
+
+
+def command_review(hash_value: str):
+    """
+    Recursively review a function and its dependencies.
+
+    Shows the function and all functions it depends on (recursively)
+    in the user's preferred languages.
+
+    Args:
+        hash_value: Function hash to review
+    """
+    # Validate hash format
+    if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value.lower()):
+        print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Get user's preferred languages
+    config = config_read()
+    preferred_langs = config['user'].get('languages', ['eng'])
+
+    if not preferred_langs:
+        preferred_langs = ['eng']
+
+    # Track visited functions to avoid cycles
+    visited = set()
+    review_queue = [hash_value]
+
+    print("Function Review")
+    print("=" * 80)
+    print()
+
+    while review_queue:
+        current_hash = review_queue.pop(0)
+
+        if current_hash in visited:
+            continue
+
+        visited.add(current_hash)
+
+        # Detect schema version
+        version = schema_detect_version(current_hash)
+        if version is None:
+            print(f"Warning: Function {current_hash} not found in local pool", file=sys.stderr)
+            continue
+
+        # Try to load in user's preferred languages
+        loaded = False
+        for lang in preferred_langs:
+            try:
+                normalized_code, name_mapping, alias_mapping, docstring = function_load(current_hash, lang)
+                func_name = name_mapping.get('_ouverture_v_0', 'unknown')
+
+                # Show function
+                print(f"Function: {func_name} ({lang})")
+                print(f"Hash: {current_hash}")
+                print("-" * 80)
+
+                # Denormalize and show code
+                normalized_code_with_doc = docstring_replace(normalized_code, docstring)
+                original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
+                print(original_code)
+                print()
+
+                # Extract dependencies
+                deps = dependencies_extract(normalized_code)
+                if deps:
+                    print(f"Dependencies: {len(deps)}")
+                    for dep in deps:
+                        print(f"  - {dep}")
+                        if dep not in visited:
+                            review_queue.append(dep)
+                else:
+                    print("Dependencies: None")
+
+                print("=" * 80)
+                print()
+
+                loaded = True
+                break
+            except SystemExit:
+                # Language not available, try next one
+                continue
+
+        if not loaded:
+            print(f"Warning: Function {current_hash} not available in any preferred language", file=sys.stderr)
+            print(f"Preferred languages: {', '.join(preferred_langs)}", file=sys.stderr)
+            print()
+
+
+def command_log():
+    """
+    Show a git-like commit log of the function pool.
+
+    Lists all functions with metadata (timestamp, author, hash).
+    """
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+
+    if not objects_dir.exists():
+        print("No functions in pool")
+        return
+
+    functions = []
+
+    # Scan for v1 functions (objects/sha256/XX/YYY.../object.json)
+    v1_dir = objects_dir / 'sha256'
+    if v1_dir.exists():
+        for hash_prefix_dir in v1_dir.iterdir():
+            if not hash_prefix_dir.is_dir():
+                continue
+
+            for func_dir in hash_prefix_dir.iterdir():
+                if not func_dir.is_dir():
+                    continue
+
+                object_json = func_dir / 'object.json'
+                if not object_json.exists():
+                    continue
+
+                # Load function metadata
+                try:
+                    with open(object_json, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+
+                    func_hash = data['hash']
+                    metadata = data.get('metadata', {})
+                    created = metadata.get('created', 'unknown')
+                    author = metadata.get('author', 'unknown')
+
+                    # Get available languages
+                    langs = []
+                    for item in func_dir.iterdir():
+                        if item.is_dir() and len(item.name) == 3:
+                            langs.append(item.name)
+
+                    functions.append({
+                        'hash': func_hash,
+                        'created': created,
+                        'author': author,
+                        'langs': sorted(langs),
+                        'version': 1
+                    })
+                except (IOError, json.JSONDecodeError):
+                    continue
+
+    # Scan for v0 functions (objects/XX/YYY.json)
+    for hash_prefix_dir in objects_dir.iterdir():
+        if not hash_prefix_dir.is_dir():
+            continue
+        if hash_prefix_dir.name == 'sha256':
+            continue
+
+        for json_file in hash_prefix_dir.glob('*.json'):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                func_hash = data['hash']
+                langs = list(data.get('name_mappings', {}).keys())
+
+                functions.append({
+                    'hash': func_hash,
+                    'created': 'unknown',
+                    'author': 'unknown',
+                    'langs': sorted(langs),
+                    'version': 0
+                })
+            except (IOError, json.JSONDecodeError):
+                continue
+
+    # Sort by created timestamp (newest first)
+    functions.sort(key=lambda x: x['created'], reverse=True)
+
+    # Display log
+    print(f"Function Pool Log ({len(functions)} functions)")
+    print("=" * 80)
+    print()
+
+    for func in functions:
+        langs_str = ', '.join(func['langs']) if func['langs'] else 'none'
+        version_str = f"v{func['version']}"
+        print(f"Hash: {func['hash']}")
+        print(f"Date: {func['created']}")
+        print(f"Author: {func['author']}")
+        print(f"Languages: {langs_str}")
+        print(f"Schema: {version_str}")
+        print()
+
+
+def command_search(query: List[str]):
+    """
+    Search and list functions by query.
+
+    Searches in function names, docstrings, and code content.
+
+    Args:
+        query: List of search terms
+    """
+    if not query:
+        print("Error: No search query provided", file=sys.stderr)
+        sys.exit(1)
+
+    search_terms = [term.lower() for term in query]
+
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+
+    if not objects_dir.exists():
+        print("No functions in pool")
+        return
+
+    results = []
+
+    # Scan for v1 functions
+    v1_dir = objects_dir / 'sha256'
+    if v1_dir.exists():
+        for hash_prefix_dir in v1_dir.iterdir():
+            if not hash_prefix_dir.is_dir():
+                continue
+
+            for func_dir in hash_prefix_dir.iterdir():
+                if not func_dir.is_dir():
+                    continue
+
+                object_json = func_dir / 'object.json'
+                if not object_json.exists():
+                    continue
+
+                # Load function
+                try:
+                    with open(object_json, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+
+                    func_hash = data['hash']
+                    normalized_code = data['normalized_code']
+
+                    # Search in code
+                    code_lower = normalized_code.lower()
+                    if any(term in code_lower for term in search_terms):
+                        # Get available languages and load first available
+                        for lang_dir in func_dir.iterdir():
+                            if lang_dir.is_dir() and len(lang_dir.name) == 3:
+                                lang = lang_dir.name
+                                try:
+                                    _, name_mapping, _, docstring = function_load(func_hash, lang)
+                                    func_name = name_mapping.get('_ouverture_v_0', 'unknown')
+
+                                    # Check if search term in function name or docstring
+                                    match_in = []
+                                    if any(term in func_name.lower() for term in search_terms):
+                                        match_in.append('name')
+                                    if any(term in docstring.lower() for term in search_terms):
+                                        match_in.append('docstring')
+                                    if not match_in:
+                                        match_in.append('code')
+
+                                    results.append({
+                                        'hash': func_hash,
+                                        'name': func_name,
+                                        'lang': lang,
+                                        'docstring': docstring[:100],  # First 100 chars
+                                        'match_in': match_in
+                                    })
+                                    break
+                                except SystemExit:
+                                    continue
+                except (IOError, json.JSONDecodeError):
+                    continue
+
+    # Scan for v0 functions
+    for hash_prefix_dir in objects_dir.iterdir():
+        if not hash_prefix_dir.is_dir():
+            continue
+        if hash_prefix_dir.name == 'sha256':
+            continue
+
+        for json_file in hash_prefix_dir.glob('*.json'):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                func_hash = data['hash']
+                normalized_code = data['normalized_code']
+
+                # Search in code
+                code_lower = normalized_code.lower()
+                if any(term in code_lower for term in search_terms):
+                    # Get first available language
+                    langs = list(data.get('name_mappings', {}).keys())
+                    if langs:
+                        lang = langs[0]
+                        name_mapping = data['name_mappings'][lang]
+                        docstring = data.get('docstrings', {}).get(lang, '')
+                        func_name = name_mapping.get('_ouverture_v_0', 'unknown')
+
+                        match_in = []
+                        if any(term in func_name.lower() for term in search_terms):
+                            match_in.append('name')
+                        if any(term in docstring.lower() for term in search_terms):
+                            match_in.append('docstring')
+                        if not match_in:
+                            match_in.append('code')
+
+                        results.append({
+                            'hash': func_hash,
+                            'name': func_name,
+                            'lang': lang,
+                            'docstring': docstring[:100],
+                            'match_in': match_in
+                        })
+            except (IOError, json.JSONDecodeError):
+                continue
+
+    # Display results
+    print(f"Search Results ({len(results)} matches for: {' '.join(query)})")
+    print("=" * 80)
+    print()
+
+    if not results:
+        print("No matches found")
+        return
+
+    for result in results:
+        match_str = ', '.join(result['match_in'])
+        print(f"Name: {result['name']} ({result['lang']})")
+        print(f"Hash: {result['hash']}")
+        print(f"Match: {match_str}")
+        if result['docstring']:
+            print(f"Description: {result['docstring']}...")
+        print(f"View: ouverture.py show {result['hash']}@{result['lang']}")
+        print()
+
+
+def code_strip_ouverture_imports(code: str) -> str:
+    """
+    Strip ouverture.pool import statements from code.
+
+    These imports are handled separately by loading dependencies into the namespace.
+
+    Args:
+        code: Source code with possible ouverture.pool imports
+
+    Returns:
+        Code with ouverture.pool imports removed
+    """
+    tree = ast.parse(code)
+
+    # Filter out ouverture.pool imports
+    new_body = []
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == 'ouverture.pool':
+            continue
+        new_body.append(node)
+
+    tree.body = new_body
+    return ast.unparse(tree)
+
+
+def dependencies_load_recursive(func_hash: str, lang: str, namespace: dict, loaded: set = None):
+    """
+    Recursively load a function and all its dependencies into a namespace.
+
+    Creates a module-like object for each dependency that can be accessed as:
+    object_HASH._ouverture_v_0(args) -> alias(args)
+
+    Args:
+        func_hash: Actual function hash (without object_ prefix) to load
+        lang: Language code
+        namespace: Dictionary to populate with loaded functions
+        loaded: Set of already loaded hashes (to avoid cycles)
+
+    Returns:
+        The function object
+    """
+    if loaded is None:
+        loaded = set()
+
+    if func_hash in loaded:
+        # Already loaded, return the existing module (stored with prefix)
+        prefixed_name = OUVERTURE_IMPORT_PREFIX + func_hash
+        return namespace.get(prefixed_name)
+
+    loaded.add(func_hash)
+
+    # Load the function
+    try:
+        normalized_code, name_mapping, alias_mapping, docstring = function_load(func_hash, lang)
+    except SystemExit:
+        print(f"Error: Could not load dependency {func_hash}@{lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # First, recursively load all dependencies (deps are actual hashes without prefix)
+    deps = dependencies_extract(normalized_code)
+    for dep_hash in deps:
+        dependencies_load_recursive(dep_hash, lang, namespace, loaded)
+
+    # Denormalize the code
+    normalized_code_with_doc = docstring_replace(normalized_code, docstring)
+    original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
+
+    # Strip ouverture imports (dependencies are already in namespace)
+    executable_code = code_strip_ouverture_imports(original_code)
+
+    # For each alias in alias_mapping, add the dependency function to namespace with that name
+    # alias_mapping maps actual_hash -> alias
+    for dep_hash, alias in alias_mapping.items():
+        prefixed_dep_name = OUVERTURE_IMPORT_PREFIX + dep_hash
+        if prefixed_dep_name in namespace:
+            # The dependency's function is already loaded, make alias point to it
+            dep_module = namespace[prefixed_dep_name]
+            if hasattr(dep_module, '_ouverture_v_0'):
+                namespace[alias] = dep_module._ouverture_v_0
+
+    # Execute the code in the namespace (dependencies are already loaded)
+    try:
+        exec(executable_code, namespace)
+    except Exception as e:
+        print(f"Error executing dependency {func_hash}: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+    # Get function name and create a module-like object for this hash
+    func_name = name_mapping.get('_ouverture_v_0', 'unknown')
+
+    if func_name in namespace:
+        # Create a simple namespace object that has _ouverture_v_0 attribute
+        # Store it under the prefixed name (object_<hash>) for lookup
+        class OuvertureModule:
+            pass
+
+        module = OuvertureModule()
+        module._ouverture_v_0 = namespace[func_name]
+        prefixed_name = OUVERTURE_IMPORT_PREFIX + func_hash
+        namespace[prefixed_name] = module
+
+    return namespace.get(func_name)
+
+
+def command_run(hash_with_lang: str, debug: bool = False, func_args: list = None):
+    """
+    Execute a function from the pool interactively.
+
+    Args:
+        hash_with_lang: Function hash with language (e.g., "abc123...@eng")
+        debug: If True, run with debugger (pdb)
+        func_args: Arguments to pass to the function (after --)
+    """
+    if func_args is None:
+        func_args = []
+
+    # Parse hash and language
+    if '@' not in hash_with_lang:
+        print("Error: Missing language suffix. Use format: HASH@lang", file=sys.stderr)
+        sys.exit(1)
+
+    hash_value, lang = hash_with_lang.rsplit('@', 1)
+
+    # Validate language code
+    if len(lang) != 3:
+        print(f"Error: Language code must be 3 characters (ISO 639-3). Got: {lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate hash format
+    if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value.lower()):
+        print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Load function from pool
+    try:
+        normalized_code, name_mapping, alias_mapping, docstring = function_load(hash_value, lang)
+    except SystemExit:
+        print(f"Error: Could not load function {hash_value}@{lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # Get function name from mapping
+    func_name = name_mapping.get('_ouverture_v_0', 'unknown_function')
+
+    # Create execution namespace
+    namespace = {}
+
+    # First, load all dependencies recursively
+    deps = dependencies_extract(normalized_code)
+    if deps:
+        print(f"Loading {len(deps)} dependencies...")
+        for dep_hash in deps:
+            dependencies_load_recursive(dep_hash, lang, namespace, set())
+        print()
+
+    # Denormalize to original language
+    normalized_code_with_doc = docstring_replace(normalized_code, docstring)
+    original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
+
+    print(f"Running function: {func_name} ({lang})")
+    print("=" * 60)
+    print(original_code)
+    print("=" * 60)
+    print()
+
+    # Strip ouverture imports (dependencies are already in namespace)
+    executable_code = code_strip_ouverture_imports(original_code)
+
+    # For each alias in alias_mapping, add the dependency function to namespace with that name
+    # alias_mapping maps actual_hash (without prefix) -> alias
+    for dep_hash, alias in alias_mapping.items():
+        prefixed_dep_name = OUVERTURE_IMPORT_PREFIX + dep_hash
+        if prefixed_dep_name in namespace:
+            # The dependency's function is already loaded, make alias point to it
+            dep_module = namespace[prefixed_dep_name]
+            if hasattr(dep_module, '_ouverture_v_0'):
+                namespace[alias] = dep_module._ouverture_v_0
+
+    # Execute the code
+    try:
+        exec(executable_code, namespace)
+    except Exception as e:
+        print(f"Error executing function: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+    # Get the function object
+    if func_name not in namespace:
+        print(f"Error: Function '{func_name}' not found in namespace", file=sys.stderr)
+        sys.exit(1)
+
+    func = namespace[func_name]
+
+    # If arguments were provided, execute the function directly
+    if func_args:
+        # Parse arguments - try to convert to appropriate types
+        parsed_args = []
+        for arg in func_args:
+            # Try int
+            try:
+                parsed_args.append(int(arg))
+                continue
+            except ValueError:
+                pass
+            # Try float
+            try:
+                parsed_args.append(float(arg))
+                continue
+            except ValueError:
+                pass
+            # Keep as string
+            parsed_args.append(arg)
+
+        print(f"Calling: {func_name}({', '.join(repr(a) for a in parsed_args)})")
+        print()
+        try:
+            result = func(*parsed_args)
+            print(f"Result: {result}")
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+    elif debug:
+        # Run with debugger
+        import pdb
+        print("Starting debugger...")
+        print(f"The function '{func_name}' is available in the namespace.")
+        print(f"Call it with: {func_name}(...)")
+        print()
+        pdb.set_trace()
+    else:
+        # Interactive mode
+        print(f"Function '{func_name}' is loaded and ready to use.")
+        print(f"Call it with: {func_name}(...)")
+        print()
+
+        # Start interactive Python shell with the function available
+        import code
+        code.interact(local=namespace, banner="")
+
+
+def command_translate(hash_with_lang: str, target_lang: str):
+    """
+    Add a translation for an existing function.
+
+    This command helps translate a function from one language to another
+    by prompting for new variable names and docstring.
+
+    Args:
+        hash_with_lang: Function hash with source language (e.g., "abc123...@eng")
+        target_lang: Target language code (e.g., "fra", "spa")
+    """
+    # Parse hash and source language
+    if '@' not in hash_with_lang:
+        print("Error: Missing language suffix. Use format: HASH@source_lang", file=sys.stderr)
+        sys.exit(1)
+
+    hash_value, source_lang = hash_with_lang.rsplit('@', 1)
+
+    # Validate language codes
+    if len(source_lang) != 3:
+        print(f"Error: Source language code must be 3 characters (ISO 639-3). Got: {source_lang}", file=sys.stderr)
+        sys.exit(1)
+
+    if len(target_lang) != 3:
+        print(f"Error: Target language code must be 3 characters (ISO 639-3). Got: {target_lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate hash format
+    if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value.lower()):
+        print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Load source function
+    try:
+        normalized_code, name_mapping_source, alias_mapping_source, docstring_source = function_load(hash_value, source_lang)
+    except SystemExit:
+        print(f"Error: Could not load function {hash_value}@{source_lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # Show source code for reference
+    print(f"Source function ({source_lang}):")
+    print("=" * 60)
+    normalized_code_with_doc = docstring_replace(normalized_code, docstring_source)
+    source_code = code_denormalize(normalized_code_with_doc, name_mapping_source, alias_mapping_source)
+    print(source_code)
+    print("=" * 60)
+    print()
+
+    # Create target name mapping by prompting user
+    print(f"Creating translation to {target_lang}...")
+    print()
+
+    name_mapping_target = {}
+
+    # Translate each name
+    for norm_name, orig_name in sorted(name_mapping_source.items()):
+        while True:
+            target_name = input(f"Translate '{orig_name}' ({norm_name}): ").strip()
+            if target_name:
+                name_mapping_target[norm_name] = target_name
+                break
+            else:
+                print("  Name cannot be empty. Please try again.")
+
+    # Translate docstring
+    print()
+    print(f"Source docstring:\n{docstring_source}")
+    print()
+    target_docstring = input(f"Target docstring ({target_lang}): ").strip()
+
+    # Use the same alias mapping (hash-based imports are language-independent)
+    alias_mapping_target = alias_mapping_source
+
+    # Optionally add a comment
+    comment = input("Optional comment for this translation (press Enter to skip): ").strip()
+
+    # Save the translation
+    mapping_save_v1(hash_value, target_lang, target_docstring, name_mapping_target, alias_mapping_target, comment)
+
+    print()
+    print(f"Translation saved: {hash_value}@{target_lang}")
+    print(f"View with: ouverture.py show {hash_value}@{target_lang}")
 
 
 def function_add(file_path_with_lang: str, comment: str = ""):
@@ -1147,6 +2189,55 @@ def function_get(hash_with_lang: str):
     print(original_code)
 
 
+def code_migrate_add_object_prefix(normalized_code: str) -> str:
+    """
+    Migrate normalized code from v0 format (no object_ prefix) to v1 format (with object_ prefix).
+
+    Transforms:
+    - from ouverture.pool import c0ff33 -> from ouverture.pool import object_c0ff33
+    - c0ff33._ouverture_v_0(...) -> object_c0ff33._ouverture_v_0(...)
+
+    Args:
+        normalized_code: Normalized code in v0 format (imports without object_ prefix)
+
+    Returns:
+        Migrated code with object_ prefix added to ouverture imports and calls
+    """
+    tree = ast.parse(normalized_code)
+
+    class PrefixAdder(ast.NodeTransformer):
+        def visit_ImportFrom(self, node):
+            if node.module == 'ouverture.pool':
+                # Add object_ prefix to import names
+                new_names = []
+                for alias in node.names:
+                    # Only add prefix if not already present
+                    if not alias.name.startswith(OUVERTURE_IMPORT_PREFIX):
+                        new_name = OUVERTURE_IMPORT_PREFIX + alias.name
+                    else:
+                        new_name = alias.name
+                    new_names.append(ast.alias(name=new_name, asname=alias.asname))
+                node.names = new_names
+            return node
+
+        def visit_Attribute(self, node):
+            # Transform hash._ouverture_v_0 -> object_hash._ouverture_v_0
+            if (isinstance(node.value, ast.Name) and
+                node.attr == '_ouverture_v_0' and
+                not node.value.id.startswith(OUVERTURE_IMPORT_PREFIX)):
+                # Check if this looks like a hash (64 hex chars or at least looks like one)
+                # Add object_ prefix
+                node.value.id = OUVERTURE_IMPORT_PREFIX + node.value.id
+            self.generic_visit(node)
+            return node
+
+    transformer = PrefixAdder()
+    tree = transformer.visit(tree)
+    ast.fix_missing_locations(tree)
+
+    return ast.unparse(tree)
+
+
 def schema_migrate_function_v0_to_v1(func_hash: str, keep_v0: bool = False):
     """
     Migrate a single function from schema v0 to v1.
@@ -1173,14 +2264,15 @@ def schema_migrate_function_v0_to_v1(func_hash: str, keep_v0: bool = False):
         print(f"Error: Failed to load v0 data: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Extract normalized code
+    # Extract normalized code and migrate to add object_ prefix
     normalized_code = v0_data['normalized_code']
+    migrated_code = code_migrate_add_object_prefix(normalized_code)
 
     # Create metadata for v1
     metadata = metadata_create()
 
-    # Save function in v1 format (object.json only)
-    function_save_v1(func_hash, normalized_code, metadata)
+    # Save function in v1 format (object.json only) with migrated code
+    function_save_v1(func_hash, migrated_code, metadata)
 
     # Migrate each language mapping
     for lang in v0_data.get('name_mappings', {}).keys():
@@ -1339,6 +2431,15 @@ def main():
     parser = argparse.ArgumentParser(description='ouverture - Function pool manager')
     subparsers = parser.add_subparsers(dest='command', help='Commands')
 
+    # Init command
+    init_parser = subparsers.add_parser('init', help='Initialize ouverture directory and config')
+
+    # Whoami command
+    whoami_parser = subparsers.add_parser('whoami', help='Get or set user configuration')
+    whoami_parser.add_argument('subcommand', choices=['username', 'email', 'public-key', 'language'],
+                               help='Configuration field to get/set')
+    whoami_parser.add_argument('value', nargs='*', help='New value(s) to set (omit to get current value)')
+
     # Add command
     add_parser = subparsers.add_parser('add', help='Add a function to the pool')
     add_parser.add_argument('file', help='Path to Python file with @lang suffix (e.g., file.py@eng)')
@@ -1352,6 +2453,52 @@ def main():
     show_parser = subparsers.add_parser('show', help='Show a function with mapping selection support')
     show_parser.add_argument('hash', help='Function hash with @lang[@mapping_hash] (e.g., abc123...@eng or abc123...@eng@xyz789...)')
 
+    # Translate command
+    translate_parser = subparsers.add_parser('translate', help='Add translation for existing function')
+    translate_parser.add_argument('hash', help='Function hash with source language (e.g., abc123...@eng)')
+    translate_parser.add_argument('target_lang', help='Target language code (e.g., fra, spa)')
+
+    # Run command
+    run_parser = subparsers.add_parser('run', help='Execute function interactively')
+    run_parser.add_argument('hash', help='Function hash with language (e.g., abc123...@eng)')
+    run_parser.add_argument('--debug', action='store_true', help='Run with debugger (pdb)')
+    run_parser.add_argument('func_args', nargs='*', help='Arguments to pass to function (after --)')
+
+    # Review command
+    review_parser = subparsers.add_parser('review', help='Recursively review function and dependencies')
+    review_parser.add_argument('hash', help='Function hash to review')
+
+    # Log command
+    log_parser = subparsers.add_parser('log', help='Show git-like commit log of pool')
+
+    # Search command
+    search_parser = subparsers.add_parser('search', help='Search and list functions by query')
+    search_parser.add_argument('query', nargs='+', help='Search terms')
+
+    # Remote command
+    remote_parser = subparsers.add_parser('remote', help='Manage remote repositories')
+    remote_subparsers = remote_parser.add_subparsers(dest='remote_command', help='Remote subcommands')
+
+    # Remote add
+    remote_add_parser = remote_subparsers.add_parser('add', help='Add remote repository')
+    remote_add_parser.add_argument('name', help='Remote name')
+    remote_add_parser.add_argument('url', help='Remote URL (http://, https://, or file://)')
+
+    # Remote remove
+    remote_remove_parser = remote_subparsers.add_parser('remove', help='Remove remote repository')
+    remote_remove_parser.add_argument('name', help='Remote name to remove')
+
+    # Remote list
+    remote_list_parser = remote_subparsers.add_parser('list', help='List configured remotes')
+
+    # Remote pull
+    remote_pull_parser = remote_subparsers.add_parser('pull', help='Fetch functions from remote')
+    remote_pull_parser.add_argument('name', help='Remote name to pull from')
+
+    # Remote push
+    remote_push_parser = remote_subparsers.add_parser('push', help='Publish functions to remote')
+    remote_push_parser.add_argument('name', help='Remote name to push to')
+
     # Migrate command
     migrate_parser = subparsers.add_parser('migrate', help='Migrate functions from v0 to v1')
     migrate_parser.add_argument('hash', nargs='?', help='Specific function hash to migrate (optional, migrates all if omitted)')
@@ -1364,12 +2511,39 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == 'add':
+    if args.command == 'init':
+        command_init()
+    elif args.command == 'whoami':
+        command_whoami(args.subcommand, args.value)
+    elif args.command == 'add':
         function_add(args.file, args.comment)
     elif args.command == 'get':
         function_get(args.hash)
     elif args.command == 'show':
         function_show(args.hash)
+    elif args.command == 'translate':
+        command_translate(args.hash, args.target_lang)
+    elif args.command == 'run':
+        command_run(args.hash, debug=args.debug, func_args=args.func_args)
+    elif args.command == 'review':
+        command_review(args.hash)
+    elif args.command == 'log':
+        command_log()
+    elif args.command == 'search':
+        command_search(args.query)
+    elif args.command == 'remote':
+        if args.remote_command == 'add':
+            command_remote_add(args.name, args.url)
+        elif args.remote_command == 'remove':
+            command_remote_remove(args.name)
+        elif args.remote_command == 'list':
+            command_remote_list()
+        elif args.remote_command == 'pull':
+            command_remote_pull(args.name)
+        elif args.remote_command == 'push':
+            command_remote_push(args.name)
+        else:
+            remote_parser.print_help()
     elif args.command == 'migrate':
         if args.hash:
             # Migrate specific function
