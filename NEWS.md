@@ -2,6 +2,33 @@
 
 ## Unreleased Changes
 
+### New Features
+
+#### Schema v1: Content-Addressed Mappings with Multiple Language Variants
+
+**What's new:**
+- **Schema v1 implemented**: Functions now use a directory-based storage format with content-addressed language mappings
+- **Multiple mappings per language**: Support for multiple naming variants (e.g., formal vs. casual, domain-specific terminology)
+- **Deduplication**: Identical mappings across functions share the same storage
+- **Extended language codes**: Language identifiers can now be up to 256 characters (was 3)
+- **Metadata support**: Functions include timestamps, author, tags, and dependencies
+
+**New commands:**
+```bash
+ouverture.py show HASH@LANG              # Explore available mappings
+ouverture.py migrate                     # Migrate v0 to v1 format
+ouverture.py validate [HASH]             # Validate schema integrity
+```
+
+**Backward compatibility:**
+- Schema v0 files are read-only (backward compatible)
+- All new functions are saved in v1 format
+- Migration tool converts v0 to v1 with validation
+
+**Storage structure:**
+- v1: `objects/sha256/XX/YYY.../object.json` + `lang/sha256/ZZ/WWW.../mapping.json`
+- See `strategies/schema-v1.md` for complete specification
+
 ### Breaking Changes
 
 #### OUVERTURE_DIRECTORY: New Default Location for Function Pool
