@@ -31,7 +31,7 @@ def test_add_simple_function(cli_runner, tmp_path):
     assert len(func_hash) == 64
 
     # Verify object was stored
-    objects_dir = cli_runner.pool_dir / 'objects' / 'sha256'
+    objects_dir = cli_runner.pool_dir / 'sha256'
     assert objects_dir.exists()
 
 
@@ -48,7 +48,7 @@ def test_add_function_creates_v1_structure(cli_runner, tmp_path):
     func_hash = cli_runner.add(str(test_file), 'eng')
 
     # Assert: Check v1 directory structure
-    func_dir = cli_runner.pool_dir / 'objects' / 'sha256' / func_hash[:2] / func_hash[2:]
+    func_dir = cli_runner.pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     assert func_dir.exists()
 
     # Check object.json exists
@@ -74,7 +74,7 @@ def test_add_function_stores_normalized_code(cli_runner, tmp_path):
     func_hash = cli_runner.add(str(test_file), 'eng')
 
     # Assert: Check normalized code in object.json
-    func_dir = cli_runner.pool_dir / 'objects' / 'sha256' / func_hash[:2] / func_hash[2:]
+    func_dir = cli_runner.pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     object_json = func_dir / 'object.json'
 
     with open(object_json, 'r') as f:
@@ -137,7 +137,7 @@ def test_add_multilingual_creates_mappings(cli_runner, tmp_path):
     # Assert: Same hash, both language directories exist
     assert eng_hash == fra_hash
 
-    func_dir = cli_runner.pool_dir / 'objects' / 'sha256' / eng_hash[:2] / eng_hash[2:]
+    func_dir = cli_runner.pool_dir / 'sha256' / eng_hash[:2] / eng_hash[2:]
     assert (func_dir / 'eng').exists()
     assert (func_dir / 'fra').exists()
 
@@ -218,7 +218,7 @@ def analyze(data):
 
     # Verify imports are preserved in object.json
     func_hash = result.stdout.split('Hash:')[1].strip().split()[0]
-    func_dir = cli_runner.pool_dir / 'objects' / 'sha256' / func_hash[:2] / func_hash[2:]
+    func_dir = cli_runner.pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     object_json = func_dir / 'object.json'
 
     with open(object_json, 'r') as f:

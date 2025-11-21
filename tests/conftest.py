@@ -97,15 +97,13 @@ class CLIRunner:
     Directory structure:
         ouverture_dir/
         ├── pool/          # Pool directory (git repository)
-        │   └── objects/
-        └── config/        # Configuration directory
-            └── config.json
+        │   └── sha256/    # Hash algorithm prefix
+        └── config.json    # Configuration file
     """
 
     def __init__(self, ouverture_dir: Path):
         self.ouverture_dir = ouverture_dir
         self.pool_dir = ouverture_dir / 'pool'
-        self.config_dir = ouverture_dir / 'config'
         self.env = {
             'OUVERTURE_DIRECTORY': str(ouverture_dir)
         }
@@ -149,13 +147,11 @@ def mock_ouverture_dir(tmp_path, monkeypatch):
     Directory structure:
         tmp_path/.ouverture/
         ├── pool/          # Pool directory
-        │   └── objects/
-        └── config/        # Configuration directory
-            └── config.json
+        │   └── sha256/    # Hash algorithm prefix
+        └── config.json    # Configuration file
     """
     base_dir = tmp_path / '.ouverture'
     pool_dir = base_dir / 'pool'
-    config_dir = base_dir / 'config'
 
     def _get_temp_ouverture_dir():
         return base_dir
@@ -163,12 +159,8 @@ def mock_ouverture_dir(tmp_path, monkeypatch):
     def _get_temp_pool_dir():
         return pool_dir
 
-    def _get_temp_config_dir():
-        return config_dir
-
     monkeypatch.setattr(ouverture, 'directory_get_ouverture', _get_temp_ouverture_dir)
     monkeypatch.setattr(ouverture, 'directory_get_pool', _get_temp_pool_dir)
-    monkeypatch.setattr(ouverture, 'directory_get_config', _get_temp_config_dir)
     return tmp_path
 
 
@@ -180,16 +172,14 @@ def cli_runner(tmp_path):
     Use this for integration tests that call CLI commands.
     Creates the directory structure:
         tmp_path/.ouverture/
-        ├── pool/objects/   # Pool directory
-        └── config/         # Configuration directory
+        ├── pool/           # Pool directory
+        │   └── sha256/     # Hash algorithm prefix
+        └── config.json     # Configuration file
     """
     ouverture_dir = tmp_path / '.ouverture'
     pool_dir = ouverture_dir / 'pool'
-    objects_dir = pool_dir / 'objects'
-    config_dir = ouverture_dir / 'config'
 
-    objects_dir.mkdir(parents=True, exist_ok=True)
-    config_dir.mkdir(parents=True, exist_ok=True)
+    pool_dir.mkdir(parents=True, exist_ok=True)
 
     return CLIRunner(ouverture_dir)
 

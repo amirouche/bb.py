@@ -31,7 +31,7 @@ def test_function_save_v0_new_function(mock_ouverture_dir):
                                    docstring, name_mapping, alias_mapping)
 
     # Verify file was created
-    json_path = mock_ouverture_dir / '.ouverture/pool/objects/aa' / (('a' * 62) + '.json')
+    json_path = mock_ouverture_dir / '.ouverture/pool/aa' / (('a' * 62) + '.json')
     assert json_path.exists()
 
     # Verify content
@@ -60,7 +60,7 @@ def test_function_save_v0_additional_language(mock_ouverture_dir):
                                    "French doc", {"_ouverture_v_0": "foo"}, {})
 
     # Verify both languages are present
-    json_path = mock_ouverture_dir / '.ouverture/pool/objects/bb' / (('b' * 62) + '.json')
+    json_path = mock_ouverture_dir / '.ouverture/pool/bb' / (('b' * 62) + '.json')
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -85,7 +85,7 @@ def test_function_save_v1_creates_object_json(mock_ouverture_dir):
 
     # Check that object.json was created - with sha256 in path
     pool_dir = mock_ouverture_dir / '.ouverture' / 'pool'
-    objects_dir = pool_dir / 'objects'
+    objects_dir = pool_dir
     func_dir = objects_dir / 'sha256' / test_hash[:2] / test_hash[2:]
     object_json = func_dir / 'object.json'
 
@@ -112,7 +112,7 @@ def test_function_save_v1_no_language_data(mock_ouverture_dir):
     ouverture.function_save_v1(test_hash, normalized_code, metadata)
 
     pool_dir = mock_ouverture_dir / '.ouverture' / 'pool'
-    objects_dir = pool_dir / 'objects'
+    objects_dir = pool_dir
     func_dir = objects_dir / 'sha256' / test_hash[:2] / test_hash[2:]
     object_json = func_dir / 'object.json'
 
@@ -144,7 +144,7 @@ def test_mapping_save_v1_creates_mapping_json(mock_ouverture_dir):
 
     # Check that mapping.json was created - with sha256 in paths
     pool_dir = mock_ouverture_dir / '.ouverture' / 'pool'
-    objects_dir = pool_dir / 'objects'
+    objects_dir = pool_dir
     func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     mapping_dir = func_dir / lang / 'sha256' / mapping_hash[:2] / mapping_hash[2:]
     mapping_json = mapping_dir / 'mapping.json'
@@ -259,7 +259,7 @@ def test_v1_write_integration_full_structure(mock_ouverture_dir):
 
     # Verify directory structure - with sha256 in paths
     pool_dir = mock_ouverture_dir / '.ouverture' / 'pool'
-    objects_dir = pool_dir / 'objects'
+    objects_dir = pool_dir
     func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
 
     # Check object.json exists

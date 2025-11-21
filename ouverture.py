@@ -421,17 +421,16 @@ def schema_detect_version(func_hash: str) -> int:
         0 for v0 format, 1 for v1 format, None if function not found
     """
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
 
     # Check for v1 format first (function directory with object.json)
-    v1_func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    v1_func_dir = pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     v1_object_json = v1_func_dir / 'object.json'
 
     if v1_object_json.exists():
         return 1
 
     # Check for v0 format (JSON file)
-    v0_hash_dir = objects_dir / func_hash[:2]
+    v0_hash_dir = pool_dir / func_hash[:2]
     v0_json_path = v0_hash_dir / f'{func_hash[2:]}.json'
 
     if v0_json_path.exists():
@@ -478,9 +477,9 @@ def directory_get_ouverture() -> Path:
     Directory structure:
         $OUVERTURE_DIRECTORY/
         ├── pool/          # Pool directory (git repository for objects)
-        │   └── objects/
-        └── config/        # Configuration directory
-            └── config.json
+        │   └── sha256/    # Hash algorithm prefix
+        │       └── XX/    # First 2 chars of hash
+        └── config.json    # Configuration file
     """
     env_dir = os.environ.get('OUVERTURE_DIRECTORY')
     if env_dir:
@@ -498,24 +497,16 @@ def directory_get_pool() -> Path:
     return directory_get_ouverture() / 'pool'
 
 
-def directory_get_config() -> Path:
-    """
-    Get the configuration directory.
-    Returns: $OUVERTURE_DIRECTORY/config/
-    """
-    return directory_get_ouverture() / 'config'
-
-
 def config_get_path() -> Path:
     """
     Get the path to the config file.
-    Config is stored in $OUVERTURE_DIRECTORY/config/config.json
+    Config is stored in $OUVERTURE_DIRECTORY/config.json
     Can be overridden with OUVERTURE_CONFIG_PATH environment variable for testing.
     """
     config_override = os.environ.get('OUVERTURE_CONFIG_PATH')
     if config_override:
         return Path(config_override)
-    return directory_get_config() / 'config.json'
+    return directory_get_ouverture() / 'config.json'
 
 
 def config_read() -> Dict[str, any]:
@@ -567,12 +558,7 @@ def command_init():
 
     # Create pool directory (git repository for objects)
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
-    objects_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create config directory
-    config_dir = directory_get_config()
-    config_dir.mkdir(parents=True, exist_ok=True)
+    pool_dir.mkdir(parents=True, exist_ok=True)
 
     # Create config file with defaults
     config_path = config_get_path()
@@ -653,8 +639,7 @@ def function_save_v0(hash_value: str, lang: str, normalized_code: str, docstring
     """
     # Create directory structure: OUVERTURE_DIR/objects/XX/
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
-    hash_dir = objects_dir / hash_value[:2]
+    hash_dir = pool_dir / hash_value[:2]
     hash_dir.mkdir(parents=True, exist_ok=True)
 
     # Create JSON file path
@@ -701,10 +686,9 @@ def function_save_v1(hash_value: str, normalized_code: str, metadata: Dict[str, 
         metadata: Metadata dict (created, author, tags, dependencies)
     """
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
 
     # Create function directory: objects/sha256/XX/YYYYYY.../
-    func_dir = objects_dir / 'sha256' / hash_value[:2] / hash_value[2:]
+    func_dir = pool_dir / 'sha256' / hash_value[:2] / hash_value[2:]
     func_dir.mkdir(parents=True, exist_ok=True)
 
     # Create object.json
@@ -750,13 +734,12 @@ def mapping_save_v1(func_hash: str, lang: str, docstring: str,
         Mapping hash (64-character hex)
     """
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
 
     # Compute mapping hash
     mapping_hash = mapping_compute_hash(docstring, name_mapping, alias_mapping, comment)
 
     # Create mapping directory: objects/sha256/XX/Y.../lang/sha256/ZZ/W.../
-    func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    func_dir = pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     mapping_dir = func_dir / lang / 'sha256' / mapping_hash[:2] / mapping_hash[2:]
     mapping_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1204,8 +1187,8 @@ def command_remote_pull(name: str):
 
         # Copy functions from remote to local pool
         local_pool = directory_get_pool()
-        local_objects = local_pool / 'objects'
-        remote_objects = remote_path / 'objects'
+        local_objects = local_pool
+        remote_objects = remote_path
 
         if not remote_objects.exists():
             print(f"Error: Remote objects directory not found: {remote_objects}", file=sys.stderr)
@@ -1236,8 +1219,8 @@ def command_remote_pull(name: str):
 
         # Copy functions from cached repository to local pool
         local_pool = directory_get_pool()
-        local_objects = local_pool / 'objects'
-        remote_objects = cache_path / 'objects'
+        local_objects = local_pool
+        remote_objects = cache_path
 
         if not remote_objects.exists():
             print(f"Warning: No objects directory in remote repository")
@@ -1294,8 +1277,8 @@ def command_remote_push(name: str):
 
         # Copy functions from local pool to remote
         local_pool = directory_get_pool()
-        local_objects = local_pool / 'objects'
-        remote_objects = remote_path / 'objects'
+        local_objects = local_pool
+        remote_objects = remote_path
 
         if not local_objects.exists():
             print("Error: Local objects directory not found", file=sys.stderr)
@@ -1327,8 +1310,8 @@ def command_remote_push(name: str):
 
         # Copy functions from local pool to cached repository
         local_pool = directory_get_pool()
-        local_objects = local_pool / 'objects'
-        remote_objects = cache_path / 'objects'
+        local_objects = local_pool
+        remote_objects = cache_path
 
         if not local_objects.exists():
             print("Error: Local objects directory not found", file=sys.stderr)
@@ -1418,7 +1401,7 @@ def dependencies_resolve(func_hash: str) -> List[str]:
         if version == 0:
             # v0: Load from single JSON file
             pool_dir = directory_get_pool()
-            func_path = pool_dir / 'objects' / hash_value[:2] / f'{hash_value[2:]}.json'
+            func_path = pool_dir / hash_value[:2] / f'{hash_value[2:]}.json'
             with open(func_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             normalized_code = data.get('normalized_code', '')
@@ -1456,7 +1439,7 @@ def dependencies_bundle(hashes: List[str], output_dir: Path) -> Path:
 
     pool_dir = directory_get_pool()
     output_dir = Path(output_dir)
-    output_objects = output_dir / 'objects'
+    output_objects = output_dir
     output_objects.mkdir(parents=True, exist_ok=True)
 
     for func_hash in hashes:
@@ -1466,13 +1449,13 @@ def dependencies_bundle(hashes: List[str], output_dir: Path) -> Path:
 
         if version == 0:
             # v0: Copy single JSON file
-            src = pool_dir / 'objects' / func_hash[:2] / f'{func_hash[2:]}.json'
+            src = pool_dir / func_hash[:2] / f'{func_hash[2:]}.json'
             dst = output_objects / func_hash[:2] / f'{func_hash[2:]}.json'
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
         else:
             # v1: Copy entire function directory
-            src_dir = pool_dir / 'objects' / 'sha256' / func_hash[:2] / func_hash[2:]
+            src_dir = pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
             dst_dir = output_objects / 'sha256' / func_hash[:2] / func_hash[2:]
             if src_dir.exists():
                 shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
@@ -1575,16 +1558,15 @@ def command_log():
     Lists all functions with metadata (timestamp, author, hash).
     """
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
 
-    if not objects_dir.exists():
+    if not pool_dir.exists():
         print("No functions in pool")
         return
 
     functions = []
 
     # Scan for v1 functions (objects/sha256/XX/YYY.../object.json)
-    v1_dir = objects_dir / 'sha256'
+    v1_dir = pool_dir / 'sha256'
     if v1_dir.exists():
         for hash_prefix_dir in v1_dir.iterdir():
             if not hash_prefix_dir.is_dir():
@@ -1625,7 +1607,7 @@ def command_log():
                     continue
 
     # Scan for v0 functions (objects/XX/YYY.json)
-    for hash_prefix_dir in objects_dir.iterdir():
+    for hash_prefix_dir in pool_dir.iterdir():
         if not hash_prefix_dir.is_dir():
             continue
         if hash_prefix_dir.name == 'sha256':
@@ -1684,16 +1666,15 @@ def command_search(query: List[str]):
     search_terms = [term.lower() for term in query]
 
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
 
-    if not objects_dir.exists():
+    if not pool_dir.exists():
         print("No functions in pool")
         return
 
     results = []
 
     # Scan for v1 functions
-    v1_dir = objects_dir / 'sha256'
+    v1_dir = pool_dir / 'sha256'
     if v1_dir.exists():
         for hash_prefix_dir in v1_dir.iterdir():
             if not hash_prefix_dir.is_dir():
@@ -1749,7 +1730,7 @@ def command_search(query: List[str]):
                     continue
 
     # Scan for v0 functions
-    for hash_prefix_dir in objects_dir.iterdir():
+    for hash_prefix_dir in pool_dir.iterdir():
         if not hash_prefix_dir.is_dir():
             continue
         if hash_prefix_dir.name == 'sha256':
@@ -2241,8 +2222,7 @@ def function_load_v0(hash_value: str, lang: str) -> Tuple[str, Dict[str, str], D
     """
     # Build file path using configurable ouverture directory
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
-    hash_dir = objects_dir / hash_value[:2]
+    hash_dir = pool_dir / hash_value[:2]
     json_path = hash_dir / f'{hash_value[2:]}.json'
 
     # Check if file exists
@@ -2287,10 +2267,9 @@ def function_load_v1(hash_value: str) -> Dict[str, any]:
         Dictionary with schema_version, hash, hash_algorithm, normalized_code, encoding, metadata
     """
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
 
     # Build path: objects/sha256/XX/YYYYYY.../object.json
-    func_dir = objects_dir / 'sha256' / hash_value[:2] / hash_value[2:]
+    func_dir = pool_dir / 'sha256' / hash_value[:2] / hash_value[2:]
     object_json = func_dir / 'object.json'
 
     # Check if file exists
@@ -2323,10 +2302,9 @@ def mappings_list_v1(func_hash: str, lang: str) -> list:
         List of (mapping_hash, comment) tuples
     """
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
 
     # Build path: objects/sha256/XX/YYYYYY.../lang/
-    func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    func_dir = pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     lang_dir = func_dir / lang
 
     # Check if language directory exists
@@ -2383,10 +2361,9 @@ def mapping_load_v1(func_hash: str, lang: str, mapping_hash: str) -> Tuple[str, 
         Tuple of (docstring, name_mapping, alias_mapping, comment)
     """
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
 
     # Build path: objects/sha256/XX/Y.../lang/sha256/ZZ/W.../mapping.json
-    func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    func_dir = pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     mapping_dir = func_dir / lang / 'sha256' / mapping_hash[:2] / mapping_hash[2:]
     mapping_json = mapping_dir / 'mapping.json'
 
@@ -2673,8 +2650,7 @@ def schema_migrate_function_v0_to_v1(func_hash: str, keep_v0: bool = False):
 
     # Load v0 data
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
-    v0_path = objects_dir / func_hash[:2] / f'{func_hash[2:]}.json'
+    v0_path = pool_dir / func_hash[:2] / f'{func_hash[2:]}.json'
 
     try:
         with open(v0_path, 'r', encoding='utf-8') as f:
@@ -2737,14 +2713,13 @@ def schema_migrate_all_v0_to_v1(keep_v0: bool = False, dry_run: bool = False) ->
         List of function hashes that were (or would be) migrated
     """
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
 
     # Find all v0 files
     v0_functions = []
-    if not objects_dir.exists():
+    if not pool_dir.exists():
         return v0_functions
 
-    for hash_prefix_dir in objects_dir.iterdir():
+    for hash_prefix_dir in pool_dir.iterdir():
         if not hash_prefix_dir.is_dir():
             continue
         if hash_prefix_dir.name == 'sha256':
@@ -2796,10 +2771,9 @@ def schema_validate_v1(func_hash: str) -> tuple:
     """
     errors = []
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
 
     # Check object.json exists
-    func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    func_dir = pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     object_json = func_dir / 'object.json'
 
     if not object_json.exists():
@@ -2868,15 +2842,14 @@ def command_caller(hash_value: str):
         sys.exit(1)
 
     pool_dir = directory_get_pool()
-    objects_dir = pool_dir / 'objects'
 
-    if not objects_dir.exists():
+    if not pool_dir.exists():
         return
 
     callers = []
 
     # Scan for v1 functions (objects/sha256/XX/YYY.../object.json)
-    v1_dir = objects_dir / 'sha256'
+    v1_dir = pool_dir / 'sha256'
     if v1_dir.exists():
         for hash_prefix_dir in v1_dir.iterdir():
             if not hash_prefix_dir.is_dir():
@@ -2905,7 +2878,7 @@ def command_caller(hash_value: str):
                     continue
 
     # Scan for v0 functions (objects/XX/YYY.json)
-    for hash_prefix_dir in objects_dir.iterdir():
+    for hash_prefix_dir in pool_dir.iterdir():
         if not hash_prefix_dir.is_dir():
             continue
         if hash_prefix_dir.name == 'sha256':
@@ -2965,8 +2938,8 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str):
     # Load the function's normalized code
     if what_version == 0:
         pool_dir = directory_get_pool()
-        objects_dir = pool_dir / 'objects'
-        v0_path = objects_dir / what_hash[:2] / f'{what_hash[2:]}.json'
+        pool_dir = pool_dir
+        v0_path = pool_dir / what_hash[:2] / f'{what_hash[2:]}.json'
         with open(v0_path, 'r', encoding='utf-8') as f:
             what_data = json.load(f)
         normalized_code = what_data['normalized_code']
@@ -2977,8 +2950,8 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str):
         normalized_code = func_data['normalized_code']
         # Get all languages from v1 directory structure
         pool_dir = directory_get_pool()
-        objects_dir = pool_dir / 'objects'
-        func_dir = objects_dir / 'sha256' / what_hash[:2] / what_hash[2:]
+        pool_dir = pool_dir
+        func_dir = pool_dir / 'sha256' / what_hash[:2] / what_hash[2:]
         languages = []
         for item in func_dir.iterdir():
             if item.is_dir() and len(item.name) == 3:
@@ -3198,7 +3171,7 @@ def directory_get_bundle() -> Path:
 def function_load_v1(hash_value: str):
     """Load function from v1 format."""
     bundle_dir = directory_get_bundle()
-    func_dir = bundle_dir / 'objects' / 'sha256' / hash_value[:2] / hash_value[2:]
+    func_dir = bundle_dir / 'sha256' / hash_value[:2] / hash_value[2:]
     object_path = func_dir / 'object.json'
 
     if not object_path.exists():
@@ -3211,7 +3184,7 @@ def function_load_v1(hash_value: str):
 def mapping_load_v1(func_hash: str, lang: str, mapping_hash: str):
     """Load mapping from v1 format."""
     bundle_dir = directory_get_bundle()
-    mapping_path = (bundle_dir / 'objects' / 'sha256' / func_hash[:2] / func_hash[2:] /
+    mapping_path = (bundle_dir / 'sha256' / func_hash[:2] / func_hash[2:] /
                    lang / 'sha256' / mapping_hash[:2] / mapping_hash[2:] / 'mapping.json')
 
     with open(mapping_path, 'r', encoding='utf-8') as f:
@@ -3228,7 +3201,7 @@ def mapping_load_v1(func_hash: str, lang: str, mapping_hash: str):
 def mappings_list_v1(func_hash: str, lang: str):
     """List mappings for a function in a language."""
     bundle_dir = directory_get_bundle()
-    lang_dir = bundle_dir / 'objects' / 'sha256' / func_hash[:2] / func_hash[2:] / lang / 'sha256'
+    lang_dir = bundle_dir / 'sha256' / func_hash[:2] / func_hash[2:] / lang / 'sha256'
 
     if not lang_dir.exists():
         return []
