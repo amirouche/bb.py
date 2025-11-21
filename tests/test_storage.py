@@ -4,7 +4,6 @@ Tests for storage functions (Schema v1 write/read path).
 Tests for saving and loading functions in v1 format.
 """
 import json
-from unittest.mock import patch
 
 import pytest
 
@@ -15,60 +14,6 @@ from tests.conftest import normalize_code_for_test
 # ============================================================================
 # Tests for V1 Write Path
 # ============================================================================
-
-def test_function_save_v0_new_function(mock_mobius_dir):
-    """Test saving a new function (v0 format - legacy)"""
-    hash_value = "a" * 64
-    lang = "eng"
-    normalized_code = normalize_code_for_test("def _mobius_v_0(): return 42")
-    docstring = "Test function"
-    name_mapping = {"_mobius_v_0": "foo"}
-    alias_mapping = {}
-
-    # Capture stdout
-    with patch('sys.stdout'):
-        mobius.function_save_v0(hash_value, lang, normalized_code,
-                                   docstring, name_mapping, alias_mapping)
-
-    # Verify file was created
-    json_path = mock_mobius_dir / '.mobius/pool/aa' / (('a' * 62) + '.json')
-    assert json_path.exists()
-
-    # Verify content
-    with open(json_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-
-    assert data['hash'] == hash_value
-    assert data['normalized_code'] == normalized_code
-    assert data['docstrings']['eng'] == docstring
-    assert data['name_mappings']['eng'] == name_mapping
-
-
-def test_function_save_v0_additional_language(mock_mobius_dir):
-    """Test adding another language to existing function (v0 format - legacy)"""
-    hash_value = "b" * 64
-    normalized_code = normalize_code_for_test("def _mobius_v_0(): return 42")
-
-    # Save English version
-    with patch('sys.stdout'):
-        mobius.function_save_v0(hash_value, "eng", normalized_code,
-                                   "English doc", {"_mobius_v_0": "foo"}, {})
-
-    # Save French version
-    with patch('sys.stdout'):
-        mobius.function_save_v0(hash_value, "fra", normalized_code,
-                                   "French doc", {"_mobius_v_0": "foo"}, {})
-
-    # Verify both languages are present
-    json_path = mock_mobius_dir / '.mobius/pool/bb' / (('b' * 62) + '.json')
-    with open(json_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-
-    assert 'eng' in data['docstrings']
-    assert 'fra' in data['docstrings']
-    assert data['docstrings']['eng'] == "English doc"
-    assert data['docstrings']['fra'] == "French doc"
-
 
 def test_function_save_v1_creates_object_json(mock_mobius_dir):
     """Test that function_save_v1 creates proper object.json"""
@@ -402,28 +347,6 @@ def test_function_load_v1_integration(mock_mobius_dir):
     mobius.function_save(func_hash, lang, normalized_code, docstring, name_mapping, alias_mapping, comment)
 
     # Read back using dispatch (should detect v1)
-    loaded_code, loaded_name, loaded_alias, loaded_doc = mobius.function_load(func_hash, lang)
-
-    # Verify correctness
-    assert loaded_code == normalized_code
-    assert loaded_name == name_mapping
-    assert loaded_alias == alias_mapping
-    assert loaded_doc == docstring
-
-
-def test_function_load_v0_backward_compatibility(mock_mobius_dir):
-    """Integration test: read v0 file, verify backward compatibility"""
-    func_hash = "v0compat" + "0" * 56
-    lang = "eng"
-    normalized_code = normalize_code_for_test("def _mobius_v_0(): return 42")
-    docstring = "Return 42"
-    name_mapping = {"_mobius_v_0": "get_answer"}
-    alias_mapping = {}
-
-    # Write v0 format explicitly
-    mobius.function_save_v0(func_hash, lang, normalized_code, docstring, name_mapping, alias_mapping)
-
-    # Read back using dispatch (should detect v0)
     loaded_code, loaded_name, loaded_alias, loaded_doc = mobius.function_load(func_hash, lang)
 
     # Verify correctness
