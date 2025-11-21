@@ -59,17 +59,23 @@ $OUVERTURE_DIRECTORY/objects/
 ### Storage Structure
 ```
 $OUVERTURE_DIRECTORY/objects/
-  ab/
-    c123def456.../              # Function directory (full hash as dirname)
-      object.json               # Core function data (no language data)
-      eng/                      # Language code directory
-        xy/
-          z789abc.../mapping.json  # Mapping file (full hash as dirname)
-        de/
-          f012ghi.../mapping.json  # Another variant
-      fra-canadian/              # Extended language codes (up to 256 chars)
-        mn/
-          opqr.../mapping.json
+  sha256/                       # Hash algorithm name
+    ab/                         # First 2 chars of function hash
+      c123def456.../            # Function directory (remaining hash chars)
+        object.json             # Core function data (no language data)
+        eng/                    # Language code directory
+          sha256/               # Hash algorithm for mapping
+            xy/                 # First 2 chars of mapping hash
+              z789abc.../       # Mapping directory (remaining hash chars)
+                mapping.json    # Mapping file
+            de/
+              f012ghi.../
+                mapping.json    # Another variant
+        fra-canadian/           # Extended language codes (up to 256 chars)
+          sha256/
+            mn/
+              opqr.../
+                mapping.json
 ```
 
 ### object.json (v1)

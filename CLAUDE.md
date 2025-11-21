@@ -168,14 +168,14 @@ $HOME/.local/ouverture/
 
 #### `function_save_v1(hash_value, normalized_code, metadata)` (lines 495-532)
 **Stores function in v1 format** (Schema v1)
-- Creates function directory: `$OUVERTURE_DIRECTORY/objects/XX/YYYYYY.../`
+- Creates function directory: `$OUVERTURE_DIRECTORY/objects/sha256/XX/YYYYYY.../`
 - Writes `object.json` with schema_version=1, hash_algorithm, encoding, metadata
 - Does NOT store language-specific data (stored separately in mapping files)
 - Clean separation: code in object.json, language variants in mapping.json files
 
 #### `mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment='')` (lines 534-585)
 **Stores language mapping in v1 format** (Schema v1)
-- Creates mapping directory: `$OUVERTURE_DIRECTORY/objects/XX/Y.../lang/ZZ/W.../`
+- Creates mapping directory: `$OUVERTURE_DIRECTORY/objects/sha256/XX/Y.../lang/sha256/ZZ/W.../`
 - Writes `mapping.json` with docstring, name_mapping, alias_mapping, comment
 - Content-addressed by mapping hash (enables deduplication)
 - Identical mappings across functions share same file
@@ -226,17 +226,27 @@ Functions are stored in `$OUVERTURE_DIRECTORY/objects/XX/YYYYYY.json` (default: 
 - Mappings stored inline (no deduplication)
 - Limited extensibility
 
-#### Future Schema (v1) - Planned
+#### Future Schema (v1) - Implemented
 
 See `TODO.md` Priority 0 for the comprehensive redesign plan.
 
 **Directory Structure:**
 ```
-$OUVERTURE_DIRECTORY/objects/  # Default: $HOME/.local/ouverture/objects/
-  ab/c123def456.../              # Function directory
-    object.json                  # Core function data (no language data)
-    eng/xy/z789.../mapping.json  # Language mapping (content-addressed)
-    fra/mn/opqr.../mapping.json  # Another language/variant
+$OUVERTURE_DIRECTORY/objects/         # Default: $HOME/.local/ouverture/objects/
+  sha256/                             # Hash algorithm name
+    ab/                               # First 2 chars of function hash
+      c123def456.../                  # Function directory (remaining hash chars)
+        object.json                   # Core function data (no language data)
+        eng/                          # Language code directory
+          sha256/                     # Hash algorithm for mapping
+            xy/                       # First 2 chars of mapping hash
+              z789.../                # Mapping directory (remaining hash chars)
+                mapping.json          # Language mapping (content-addressed)
+        fra/                          # Another language
+          sha256/
+            mn/
+              opqr.../
+                mapping.json          # Another language/variant
 ```
 
 **object.json** (minimal - no duplication):

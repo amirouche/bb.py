@@ -377,7 +377,7 @@ def schema_detect_version(func_hash: str) -> int:
 
     Checks the filesystem to determine if a function is stored in v0 or v1 format:
     - v0: $OUVERTURE_DIRECTORY/objects/XX/YYYYYY.json
-    - v1: $OUVERTURE_DIRECTORY/objects/XX/YYYYYY.../object.json
+    - v1: $OUVERTURE_DIRECTORY/objects/sha256/XX/YYYYYY.../object.json
 
     Args:
         func_hash: The function hash to check
@@ -389,7 +389,7 @@ def schema_detect_version(func_hash: str) -> int:
     objects_dir = ouverture_dir / 'objects'
 
     # Check for v1 format first (function directory with object.json)
-    v1_func_dir = objects_dir / func_hash[:2] / func_hash[2:]
+    v1_func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     v1_object_json = v1_func_dir / 'object.json'
 
     if v1_object_json.exists():
@@ -497,8 +497,8 @@ def function_save_v1(hash_value: str, normalized_code: str, metadata: Dict[str, 
     Save function to ouverture directory using schema v1.
 
     Creates the function directory and object.json file:
-    - Directory: $OUVERTURE_DIRECTORY/objects/XX/YYYYYY.../
-    - File: $OUVERTURE_DIRECTORY/objects/XX/YYYYYY.../object.json
+    - Directory: $OUVERTURE_DIRECTORY/objects/sha256/XX/YYYYYY.../
+    - File: $OUVERTURE_DIRECTORY/objects/sha256/XX/YYYYYY.../object.json
 
     Args:
         hash_value: Function hash (64-character hex)
@@ -508,8 +508,8 @@ def function_save_v1(hash_value: str, normalized_code: str, metadata: Dict[str, 
     ouverture_dir = directory_get_ouverture()
     objects_dir = ouverture_dir / 'objects'
 
-    # Create function directory: objects/XX/YYYYYY.../
-    func_dir = objects_dir / hash_value[:2] / hash_value[2:]
+    # Create function directory: objects/sha256/XX/YYYYYY.../
+    func_dir = objects_dir / 'sha256' / hash_value[:2] / hash_value[2:]
     func_dir.mkdir(parents=True, exist_ok=True)
 
     # Create object.json
@@ -538,8 +538,8 @@ def mapping_save_v1(func_hash: str, lang: str, docstring: str,
     Save language mapping to ouverture directory using schema v1.
 
     Creates the mapping directory and mapping.json file:
-    - Directory: $OUVERTURE_DIRECTORY/objects/XX/YYYYYY.../lang/ZZ/WWWWW.../
-    - File: $OUVERTURE_DIRECTORY/objects/XX/YYYYYY.../lang/ZZ/WWWWW.../mapping.json
+    - Directory: $OUVERTURE_DIRECTORY/objects/sha256/XX/Y.../lang/sha256/ZZ/W.../
+    - File: $OUVERTURE_DIRECTORY/objects/sha256/XX/Y.../lang/sha256/ZZ/W.../mapping.json
 
     The mapping is content-addressed, enabling deduplication.
 
@@ -560,9 +560,9 @@ def mapping_save_v1(func_hash: str, lang: str, docstring: str,
     # Compute mapping hash
     mapping_hash = mapping_compute_hash(docstring, name_mapping, alias_mapping, comment)
 
-    # Create mapping directory: objects/XX/YYYYYY.../lang/ZZ/WWWWW.../
-    func_dir = objects_dir / func_hash[:2] / func_hash[2:]
-    mapping_dir = func_dir / lang / mapping_hash[:2] / mapping_hash[2:]
+    # Create mapping directory: objects/sha256/XX/Y.../lang/sha256/ZZ/W.../
+    func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    mapping_dir = func_dir / lang / 'sha256' / mapping_hash[:2] / mapping_hash[2:]
     mapping_dir.mkdir(parents=True, exist_ok=True)
 
     # Create mapping.json
