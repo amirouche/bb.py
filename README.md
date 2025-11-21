@@ -247,4 +247,4 @@ File issues on GitHub. We're learning in public.
 
 *"The limits of my language mean the limits of my world."* – Ludwig Wittgenstein
 
-*Ouverture: Beyond Babel, more worlds become possible.*
+*Ouverture: Beyond Babel, one function at a time.*
