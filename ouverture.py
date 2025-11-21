@@ -182,7 +182,7 @@ def create_name_mapping(function_def: ast.FunctionDef, imports: List[ast.stmt],
 
 def rewrite_ouverture_imports(imports: List[ast.stmt]) -> Tuple[List[ast.stmt], Dict[str, str]]:
     """
-    Rewrite imports from 'ouverture' to 'couverture' and track aliases.
+    Remove aliases from 'ouverture' imports and track them for later restoration.
     Returns (new_imports, alias_mapping)
     alias_mapping maps: imported_function_hash -> alias_in_lang
     """
@@ -202,7 +202,7 @@ def rewrite_ouverture_imports(imports: List[ast.stmt]) -> Tuple[List[ast.stmt], 
                 new_names.append(ast.alias(name=alias.name, asname=None))
 
             new_imp = ast.ImportFrom(
-                module='couverture',
+                module='ouverture',
                 names=new_names,
                 level=0
             )
@@ -406,8 +406,8 @@ def denormalize_code(normalized_code: str, name_mapping: Dict[str, str], alias_m
             return node
 
         def visit_ImportFrom(self, node):
-            # Replace 'from couverture import X' with 'from ouverture import X as alias'
-            if node.module == 'couverture':
+            # Add aliases back to 'from ouverture import X'
+            if node.module == 'ouverture':
                 node.module = 'ouverture'
                 # Add aliases back
                 new_names = []
