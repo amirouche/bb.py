@@ -535,35 +535,93 @@ normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 42")
 
 ## Testing Strategy
 
-### Pytest Unit Tests
+### Philosophy: Grey-Box Integration First
 
-The project includes comprehensive pytest unit tests in `test_ouverture.py`. See `README_PYTEST.md` for detailed documentation.
+Ouverture follows a **grey-box integration testing** approach as the primary testing strategy. Most tests exercise the CLI commands end-to-end while having knowledge of the internal storage format for assertions.
 
-**CRITICAL REQUIREMENT**: All pytest tests MUST be implemented as functions, not classes. Use descriptive function names like `test_ast_normalizer_visit_name_with_mapping()` instead of class-based organization.
+**Testing pyramid for Ouverture**:
+1. **Integration tests (grey-box)** - Primary focus, organized by CLI command
+2. **Unit tests** - Only for complex algorithms (AST normalization, hash computation, schema migration)
+
+### Directory Structure
+
+```
+tests/
+├── conftest.py              # Shared fixtures (CLIRunner, normalize_code_for_test)
+├── integration/
+│   └── test_workflows.py    # End-to-end workflows combining multiple commands
+├── add/
+│   └── test_add.py          # Tests for 'ouverture.py add' command
+├── show/
+│   └── test_show.py         # Tests for 'ouverture.py show' command
+├── get/
+│   └── test_get.py          # Tests for 'ouverture.py get' command
+├── migrate/
+│   └── test_migrate.py      # Tests for schema migration
+├── test_internals.py        # Unit tests for complex algorithms
+└── test_storage.py          # Storage schema validation tests
+```
+
+### Grey-Box Integration Tests
+
+Grey-box tests call CLI commands but verify internal state:
+
+```python
+def test_add_function_creates_v1_structure(cli_runner, tmp_path):
+    """Test that add creates proper v1 directory structure"""
+    # Setup: Create test file
+    test_file = tmp_path / "math_func.py"
+    test_file.write_text('''def add_numbers(a, b):
+    """Add two numbers"""
+    return a + b
+''')
+
+    # Test: Call CLI command
+    func_hash = cli_runner.add(str(test_file), 'eng')
+
+    # Assert: Check internal storage structure (grey-box)
+    func_dir = cli_runner.pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    assert func_dir.exists()
+    assert (func_dir / 'object.json').exists()
+    assert (func_dir / 'eng').exists()
+```
+
+### Unit Tests for Complex Algorithms
+
+Unit tests are reserved for low-level components where grey-box testing would be impractical:
+
+- **AST normalization** (`ASTNormalizer` class, `ast_normalize` function)
+- **Name mapping** (`mapping_create_name`, `mapping_compute_hash`)
+- **Hash computation** (`hash_compute` with determinism guarantees)
+- **Schema detection/migration** (`schema_detect_version`, `schema_migrate_*`)
+- **Import handling** (`imports_rewrite_ouverture`, `calls_replace_ouverture`)
+
+These tests live in `tests/test_internals.py`.
+
+### Running Tests
 
 ```bash
 # Run all tests
 pytest
 
+# Run integration tests only
+pytest tests/integration/ tests/add/ tests/show/ tests/get/
+
+# Run unit tests only
+pytest tests/test_internals.py tests/test_storage.py
+
 # Run with coverage
 pytest --cov=ouverture --cov-report=html
 
-# Run specific test
-pytest test_ouverture.py::test_ast_normalizer_visit_name_with_mapping
-
 # Run tests matching pattern
-pytest -k "ast_normalizer"
+pytest -k "add"
 ```
 
-The test suite covers:
-- AST normalization and transformation
-- Name mapping and unmapping
-- Import handling (standard and ouverture)
-- Hash computation and determinism
-- Storage and retrieval functions
-- CLI commands with error handling
-- End-to-end integration tests
-- Multilingual function support
+### Test Conventions
+
+**CRITICAL REQUIREMENT**: All pytest tests MUST be implemented as functions, not classes. Use descriptive function names like `test_add_function_creates_v1_structure()` instead of class-based organization.
+
+**Normalized code strings**: All normalized code strings in tests MUST use the `normalize_code_for_test()` helper function to ensure the code format matches `ast.unparse()` output.
 
 ### Running Examples
 
@@ -580,14 +638,6 @@ find ~/.local/ouverture/objects -name "*.json"  # or $OUVERTURE_DIRECTORY/object
 python3 ouverture.py get HASH@eng
 python3 ouverture.py get HASH@fra
 ```
-
-### Test Cases to Consider
-
-1. **Simple function**: No imports, basic operations
-2. **Function with stdlib imports**: Ensure imports preserved
-3. **Function with ouverture imports**: Test alias rewriting
-4. **Multilingual equivalents**: Verify same hash for same logic
-5. **Error cases**: Missing @lang, invalid language code, file not found
 
 ### Verification Checklist
 

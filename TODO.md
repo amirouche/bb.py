@@ -7,7 +7,14 @@ Context sources:
 - `CLAUDE.md` - Technical architecture and development conventions (single-file design)
 - `README.md` - Project vision and philosophy
 
-## Priority 0: Git Remotes, async def / await Support, Compilation and Applications
+## Priority 0: Applications
+
+- **ouverture**: Rewrite of ouverture in ouverture (self-hosting)
+- **p5py**: Port p5.js creative coding library to Python using ouverture for function sharing
+- **asyncify**: Tool for on-the-fly rewriting of synchronous Python code to async/await style
+- **todo-flask**: Reference todo application built with Flask demonstrating ouverture integration
+
+## Priority 1: Git Remotes, async def / await Support, Compilation
 
 ### Async/Await Support
 - Add support for `async def` functions (ast.AsyncFunctionDef)
@@ -37,12 +44,7 @@ Context sources:
 - Generate platform-specific binaries (Linux, macOS, Windows)
 - Support `--output` flag to specify output path
 
-### Applications
-- **p5py**: Port p5.js creative coding library to Python using ouverture for function sharing
-- **asyncify**: Tool for on-the-fly rewriting of synchronous Python code to async/await style
-- **todo-flask**: Reference todo application built with Flask demonstrating ouverture integration
-
-## Priority 1: Remote HTTP/HTTPS Support
+## Priority 2: Remote HTTP/HTTPS Support
 
 ### HTTP/HTTPS Remotes
 - Implement HTTP API client for HTTP/HTTPS remotes
@@ -55,7 +57,7 @@ Context sources:
 - Design SQLite schema for local/file-based remotes
 - Support multiple remotes with priority/fallback
 
-## Priority 2: Search and Discovery Improvements
+## Priority 3: Search and Discovery Improvements
 
 ### Search Filtering
 - Add filtering by language, author, date to `search` command
@@ -81,7 +83,7 @@ Context sources:
   - Index should be optional (search works without it, just slower)
   - Consider memory-mapped index for large repositories (10,000+ functions)
 
-## Priority 3: Code Quality
+## Priority 4: Code Quality
 
 ### Documentation
 - Create `docs/API.md` with Python API documentation
@@ -103,7 +105,7 @@ Context sources:
 - Create platform-specific binaries (Linux, macOS, Windows)
 - Set up automated release pipeline
 
-## Priority 4: Testing Improvements
+## Priority 5: Testing Improvements
 
 ### Property-Based Testing
 - Implement normalization idempotence tests with Hypothesis
@@ -131,7 +133,7 @@ Context sources:
 - Mark known issues with `@pytest.mark.xfail`
 - Add regression test suite for bug fixes
 
-## Priority 5: Semantic Understanding
+## Priority 6: Semantic Understanding
 
 ### Short Term (6 months)
 - Implement basic pattern matching for top 10 equivalent patterns (sum() vs loop, etc.)
@@ -151,7 +153,7 @@ Context sources:
 - Implement hybrid syntactic → pattern → execution → ML pipeline
 - Add cross-language semantic matching (Python ≡ JavaScript)
 
-## Priority 6: Core Features
+## Priority 7: Core Features
 
 ### Language Support
 - Extend language codes beyond 3 characters to support any string <256 chars
@@ -178,7 +180,7 @@ Context sources:
 - Add `--version` flag
 - Improve error messages with suggestions
 
-## Priority 7: Native Language Debugging
+## Priority 8: Native Language Debugging
 
 ### Traceback Localization
 - Implement traceback rewriting to show native language variable names
@@ -193,7 +195,7 @@ Context sources:
 - Implement `ouverture.py run HASH@lang --debug` for interactive debugging
 - Support stepping through code with native language context
 
-## Priority 8: Infrastructure (Microlibrary Vision)
+## Priority 9: Infrastructure (Microlibrary Vision)
 
 ### Phase 1: Centralized Registry (Months 4-6)
 - Design HTTP API for function registry
@@ -227,7 +229,7 @@ Context sources:
 - Implement registry priority and fallback
 - Add semantic search with ML embeddings
 
-## Priority 9: Research
+## Priority 10: Research
 
 ### Experiments to Run
 - Benchmark Top 100 equivalent patterns in real Python codebases
@@ -246,7 +248,7 @@ Context sources:
 - Write paper on impact of native-language programming on comprehension
 - Write paper on multilingual code sharing infrastructure
 
-## Priority 10: Documentation
+## Priority 11: Documentation
 
 ### User Documentation
 - Document workarounds for unsupported features (classes, globals, etc.)
@@ -262,7 +264,7 @@ Context sources:
 - Document plugin system design (future)
 - Create architecture decision records (ADRs)
 
-## Priority 11: Production Readiness
+## Priority 12: Production Readiness
 
 ### Security
 - Implement static analysis for dangerous patterns (eval, exec, os.system)
