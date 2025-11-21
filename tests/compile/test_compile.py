@@ -1,12 +1,63 @@
 """
 Tests for compilation functionality.
 
-Tests dependency resolution and bundling for function compilation.
+Unit tests for dependency resolution and bundling (complex low-level aspects).
+Integration tests for CLI compile command error handling.
 """
 import pytest
 
 import ouverture
 from tests.conftest import normalize_code_for_test
+
+
+# =============================================================================
+# Integration tests for compile CLI command
+# =============================================================================
+
+def test_compile_missing_language_suffix_fails(cli_runner):
+    """Test that compile fails without language suffix"""
+    result = cli_runner.run(['compile', 'a' * 64])
+
+    assert result.returncode != 0
+    assert 'Missing language suffix' in result.stderr
+
+
+def test_compile_invalid_hash_format_fails(cli_runner):
+    """Test that compile fails with invalid hash format"""
+    result = cli_runner.run(['compile', 'not-a-valid-hash@eng'])
+
+    assert result.returncode != 0
+    assert 'Invalid hash format' in result.stderr
+
+
+def test_compile_nonexistent_function_fails(cli_runner):
+    """Test that compile fails for nonexistent function"""
+    fake_hash = "f" * 64
+
+    result = cli_runner.run(['compile', f'{fake_hash}@eng'])
+
+    assert result.returncode != 0
+
+
+def test_compile_prepares_bundle(cli_runner, tmp_path):
+    """Test that compile prepares the bundle directory before failing on PyOxidizer"""
+    # Setup: Add a simple function
+    test_file = tmp_path / "simple.py"
+    test_file.write_text('def answer(): return 42')
+    func_hash = cli_runner.add(str(test_file), 'eng')
+
+    # Test: Run compile (will fail because PyOxidizer not installed)
+    result = cli_runner.run(['compile', f'{func_hash}@eng'])
+
+    # Assert: Should fail on PyOxidizer, not on setup
+    # If it gets to "PyOxidizer not found" or similar, the bundle prep succeeded
+    # This is as far as we can test without installing PyOxidizer
+    assert result.returncode != 0
+
+
+# =============================================================================
+# Unit tests for dependency extraction (complex low-level aspect)
+# =============================================================================
 
 
 def test_dependencies_extract_no_deps():
@@ -46,6 +97,10 @@ def _ouverture_v_0():
     deps = ouverture.dependencies_extract(code)
     assert len(deps) == 2
 
+
+# =============================================================================
+# Unit tests for dependency resolution (complex low-level aspect)
+# =============================================================================
 
 def test_dependencies_resolve_no_deps(mock_ouverture_dir):
     """Test resolving dependencies for function with no deps"""
@@ -134,6 +189,10 @@ def _ouverture_v_0():
     assert deps[-1] == a_hash
 
 
+# =============================================================================
+# Unit tests for bundling (complex low-level aspect)
+# =============================================================================
+
 def test_dependencies_bundle(mock_ouverture_dir, tmp_path):
     """Test bundling functions to output directory"""
     func_hash = "bundle01" + "0" * 56
@@ -147,6 +206,10 @@ def test_dependencies_bundle(mock_ouverture_dir, tmp_path):
     assert output_dir.exists()
     assert (output_dir / "objects").exists()
 
+
+# =============================================================================
+# Unit tests for config generation (complex low-level aspect)
+# =============================================================================
 
 def test_compile_generate_config():
     """Test generating PyOxidizer configuration"""

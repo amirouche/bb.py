@@ -96,7 +96,11 @@ class CLIRunner:
 
     def __init__(self, ouverture_dir: Path):
         self.ouverture_dir = ouverture_dir
-        self.env = {'OUVERTURE_DIRECTORY': str(ouverture_dir)}
+        self.config_path = ouverture_dir / 'config.json'
+        self.env = {
+            'OUVERTURE_DIRECTORY': str(ouverture_dir),
+            'OUVERTURE_CONFIG_PATH': str(self.config_path)
+        }
 
     def run(self, args: list, cwd: str = None) -> subprocess.CompletedProcess:
         """Run CLI command with this runner's ouverture directory."""

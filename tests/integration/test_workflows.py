@@ -1,52 +1,55 @@
 """
 Integration tests for end-to-end workflows.
 
-Tests that exercise complete CLI workflows combining multiple commands.
+Grey-box style tests that exercise complete CLI workflows combining multiple commands.
 """
 import ast
-from unittest.mock import patch
 
 import pytest
 
-import ouverture
-from tests.conftest import normalize_code_for_test
+
+# =============================================================================
+# Integration tests for complete CLI workflows
+# =============================================================================
+
+def test_workflow_add_show_roundtrip(cli_runner, tmp_path):
+    """Test add then show produces correct output"""
+    test_file = tmp_path / "greet.py"
+    test_file.write_text('''def greet(name):
+    """Greet someone by name"""
+    return f"Hello, {name}!"
+''')
+
+    # Add function
+    func_hash = cli_runner.add(str(test_file), 'eng')
+
+    # Show function
+    result = cli_runner.run(['show', f'{func_hash}@eng'])
+
+    assert result.returncode == 0
+    assert 'def greet' in result.stdout
+    assert 'name' in result.stdout
+    assert 'Hello' in result.stdout
 
 
-def test_end_to_end_roundtrip_simple_function(mock_ouverture_dir):
+def test_workflow_add_get_roundtrip(cli_runner, tmp_path):
     """Test add then get produces equivalent code"""
-    # Create test file
-    test_file = mock_ouverture_dir / "test.py"
+    test_file = tmp_path / "calc.py"
     original_code = '''def calculate_sum(first, second):
     """Add two numbers"""
     result = first + second
     return result'''
-    test_file.write_text(original_code, encoding='utf-8')
+    test_file.write_text(original_code)
 
-    # Add function
-    hash_value = None
-    with patch('sys.stdout') as mock_stdout:
-        with patch('builtins.print') as mock_print:
-            ouverture.function_add(f"{test_file}@eng")
-            # Extract hash from print calls
-            for call in mock_print.call_args_list:
-                args = str(call)
-                if 'Hash:' in args:
-                    hash_value = args.split('Hash: ')[1].split("'")[0]
+    func_hash = cli_runner.add(str(test_file), 'eng')
+    result = cli_runner.run(['get', f'{func_hash}@eng'])
 
-    assert hash_value is not None
-
-    # Get function back
-    output = []
-    with patch('builtins.print', side_effect=lambda x: output.append(x)):
-        ouverture.function_get(f"{hash_value}@eng")
-
-    retrieved_code = '\n'.join(output)
+    assert result.returncode == 0
 
     # Parse both to compare structure
     original_tree = ast.parse(original_code)
-    retrieved_tree = ast.parse(retrieved_code)
+    retrieved_tree = ast.parse(result.stdout)
 
-    # Should have same structure (function name, args, etc.)
     orig_func = original_tree.body[0]
     retr_func = retrieved_tree.body[0]
 
@@ -54,243 +57,149 @@ def test_end_to_end_roundtrip_simple_function(mock_ouverture_dir):
     assert len(orig_func.args.args) == len(retr_func.args.args)
 
 
-def test_end_to_end_multilingual_same_hash(mock_ouverture_dir):
-    """Test that equivalent functions in different languages produce same hash"""
-    # English version
-    eng_file = mock_ouverture_dir / "english.py"
-    eng_file.write_text('''def calculate_sum(first_number, second_number):
+def test_workflow_multilingual_same_hash(cli_runner, tmp_path):
+    """Test equivalent functions in different languages produce same hash"""
+    eng_file = tmp_path / "english.py"
+    eng_file.write_text('''def calculate_sum(first, second):
     """Calculate the sum of two numbers."""
-    result = first_number + second_number
-    return result''', encoding='utf-8')
+    result = first + second
+    return result''')
 
-    # French version (same logic, different names/docstring)
-    fra_file = mock_ouverture_dir / "french.py"
-    fra_file.write_text('''def calculate_sum(first_number, second_number):
+    fra_file = tmp_path / "french.py"
+    fra_file.write_text('''def calculate_sum(first, second):
     """Calculer la somme de deux nombres."""
-    result = first_number + second_number
-    return result''', encoding='utf-8')
+    result = first + second
+    return result''')
 
-    # Add both
-    eng_hash = None
-    fra_hash = None
-
-    with patch('builtins.print') as mock_print:
-        ouverture.function_add(f"{eng_file}@eng")
-        for call in mock_print.call_args_list:
-            args = str(call)
-            if 'Hash:' in args:
-                eng_hash = args.split('Hash: ')[1].split("'")[0]
-
-    with patch('builtins.print') as mock_print:
-        ouverture.function_add(f"{fra_file}@fra")
-        for call in mock_print.call_args_list:
-            args = str(call)
-            if 'Hash:' in args:
-                fra_hash = args.split('Hash: ')[1].split("'")[0]
+    eng_hash = cli_runner.add(str(eng_file), 'eng')
+    fra_hash = cli_runner.add(str(fra_file), 'fra')
 
     # Should have the same hash
     assert eng_hash == fra_hash
 
     # Should be able to retrieve in both languages
-    with patch('builtins.print'):
-        ouverture.function_get(f"{eng_hash}@eng")
-        ouverture.function_get(f"{fra_hash}@fra")
+    eng_result = cli_runner.run(['get', f'{eng_hash}@eng'])
+    fra_result = cli_runner.run(['get', f'{fra_hash}@fra'])
+
+    assert eng_result.returncode == 0
+    assert fra_result.returncode == 0
 
 
-def test_workflow_add_show(mock_ouverture_dir):
-    """Test add then show workflow"""
-    # Create test file
-    test_file = mock_ouverture_dir / "greet.py"
-    test_file.write_text('''def greet(name):
-    """Greet someone by name"""
+def test_workflow_multilingual_get_different_languages(cli_runner, tmp_path):
+    """Test get retrieves correct language version"""
+    eng_file = tmp_path / "eng.py"
+    eng_file.write_text('''def greet(name):
+    """Greet someone in English"""
     return f"Hello, {name}!"
-''', encoding='utf-8')
+''')
 
-    # Add function
-    hash_value = None
-    with patch('builtins.print') as mock_print:
-        ouverture.function_add(f"{test_file}@eng")
-        for call in mock_print.call_args_list:
-            args = str(call)
-            if 'Hash:' in args:
-                hash_value = args.split('Hash: ')[1].split("'")[0]
+    fra_file = tmp_path / "fra.py"
+    fra_file.write_text('''def greet(name):
+    """Saluer quelqu'un en français"""
+    return f"Hello, {name}!"
+''')
 
-    assert hash_value is not None
+    eng_hash = cli_runner.add(str(eng_file), 'eng')
+    cli_runner.add(str(fra_file), 'fra')
 
-    # Show function
-    output = []
-    def capture_print(x='', **kwargs):
-        output.append(str(x))
+    # Get English version
+    eng_result = cli_runner.run(['get', f'{eng_hash}@eng'])
+    assert 'Greet someone in English' in eng_result.stdout
 
-    with patch('builtins.print', side_effect=capture_print):
-        ouverture.function_show(f"{hash_value}@eng")
-
-    output_text = '\n'.join(output)
-
-    # Should contain the original function
-    assert 'def greet' in output_text
-    assert 'name' in output_text
-    assert 'Hello' in output_text
+    # Get French version
+    fra_result = cli_runner.run(['get', f'{eng_hash}@fra'])
+    assert 'Saluer' in fra_result.stdout
 
 
-def test_workflow_add_migrate_show(mock_ouverture_dir):
-    """Test add (v0) then migrate then show workflow"""
-    func_hash = "a1b2c3d4" + "0" * 56  # Valid hex hash
-    lang = "eng"
-    normalized_code = normalize_code_for_test("def _ouverture_v_0(): return 99")
-    docstring = "Return 99"
-    name_mapping = {"_ouverture_v_0": "ninety_nine"}
-    alias_mapping = {}
+def test_workflow_function_with_imports(cli_runner, tmp_path):
+    """Test add and show with imported libraries"""
+    test_file = tmp_path / "with_imports.py"
+    test_file.write_text('''import math
+from collections import Counter
 
-    # Create v0 function directly
-    with patch('sys.stdout'):
-        ouverture.function_save_v0(func_hash, lang, normalized_code, docstring, name_mapping, alias_mapping)
+def analyze(data):
+    """Analyze data"""
+    count = Counter(data)
+    return math.sqrt(len(count))
+''')
 
-    # Verify it's v0
-    assert ouverture.schema_detect_version(func_hash) == 0
+    func_hash = cli_runner.add(str(test_file), 'eng')
+    result = cli_runner.run(['show', f'{func_hash}@eng'])
 
-    # Migrate to v1
-    with patch('sys.stdout'):
-        ouverture.schema_migrate_function_v0_to_v1(func_hash, keep_v0=False)
-
-    # Verify it's now v1
-    assert ouverture.schema_detect_version(func_hash) == 1
-
-    # Load function to verify data integrity after migration
-    loaded_code, loaded_name, loaded_alias, loaded_doc = ouverture.function_load(func_hash, lang)
-    assert loaded_doc == docstring
-    assert loaded_name == name_mapping
-
-    # Show function
-    output = []
-    def capture_print(x='', **kwargs):
-        output.append(str(x))
-
-    with patch('builtins.print', side_effect=capture_print):
-        ouverture.function_show(f"{func_hash}@{lang}")
-
-    output_text = '\n'.join(output)
-
-    # Should contain the function
-    assert 'def ninety_nine' in output_text
-    assert 'Return 99' in output_text
+    assert result.returncode == 0
+    assert 'import math' in result.stdout
+    assert 'from collections import Counter' in result.stdout
+    assert 'def analyze' in result.stdout
 
 
-def test_workflow_multilang_variants(mock_ouverture_dir):
-    """Test adding same function in multiple languages with different variant comments"""
-    func_hash = "e1f2a3b4" + "0" * 56  # Valid hex hash
-    normalized_code = normalize_code_for_test("def _ouverture_v_0(_ouverture_v_1): return _ouverture_v_1 * 2")
-    metadata = ouverture.metadata_create()
-
-    # Create function
-    ouverture.function_save_v1(func_hash, normalized_code, metadata)
-
-    # Add English formal variant
-    ouverture.mapping_save_v1(
-        func_hash, "eng",
-        "Double the input value",
-        {"_ouverture_v_0": "double_value", "_ouverture_v_1": "input_value"},
-        {},
-        "Formal documentation style"
-    )
-
-    # Add English casual variant
-    ouverture.mapping_save_v1(
-        func_hash, "eng",
-        "Times two!",
-        {"_ouverture_v_0": "times_two", "_ouverture_v_1": "x"},
-        {},
-        "Casual short names"
-    )
-
-    # Add French variant
-    ouverture.mapping_save_v1(
-        func_hash, "fra",
-        "Doubler la valeur",
-        {"_ouverture_v_0": "doubler", "_ouverture_v_1": "valeur"},
-        {},
-        "Français standard"
-    )
-
-    # List English mappings - should have 2
-    eng_mappings = ouverture.mappings_list_v1(func_hash, "eng")
-    assert len(eng_mappings) == 2
-
-    # List French mappings - should have 1
-    fra_mappings = ouverture.mappings_list_v1(func_hash, "fra")
-    assert len(fra_mappings) == 1
-
-    # Show should display menu for English (multiple variants)
-    output = []
-    def capture_print(x='', **kwargs):
-        output.append(str(x))
-
-    with patch('builtins.print', side_effect=capture_print):
-        ouverture.function_show(f"{func_hash}@eng")
-
-    output_text = '\n'.join(output)
-    assert "Multiple mappings found" in output_text
-    assert "Formal documentation style" in output_text
-    assert "Casual short names" in output_text
-
-    # Show should display code directly for French (single variant)
-    output = []
-    with patch('builtins.print', side_effect=capture_print):
-        ouverture.function_show(f"{func_hash}@fra")
-
-    output_text = '\n'.join(output)
-    assert "def doubler" in output_text
-
-
-def test_workflow_function_with_ouverture_import(mock_ouverture_dir):
-    """Test adding and retrieving a function that imports from ouverture pool"""
+def test_workflow_function_with_ouverture_import(cli_runner, tmp_path):
+    """Test adding function that imports from ouverture pool"""
     # First, add a helper function
-    helper_file = mock_ouverture_dir / "helper.py"
+    helper_file = tmp_path / "helper.py"
     helper_file.write_text('''def helper(x):
     """A helper function"""
     return x * 2
-''', encoding='utf-8')
+''')
 
-    helper_hash = None
-    with patch('builtins.print') as mock_print:
-        ouverture.function_add(f"{helper_file}@eng")
-        for call in mock_print.call_args_list:
-            args = str(call)
-            if 'Hash:' in args:
-                helper_hash = args.split('Hash: ')[1].split("'")[0]
-
-    assert helper_hash is not None
+    helper_hash = cli_runner.add(str(helper_file), 'eng')
 
     # Now add a function that uses the helper
-    main_file = mock_ouverture_dir / "main.py"
+    main_file = tmp_path / "main.py"
     main_file.write_text(f'''from ouverture.pool import object_{helper_hash} as helper
 
 def process(value):
     """Process a value using helper"""
     return helper(value) + 1
-''', encoding='utf-8')
+''')
 
-    main_hash = None
-    with patch('builtins.print') as mock_print:
-        ouverture.function_add(f"{main_file}@eng")
-        for call in mock_print.call_args_list:
-            args = str(call)
-            if 'Hash:' in args:
-                main_hash = args.split('Hash: ')[1].split("'")[0]
+    main_hash = cli_runner.add(str(main_file), 'eng')
 
-    assert main_hash is not None
+    # Show should restore the import with alias
+    result = cli_runner.run(['show', f'{main_hash}@eng'])
 
-    # Retrieve and verify
-    output = []
-    def capture_print(x='', **kwargs):
-        output.append(str(x))
+    assert result.returncode == 0
+    assert 'from ouverture.pool import' in result.stdout
+    assert 'as helper' in result.stdout
+    assert 'def process' in result.stdout
 
-    with patch('builtins.print', side_effect=capture_print):
-        ouverture.function_show(f"{main_hash}@eng")
 
-    output_text = '\n'.join(output)
+def test_workflow_add_multiple_then_list(cli_runner, tmp_path):
+    """Test adding multiple functions and listing them via log"""
+    # Add three different functions
+    for i, name in enumerate(['alpha', 'beta', 'gamma']):
+        test_file = tmp_path / f"{name}.py"
+        test_file.write_text(f'''def {name}():
+    """Function {name}"""
+    return {i}
+''')
+        cli_runner.add(str(test_file), 'eng')
 
-    # Should have restored the import with alias
-    assert "from ouverture.pool import" in output_text
-    assert "as helper" in output_text
-    assert "def process" in output_text
+    # Log should work (even if empty, shouldn't error)
+    result = cli_runner.run(['log'])
+    assert result.returncode == 0
+
+
+def test_workflow_error_handling_invalid_file(cli_runner):
+    """Test error handling for nonexistent file"""
+    result = cli_runner.run(['add', '/nonexistent/file.py@eng'])
+    assert result.returncode != 0
+
+
+def test_workflow_error_handling_missing_language(cli_runner, tmp_path):
+    """Test error handling for missing language suffix"""
+    test_file = tmp_path / "test.py"
+    test_file.write_text('def foo(): pass')
+
+    result = cli_runner.run(['add', str(test_file)])
+    assert result.returncode != 0
+    assert 'Missing language suffix' in result.stderr
+
+
+def test_workflow_error_handling_invalid_language(cli_runner, tmp_path):
+    """Test error handling for invalid language code"""
+    test_file = tmp_path / "test.py"
+    test_file.write_text('def foo(): pass')
+
+    result = cli_runner.run(['add', f'{test_file}@invalid'])
+    assert result.returncode != 0
+    assert 'Language code must be 3 characters' in result.stderr

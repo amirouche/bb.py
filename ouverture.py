@@ -487,7 +487,11 @@ def config_get_path() -> Path:
     """
     Get the path to the config file.
     Config is stored in ~/.config/ouverture/config.json (XDG Base Directory spec)
+    Can be overridden with OUVERTURE_CONFIG_PATH environment variable for testing.
     """
+    config_override = os.environ.get('OUVERTURE_CONFIG_PATH')
+    if config_override:
+        return Path(config_override)
     home = os.environ.get('HOME', os.path.expanduser('~'))
     config_dir = Path(home) / '.config' / 'ouverture'
     return config_dir / 'config.json'
