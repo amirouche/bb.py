@@ -159,14 +159,36 @@ $HOME/.local/ouverture/
 - Returns: Dictionary with metadata structure
 - Used when saving functions to v1 format
 
-#### `function_save(hash_value, lang, ...)` (lines 451-487)
-**Stores function in content-addressed pool** (Schema v0)
+#### `function_save_v0(hash_value, lang, ...)` (lines 451-493)
+**Stores function in content-addressed pool** (Schema v0 - legacy)
 - Path: `$OUVERTURE_DIRECTORY/objects/XX/YYYYYY.json` (default: `$HOME/.local/ouverture/`, XX = first 2 chars of hash)
 - Merges with existing data if hash already exists
 - Stores per-language: docstrings, name_mappings, alias_mappings
-- **Note**: This is the v0 format. Will be renamed to `function_save_v0()` in Phase 2
+- **Note**: Kept for migration tool and backward compatibility. New code should use v1 functions.
 
-#### `code_denormalize(normalized_code, name_mapping, alias_mapping)` (lines 490-555)
+#### `function_save_v1(hash_value, normalized_code, metadata)` (lines 495-532)
+**Stores function in v1 format** (Schema v1)
+- Creates function directory: `$OUVERTURE_DIRECTORY/objects/XX/YYYYYY.../`
+- Writes `object.json` with schema_version=1, hash_algorithm, encoding, metadata
+- Does NOT store language-specific data (stored separately in mapping files)
+- Clean separation: code in object.json, language variants in mapping.json files
+
+#### `mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment='')` (lines 534-585)
+**Stores language mapping in v1 format** (Schema v1)
+- Creates mapping directory: `$OUVERTURE_DIRECTORY/objects/XX/Y.../lang/ZZ/W.../`
+- Writes `mapping.json` with docstring, name_mapping, alias_mapping, comment
+- Content-addressed by mapping hash (enables deduplication)
+- Identical mappings across functions share same file
+- Returns: mapping hash for verification
+
+#### `function_save(hash_value, lang, normalized_code, docstring, name_mapping, alias_mapping, comment='')` (lines 588-611)
+**Main entry point for saving functions** (Schema v1)
+- Wrapper that calls function_save_v1() + mapping_save_v1()
+- Creates metadata automatically using metadata_create()
+- Accepts optional comment parameter for mapping variant identification
+- **This is the default save function** - all new code uses v1 format
+
+#### `code_denormalize(normalized_code, name_mapping, alias_mapping)` (lines 614-679)
 **Reconstructs original-looking code**
 - Reverses variable renaming: `_ouverture_v_X → original_name`
 - Rewrites imports: `from ouverture.pool import X` → `from ouverture.pool import X as alias` (restores alias)
