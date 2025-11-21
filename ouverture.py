@@ -318,9 +318,121 @@ def ast_normalize(tree: ast.Module, lang: str) -> Tuple[str, str, str, Dict[str,
     return normalized_code_with_docstring, normalized_code_without_docstring, docstring, reverse_mapping, alias_mapping
 
 
-def hash_compute(code: str) -> str:
-    """Compute SHA256 hash of the code"""
-    return hashlib.sha256(code.encode('utf-8')).hexdigest()
+def hash_compute(code: str, algorithm: str = 'sha256') -> str:
+    """
+    Compute hash of the code using specified algorithm.
+
+    Args:
+        code: The code to hash
+        algorithm: Hash algorithm to use (default: 'sha256')
+
+    Returns:
+        Hex string of the hash
+    """
+    if algorithm == 'sha256':
+        return hashlib.sha256(code.encode('utf-8')).hexdigest()
+    else:
+        raise ValueError(f"Unsupported hash algorithm: {algorithm}")
+
+
+def mapping_compute_hash(docstring: str, name_mapping: Dict[str, str],
+                        alias_mapping: Dict[str, str], comment: str = "") -> str:
+    """
+    Compute content-addressed hash for a mapping.
+
+    The hash is computed on the canonical JSON representation of:
+    - docstring
+    - name_mapping
+    - alias_mapping
+    - comment
+
+    This enables deduplication: identical mappings share the same hash and storage.
+
+    Args:
+        docstring: The function docstring for this mapping
+        name_mapping: Normalized name -> original name mapping
+        alias_mapping: Ouverture function hash -> alias mapping
+        comment: Optional comment explaining this mapping variant
+
+    Returns:
+        64-character hex hash (SHA256)
+    """
+    mapping_dict = {
+        'docstring': docstring,
+        'name_mapping': name_mapping,
+        'alias_mapping': alias_mapping,
+        'comment': comment
+    }
+
+    # Create canonical JSON (sorted keys, no whitespace)
+    canonical_json = json.dumps(mapping_dict, sort_keys=True, ensure_ascii=False)
+
+    # Compute hash
+    return hash_compute(canonical_json)
+
+
+def schema_detect_version(func_hash: str) -> int:
+    """
+    Detect the schema version of a stored function.
+
+    Checks the filesystem to determine if a function is stored in v0 or v1 format:
+    - v0: $OUVERTURE_DIRECTORY/objects/XX/YYYYYY.json
+    - v1: $OUVERTURE_DIRECTORY/objects/XX/YYYYYY.../object.json
+
+    Args:
+        func_hash: The function hash to check
+
+    Returns:
+        0 for v0 format, 1 for v1 format, None if function not found
+    """
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+
+    # Check for v1 format first (function directory with object.json)
+    v1_func_dir = objects_dir / func_hash[:2] / func_hash[2:]
+    v1_object_json = v1_func_dir / 'object.json'
+
+    if v1_object_json.exists():
+        return 1
+
+    # Check for v0 format (JSON file)
+    v0_hash_dir = objects_dir / func_hash[:2]
+    v0_json_path = v0_hash_dir / f'{func_hash[2:]}.json'
+
+    if v0_json_path.exists():
+        return 0
+
+    # Function not found
+    return None
+
+
+def metadata_create() -> Dict[str, any]:
+    """
+    Create default metadata for a function.
+
+    Generates metadata with:
+    - created: ISO 8601 timestamp
+    - author: Username from environment (USER or USERNAME)
+    - tags: Empty list
+    - dependencies: Empty list
+
+    Returns:
+        Dictionary with metadata fields
+    """
+    from datetime import datetime
+
+    # Get author from environment
+    author = os.environ.get('USER', os.environ.get('USERNAME', ''))
+
+    # Get current timestamp in ISO 8601 format
+    timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    return {
+        'created': timestamp,
+        'author': author,
+        'tags': [],
+        'dependencies': []
+    }
 
 
 def directory_get_ouverture() -> Path:
