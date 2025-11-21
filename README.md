@@ -2,17 +2,13 @@
 
 ![Tests](https://github.com/amirouche/ouverture.py/actions/workflows/test.yml/badge.svg)
 
-**Infrastructure for cognitive diversity in the post-LLM era**
+**Beyond Babel, all around the world Python functions**
 
-This is draft infrastructure exploring whether cognitive diversity enables LLM/non-LLM compatibility. The code is messy because we're learning. Contributions welcome, especially from non-English-dominant perspectives.
-
-## The Problem
-
-Large Language Models have amplified a subtle form of linguistic imperialism: code becomes more readable to English-speaking LLMs but potentially less accessible to programmers who think in other languages. When you write `calculate_sum` instead of `calculer_somme` or `calcular_suma`, you're optimizing for Silicon Valley's training data, not for human cognitive diversity.
-
-What if we could have both?
+Write functions in your language. Share logic universally. Ouverture is a function pool where the same code written in different human languages produces the same hash.
 
 ## The Idea
+
+What if you could write `calculer_somme` in French, `calcular_suma` in Spanish, or `calculate_sum` in English—and they all map to the same function in a shared pool? What if code could be language-agnostic for machines while remaining native for humans?
 
 Ouverture is a function pool where **the same logic written in different human languages shares the same hash**. A French developer can write:
 
@@ -44,12 +40,12 @@ def calculate_average(numbers):
 
 **Important clarification**: Ouverture is **not related to Bitcoin, blockchain, or cryptocurrency** in any way. Yes, we use content-addressed storage and hashing. No, this is not a blockchain project.
 
-The vision is about **cognitive diversity and multilingual programming**, not distributed ledgers or tokens. Content-addressed storage existed long before blockchain (see: Git, which we use daily). The value proposition is:
+The vision is about **multilingual programming and code reuse**, not distributed ledgers or tokens. Content-addressed storage existed long before blockchain (see: Git, which we use daily). The value proposition is:
 - Enabling programmers to think in their native languages
 - Making code reuse language-agnostic for both humans and LLMs
 - Preserving linguistic perspectives while recognizing logical equivalence
 
-This vision holds value completely independent of blockchain technology. We're building tools for human cognitive diversity, not financial speculation.
+This vision holds value completely independent of blockchain technology. We're building tools to open doors for more people to participate in code.
 
 ## How It Works
 
@@ -74,15 +70,13 @@ python3 ouverture.py get <HASH>@fra  # Returns French version
 python3 ouverture.py get <HASH>@spa  # Returns Spanish version
 ```
 
-## Post-LLM Implications
+## Why This Matters
 
-**For LLMs**: They can work with canonical normalized forms, making code search and reuse language-agnostic.
+**Universal logic, local expression**: Functions are stored by what they do, not what they're called. A developer in Seoul can use a function written in São Paulo without translation loss.
 
-**For Humans**: Developers maintain their cognitive workspace in their native language while accessing a global function pool.
+**LLM-compatible, human-friendly**: LLMs work with normalized forms while developers work in their native languages. Both perspectives coexist.
 
-**For Collaboration**: A French developer can use a function originally written in Korean without translation loss, because the system preserves both perspectives.
-
-**For Diversity**: We challenge the assumption that "English variable names = universal readability."
+**Choice over convention**: You can write in English if you prefer. You can also write in Tagalog, Arabic, or Swahili. The system treats all perspectives as equally valid.
 
 ## Status: Experimental Infrastructure
 
@@ -168,7 +162,7 @@ The import is normalized to `from ouverture import abc123def`, making it languag
 
 ## Why "Ouverture"?
 
-French for "opening" or "overture" - the beginning of something larger. Also a nod to the multilingual nature of the project.
+French for "opening" or "overture" - the beginning of something larger. A door that was previously closed. Also a nod to the multilingual nature of the project.
 
 ## Origins & Vision
 
@@ -176,7 +170,7 @@ This idea has been brewing for over a decade, long before the current LLM revolu
 
 1. **Code as a reusable resource**: Write a function, store it, forget it, and retrieve it later—dependencies and all—without the hassle of reinventing wheels (e.g., the infamous leftpad incident or countless buried helper functions).
 
-2. **Lowering cognitive barriers**: Enable people to contribute to code without requiring English proficiency, aligning with the "think globally, act locally" ethos.
+2. **Lowering barriers**: Enable people to contribute to code in ways that feel natural to them, reducing friction between thought and expression.
 
 ### The Bigger Picture
 
@@ -195,7 +189,7 @@ See `CLAUDE.md` for detailed technical documentation.
 
 ## Research Questions
 
-1. **Cognitive compatibility**: Does writing in one's native language improve code comprehension and reduce bugs?
+1. **Code comprehension**: Does writing in one's native language improve understanding and reduce bugs?
 2. **LLM training**: Could multilingual code pools improve LLM performance on non-English code?
 3. **Semantic equivalence**: When do syntactic differences reflect semantic distinctions vs. mere translation?
 4. **Community building**: Can language-diverse function pools foster more inclusive open source communities?
@@ -219,9 +213,11 @@ We especially welcome:
 
 ## Philosophy
 
-This project starts from a simple premise: **linguistic diversity is cognitive diversity, and cognitive diversity is valuable**. In a post-LLM world where AI systems are trained predominantly on English codebases, we risk optimizing for machine readability at the expense of human diversity.
+Code is thought made explicit. Language shapes thought. If code can only be "readable" in one language, we're limiting who can think clearly in code.
 
-Ouverture asks: what if we built tools that worked *with* multilingual thinking instead of around it?
+Ouverture doesn't mandate multilingual code—it makes it *possible*. That's the opening ("ouverture"): a door that was previously closed.
+
+In a world where AI systems are trained predominantly on English codebases, we wanted to build tools that work *with* multilingual thinking instead of requiring everyone to think the same way.
 
 ## License
 
@@ -251,4 +247,4 @@ File issues on GitHub. We're learning in public.
 
 *"The limits of my language mean the limits of my world."* – Ludwig Wittgenstein
 
-*Ouverture: What if we had more languages, not fewer?*
+*Ouverture: Beyond Babel, more worlds become possible.*
