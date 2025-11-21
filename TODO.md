@@ -39,17 +39,17 @@ Context sources:
 ## Priority 3: Enhanced CLI Commands
 
 ### Function Discovery
-- Implement `ouverture.py log [NAME | URL]` to show available functions
-- Implement `ouverture.py search [NAME | URL] [QUERY...]` to search functions
+- Implement `ouverture.py log [NAME | URL]` to show git-like commit log of pool/remote
+- Implement `ouverture.py search [NAME | URL] [QUERY...]` to search and list functions
 - Add filtering by language, author, date
 - Display function statistics (downloads, ratings if available)
 
 ### Function Operations
 - Implement `ouverture.py translate HASH@LANG LANG` to add translation to existing function
-- Implement `ouverture.py review HASH` to review function details
+- Implement `ouverture.py review HASH` to recursively review function and dependencies (in user's preferred languages)
 - Implement `ouverture.py run HASH@lang` to execute function interactively
 - Keep existing `ouverture.py add FILENAME.py@LANG` command
-- Keep existing `ouverture.py get HASH` command (enhance to accept `HASH@LANG`)
+- Update `ouverture.py get HASH[@LANG] FILENAME.py` to save retrieved function to file
 
 ## Priority 4: Native Language Debugging
 
@@ -133,6 +133,7 @@ Context sources:
 ## Priority 8: Core Features
 
 ### Language Support
+- Extend language codes beyond 3 characters to support any string <256 chars
 - Add support for async functions (ast.AsyncFunctionDef)
 - Document async function behavior and limitations
 - Add support for class storage and normalization (if useful)

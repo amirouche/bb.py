@@ -141,25 +141,25 @@ ouverture.py remote push NAME                       # Publish functions to remot
 
 #### Function Operations
 ```bash
-ouverture.py add FILENAME.py@LANG          # Add function to local pool
-ouverture.py get HASH[@LANG]               # Retrieve function (optionally in specific language)
-ouverture.py translate HASH@LANG LANG      # Add translation for existing function
-ouverture.py review HASH                   # Review function details and metadata
-ouverture.py run HASH@lang                 # Execute function interactively
-ouverture.py run HASH@lang --debug         # Execute with debugger (native language variables)
+ouverture.py add FILENAME.py@LANG              # Add function to local pool
+ouverture.py get HASH[@LANG] FILENAME.py       # Retrieve function and save to file (in specific language)
+ouverture.py translate HASH@LANG LANG          # Add translation for existing function
+ouverture.py review HASH                       # Recursively review function and dependencies (in user's languages)
+ouverture.py run HASH@lang                     # Execute function interactively
+ouverture.py run HASH@lang --debug             # Execute with debugger (native language variables)
 ```
 
 #### Discovery
 ```bash
-ouverture.py log [NAME | URL]              # List available functions
-ouverture.py search [NAME | URL] [QUERY...]  # Search functions by query
+ouverture.py log [NAME | URL]                  # Show git-like commit log of pool/remote
+ouverture.py search [NAME | URL] [QUERY...]    # Search and list functions by query
 ```
 
 **Currently implemented**:
 - `add` command: Parses file, normalizes AST, computes hash, saves to local pool
 - `get` command: Retrieves function from local pool, denormalizes to target language
 
-**Language codes**: Must be 3 characters (ISO 639-3: eng, fra, spa, etc.)
+**Language codes**: Currently 3 characters (ISO 639-3: eng, fra, spa, etc.), future support for any string <256 chars
 
 ## Native Language Debugging
 
