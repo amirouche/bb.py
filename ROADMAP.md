@@ -9,6 +9,7 @@ Context sources:
 
 ## Priority 0: Applications
 
+- **ffff**: CLI zettelkasten for linked ideas with a Forth-like interpreter
 - **mobius**: Rewrite of mobius in mobius (self-hosting)
 - **p5py**: Port p5.js creative coding library to Python using mobius for function sharing
 - **asyncify**: Tool for on-the-fly rewriting of synchronous Python code to async/await style
