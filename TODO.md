@@ -33,3 +33,4 @@
 - `family`: command to list pool contributors and their functions
 - generative art: curate starter pool of classic 2D algorithms (Perlin, spirals, L-systems)
 - kid-safe: subset interpreter with visual output and parental approval workflow
+- `mutate`: command to port mutation testing library for function-level mutation analysis
