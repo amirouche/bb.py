@@ -432,13 +432,17 @@ def code_detect_schema(func_hash: str) -> int:
     return None
 
 
-def code_create_metadata() -> Dict[str, any]:
+def code_create_metadata(parent: str = None) -> Dict[str, any]:
     """
     Create default metadata for a function.
 
     Generates metadata with:
     - created: ISO 8601 timestamp
     - author: Username from environment (USER or USERNAME)
+    - parent: Optional parent function hash (for lineage tracking)
+
+    Args:
+        parent: Optional parent function hash (for fork lineage tracking)
 
     Returns:
         Dictionary with metadata fields
@@ -451,10 +455,15 @@ def code_create_metadata() -> Dict[str, any]:
     # Get current timestamp in ISO 8601 format
     timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    return {
+    metadata = {
         'created': timestamp,
         'author': author
     }
+
+    if parent:
+        metadata['parent'] = parent
+
+    return metadata
 
 
 def storage_get_mobius_directory() -> Path:
@@ -711,7 +720,8 @@ def mapping_save_v1(func_hash: str, lang: str, docstring: str,
 
 
 def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
-                  name_mapping: Dict[str, str], alias_mapping: Dict[str, str], comment: str = ""):
+                  name_mapping: Dict[str, str], alias_mapping: Dict[str, str], comment: str = "",
+                  parent: str = None):
     """
     Save function to mobius directory using schema v1 (current default).
 
@@ -725,9 +735,10 @@ def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
         name_mapping: Normalized name -> original name mapping
         alias_mapping: Mobius function hash -> alias mapping
         comment: Optional comment explaining this mapping variant
+        parent: Optional parent function hash (for fork lineage tracking)
     """
-    # Create metadata
-    metadata = code_create_metadata()
+    # Create metadata (with optional parent for lineage)
+    metadata = code_create_metadata(parent=parent)
 
     # Save function (object.json)
     code_save_v1(hash_value, normalized_code, metadata)
@@ -2996,6 +3007,126 @@ def command_compile(hash_with_lang: str, output_path: str = None):
     print("Compilation complete!")
 
 
+def command_fork(hash_with_lang: str):
+    """
+    Fork a function to create a modified version with parent lineage tracking.
+
+    Opens the function in an editor, allows modifications, and saves as a new
+    function with the original hash recorded as parent in metadata.
+
+    Args:
+        hash_with_lang: Function hash with language suffix (HASH@lang)
+    """
+    import tempfile
+    import subprocess
+
+    # Parse the hash and language
+    if '@' not in hash_with_lang:
+        print("Error: Missing language suffix. Use format: HASH@lang", file=sys.stderr)
+        sys.exit(1)
+
+    func_hash, lang = hash_with_lang.rsplit('@', 1)
+
+    # Validate hash format
+    if len(func_hash) != 64 or not all(c in '0123456789abcdef' for c in func_hash.lower()):
+        print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {func_hash}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate language code
+    if len(lang) != 3:
+        print(f"Error: Language code must be 3 characters (ISO 639-3). Got: {lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # Check if function exists
+    version = code_detect_schema(func_hash)
+    if version is None:
+        print(f"Error: Function not found: {func_hash}", file=sys.stderr)
+        sys.exit(1)
+
+    # Load the function
+    try:
+        normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, lang)
+    except SystemExit:
+        print(f"Error: Could not load function {func_hash}@{lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # Denormalize for editing
+    normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
+    original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
+
+    # Get editor from environment
+    editor = os.environ.get('EDITOR', os.environ.get('VISUAL', 'nano'))
+
+    # Create a temporary file with the code
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
+        f.write(original_code)
+        temp_path = f.name
+
+    try:
+        # Open in editor
+        print(f"Opening {func_hash[:8]}...@{lang} in {editor}...")
+        print("Make your changes and save the file to create a fork.")
+        print()
+
+        result = subprocess.run([editor, temp_path])
+        if result.returncode != 0:
+            print(f"Error: Editor exited with code {result.returncode}", file=sys.stderr)
+            sys.exit(1)
+
+        # Read the edited code
+        with open(temp_path, 'r', encoding='utf-8') as f:
+            edited_code = f.read()
+
+        # Check if code was modified
+        if edited_code.strip() == original_code.strip():
+            print("No changes detected. Fork cancelled.")
+            sys.exit(0)
+
+        # Parse the edited code
+        try:
+            tree = ast.parse(edited_code)
+        except SyntaxError as e:
+            print(f"Error: Syntax error in edited code: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        # Normalize the new code
+        try:
+            new_normalized_with_doc, new_normalized_without_doc, new_docstring, new_name_mapping, new_alias_mapping = code_normalize(tree, lang)
+        except Exception as e:
+            print(f"Error: Failed to normalize code: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        # Compute new hash
+        new_hash = hash_compute(new_normalized_without_doc)
+
+        # Check if hash is the same (logic unchanged despite surface changes)
+        if new_hash == func_hash:
+            print("Warning: The logic hasn't changed (same hash). This will add a new mapping to the existing function.")
+            confirm = input("Continue? [y/N]: ").strip().lower()
+            if confirm != 'y':
+                print("Fork cancelled.")
+                sys.exit(0)
+            # Save as new mapping with parent reference in comment
+            comment = f"Forked from {func_hash[:8]}...@{lang}"
+            mapping_save_v1(new_hash, lang, new_docstring, new_name_mapping, new_alias_mapping, comment)
+            print(f"\nNew mapping saved to existing function: {new_hash}@{lang}")
+        else:
+            # Save as new function with parent lineage
+            code_save(new_hash, lang, new_normalized_with_doc, new_docstring, new_name_mapping, new_alias_mapping,
+                      comment=f"Forked from {func_hash[:8]}...", parent=func_hash)
+            print(f"\nForked function saved: {new_hash}")
+            print(f"Parent: {func_hash}")
+
+        print(f"View with: mobius.py show {new_hash}@{lang}")
+
+    finally:
+        # Clean up temp file
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+
+
 def main():
     parser = argparse.ArgumentParser(description='mobius - Function pool manager')
     subparsers = parser.add_subparsers(dest='command', help='Commands')
@@ -3087,6 +3218,10 @@ def main():
     compile_parser.add_argument('hash', help='Function hash with language (e.g., abc123...@eng)')
     compile_parser.add_argument('--output', '-o', help='Output executable path')
 
+    # Fork command
+    fork_parser = subparsers.add_parser('fork', help='Fork a function to create a modified version with lineage tracking')
+    fork_parser.add_argument('hash', help='Function hash with language (e.g., abc123...@eng)')
+
     args = parser.parse_args()
 
     if args.command == 'init':
@@ -3137,6 +3272,8 @@ def main():
         command_refactor(args.what, args.from_hash, args.to_hash)
     elif args.command == 'compile':
         command_compile(args.hash, args.output)
+    elif args.command == 'fork':
+        command_fork(args.hash)
     else:
         parser.print_help()
 
