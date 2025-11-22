@@ -474,6 +474,13 @@ Based on recent commits:
 
 **Note:** The function pool is now stored in `$HOME/.local/mobius/` by default (configurable via `MOBIUS_DIRECTORY`), so it's no longer in the project directory and doesn't need to be in `.gitignore`.
 
+## Chore
+
+### TODO.md Maintenance
+
+- **Format**: TODO.md should remain a bullet list with topic, type names, and intended feature - no more than one sentence per item
+- **Cleanup**: Regularly remove implemented entries in atomic commits (separate from feature commits)
+
 ## Import Handling Rules
 
 Understanding how imports are processed is critical to the normalization system.
