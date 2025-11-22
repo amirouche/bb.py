@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mobius.py"
+version = "0.1.0"
+description = "A function pool manager for Python that enables multilingual function sharing through AST normalization"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    {name = "Amirouche Boubekki"}
+]
+keywords = ["ast", "code-sharing", "multilingual", "content-addressed", "function-pool"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/amirouche/mobius.py"
+Repository = "https://github.com/amirouche/mobius.py"
+Issues = "https://github.com/amirouche/mobius.py/issues"
+
+[project.scripts]
+mobius = "mobius:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[tool.setuptools]
+py-modules = ["mobius"]
