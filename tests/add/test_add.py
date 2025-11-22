@@ -347,3 +347,60 @@ def use_helper(x):
     # Assert: Should succeed
     assert result.returncode == 0
     assert 'Hash:' in result.stdout
+
+
+def test_add_hash_determinism_with_example_files(cli_runner):
+    """Test hash determinism using the real example files (grey-box CLI test).
+
+    This verifies the core Mobius principle via CLI: same logic = same hash,
+    regardless of variable names or human language. Uses the example files:
+    - examples/example_simple.py (English)
+    - examples/example_simple_french.py (French)
+
+    Grey-box: We use CLI to add files, then verify both the output AND
+    the internal storage structure.
+    """
+    # Setup: Locate the example files
+    examples_dir = Path(__file__).parent.parent.parent / 'examples'
+    english_file = examples_dir / 'example_simple.py'
+    french_file = examples_dir / 'example_simple_french.py'
+
+    # Verify example files exist
+    assert english_file.exists(), f"Example file not found: {english_file}"
+    assert french_file.exists(), f"Example file not found: {french_file}"
+
+    # Test: Add both files via CLI
+    eng_hash = cli_runner.add(str(english_file), 'eng')
+    fra_hash = cli_runner.add(str(french_file), 'fra')
+
+    # Assert 1: Same hash (core principle)
+    assert eng_hash == fra_hash, (
+        f"Hash mismatch! English and French examples should have identical hashes.\n"
+        f"English hash: {eng_hash}\n"
+        f"French hash: {fra_hash}"
+    )
+
+    # Assert 2: Hash format is valid
+    assert len(eng_hash) == 64, "Hash should be 64 hex characters (SHA256)"
+
+    # Grey-box assertions: Check internal storage structure
+    func_dir = cli_runner.pool_dir / eng_hash[:2] / eng_hash[2:]
+
+    # Assert 3: Single function directory exists (not two separate ones)
+    assert func_dir.exists(), "Function directory should exist"
+
+    # Assert 4: Both language mappings exist under same function
+    assert (func_dir / 'eng').exists(), "English mapping directory should exist"
+    assert (func_dir / 'fra').exists(), "French mapping directory should exist"
+
+    # Assert 5: object.json exists with normalized code
+    object_json = func_dir / 'object.json'
+    assert object_json.exists(), "object.json should exist"
+
+    with open(object_json, 'r') as f:
+        data = json.load(f)
+
+    # Assert 6: Normalized code uses _mobius_v_0 (not original function names)
+    assert '_mobius_v_0' in data['normalized_code']
+    assert 'calculate_sum' not in data['normalized_code']
+    assert 'calculer_somme' not in data['normalized_code']
