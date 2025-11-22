@@ -677,6 +677,13 @@ When referencing code locations, use this format:
 4. **Verify mappings**: Check name_mappings in JSON for correctness
 5. **Test round-trip**: `add` then `show` should produce equivalent code
 
+## Chore
+
+Regular maintenance tasks for AI assistants working on this codebase:
+
+- Regularly analyze type_name statistics and semantics
+- Regularly update USAGE.md
+
 ## Summary
 
 Mobius is a carefully designed system for multilingual function sharing through AST normalization. The key insight is separating logic (hashed) from presentation (language-specific names/docstrings). When modifying the code:
