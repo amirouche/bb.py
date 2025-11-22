@@ -13,6 +13,7 @@ Context sources:
 - **p5py**: Port p5.js creative coding library to Python using mobius for function sharing
 - **asyncify**: Tool for on-the-fly rewriting of synchronous Python code to async/await style
 - **todo-flask**: Reference todo application built with Flask demonstrating mobius integration
+- **ing0**: Bubblewrap wrapper to run mobius.py across Linux distributions and assist with cross-compiling
 
 ## Priority 1: Remote HTTP/HTTPS Support
 
