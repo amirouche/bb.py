@@ -185,7 +185,7 @@ That's the Mobius transformation: code that flows continuously between linguisti
 - **Language codes**: Any string up to 256 characters (e.g., eng, fra, español, 日本語)
 - **Hash algorithm**: SHA256 on normalized AST
 
-See `CLAUDE.md` for detailed technical documentation.
+See also: `USAGE.md` for CLI commands, `CLAUDE.md` for technical details, `ROADMAP.md` for what's next, `LIMITS.md` for known limitations, and `CONTRIBUTING.md` to get involved.
 
 ## Research Questions
 
