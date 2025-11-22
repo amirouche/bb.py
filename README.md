@@ -55,14 +55,6 @@ python3 mobius.py get <HASH>@fra  # Returns French version
 python3 mobius.py get <HASH>@spa  # Returns Spanish version
 ```
 
-## Why This Matters
-
-**Universal logic, local expression**: Functions are stored by what they do, not what they're called. A developer in Seoul can use a function written in São Paulo without translation loss.
-
-**LLM-compatible, human-friendly**: LLMs work with normalized forms while developers work in their native languages. Both perspectives coexist.
-
-**Choice over convention**: You can write in English if you prefer. You can also write in Tagalog, Arabic, or Swahili. The system treats all perspectives as equally valid.
-
 ## Why "Mobius"?
 
 Mobius refers to the Mobius strip - a surface with only one side, representing the continuous transformation between languages and the unity of code logic regardless of linguistic expression. Just as the Mobius strip has no boundary between its "sides," Mobius code has no boundary between languages: the same logic flows seamlessly from French to English to Spanish and back.
@@ -82,6 +74,12 @@ If Mobius succeeds, it could become infrastructure like npmjs—but with **less 
 This explains why the hash-on-logic-not-names design is so critical—it's not just a technical detail, it's the **enabler of the entire multilingual vision**. A French developer writing `calculer_somme(nombres)` and an English developer writing `calculate_sum(numbers)` are contributing the **same** function to the same pool.
 
 ### Why This Matters
+
+**Universal logic, local expression**: Functions are stored by what they do, not what they're called. A developer in Seoul can use a function written in São Paulo without translation loss.
+
+**LLM-compatible, human-friendly**: LLMs work with normalized forms while developers work in their native languages. Both perspectives coexist.
+
+**Choice over convention**: You can write in English if you prefer. You can also write in Tagalog, Arabic, or Swahili. The system treats all perspectives as equally valid.
 
 Code is thought made explicit. Language shapes thought. If code can only be "readable" in one language, we're limiting who can think clearly in code.
 
