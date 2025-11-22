@@ -92,7 +92,7 @@ def test_collect_names_simple_names():
     """Test collecting variable names"""
     code = "x = 1\ny = 2\nz = x + y"
     tree = ast.parse(code)
-    names = mobius.names_collect(tree)
+    names = mobius.code_collect_names(tree)
 
     assert "x" in names
     assert "y" in names
@@ -103,7 +103,7 @@ def test_collect_names_function_names():
     """Test collecting function names and arguments"""
     code = "def foo(a, b): return a + b"
     tree = ast.parse(code)
-    names = mobius.names_collect(tree)
+    names = mobius.code_collect_names(tree)
 
     assert "foo" in names
     assert "a" in names
@@ -113,7 +113,7 @@ def test_collect_names_function_names():
 def test_collect_names_empty_tree():
     """Test collecting names from empty module"""
     tree = ast.parse("")
-    names = mobius.names_collect(tree)
+    names = mobius.code_collect_names(tree)
 
     assert len(names) == 0
 
@@ -126,7 +126,7 @@ def test_get_imported_names_import_statement():
     """Test extracting names from import statement"""
     code = "import math"
     tree = ast.parse(code)
-    names = mobius.imports_get_names(tree)
+    names = mobius.code_get_import_names(tree)
 
     assert "math" in names
 
@@ -135,7 +135,7 @@ def test_get_imported_names_import_with_alias():
     """Test extracting aliased import names"""
     code = "import numpy as np"
     tree = ast.parse(code)
-    names = mobius.imports_get_names(tree)
+    names = mobius.code_get_import_names(tree)
 
     assert "np" in names
     assert "numpy" not in names
@@ -145,7 +145,7 @@ def test_get_imported_names_from_import():
     """Test extracting names from from-import"""
     code = "from collections import Counter"
     tree = ast.parse(code)
-    names = mobius.imports_get_names(tree)
+    names = mobius.code_get_import_names(tree)
 
     assert "Counter" in names
 
@@ -154,7 +154,7 @@ def test_get_imported_names_from_import_with_alias():
     """Test extracting aliased from-import names"""
     code = "from collections import Counter as C"
     tree = ast.parse(code)
-    names = mobius.imports_get_names(tree)
+    names = mobius.code_get_import_names(tree)
 
     assert "C" in names
     assert "Counter" not in names
@@ -168,7 +168,7 @@ from collections import Counter
 import numpy as np
 """
     tree = ast.parse(code)
-    names = mobius.imports_get_names(tree)
+    names = mobius.code_get_import_names(tree)
 
     assert "math" in names
     assert "Counter" in names
@@ -187,10 +187,10 @@ def foo():
     return math.sqrt(4)
 """
     tree = ast.parse(code)
-    imported = mobius.imports_get_names(tree)
-    all_names = mobius.names_collect(tree)
+    imported = mobius.code_get_import_names(tree)
+    all_names = mobius.code_collect_names(tree)
 
-    result = mobius.imports_check_unused(tree, imported, all_names)
+    result = mobius.code_check_unused_imports(tree, imported, all_names)
     assert result is True
 
 
@@ -202,10 +202,10 @@ def foo():
     return 4
 """
     tree = ast.parse(code)
-    imported = mobius.imports_get_names(tree)
-    all_names = mobius.names_collect(tree)
+    imported = mobius.code_get_import_names(tree)
+    all_names = mobius.code_collect_names(tree)
 
-    result = mobius.imports_check_unused(tree, imported, all_names)
+    result = mobius.code_check_unused_imports(tree, imported, all_names)
     assert result is False
 
 
@@ -221,7 +221,7 @@ import ast
 import os
 """
     tree = ast.parse(code)
-    sorted_tree = mobius.imports_sort(tree)
+    sorted_tree = mobius.code_sort_imports(tree)
     result = ast.unparse(sorted_tree)
 
     # ast should come before os, os before sys
@@ -237,7 +237,7 @@ from collections import Counter
 from ast import parse
 """
     tree = ast.parse(code)
-    sorted_tree = mobius.imports_sort(tree)
+    sorted_tree = mobius.code_sort_imports(tree)
     result = ast.unparse(sorted_tree)
 
     # Should be sorted by module name
@@ -254,7 +254,7 @@ def foo():
 import os
 """
     tree = ast.parse(code)
-    sorted_tree = mobius.imports_sort(tree)
+    sorted_tree = mobius.code_sort_imports(tree)
     result = ast.unparse(sorted_tree)
 
     # All imports should come before the function
@@ -273,7 +273,7 @@ def foo():
     return 42
 """
     tree = ast.parse(code)
-    func_def, imports = mobius.function_extract_definition(tree)
+    func_def, imports = mobius.code_extract_definition(tree)
 
     assert func_def is not None
     assert func_def.name == "foo"
@@ -290,7 +290,7 @@ def process():
     return 42
 """
     tree = ast.parse(code)
-    func_def, imports = mobius.function_extract_definition(tree)
+    func_def, imports = mobius.code_extract_definition(tree)
 
     assert func_def is not None
     assert func_def.name == "process"
@@ -303,7 +303,7 @@ def test_extract_function_def_no_function_raises_error():
     tree = ast.parse(code)
 
     with pytest.raises(ValueError, match="No function definition found"):
-        mobius.function_extract_definition(tree)
+        mobius.code_extract_definition(tree)
 
 
 def test_extract_function_def_multiple_functions_raises_error():
@@ -318,7 +318,7 @@ def bar():
     tree = ast.parse(code)
 
     with pytest.raises(ValueError, match="Only one function definition is allowed"):
-        mobius.function_extract_definition(tree)
+        mobius.code_extract_definition(tree)
 
 
 # ============================================================================
@@ -329,9 +329,9 @@ def test_create_name_mapping_function_name_always_v0():
     """Test that function name always maps to _mobius_v_0"""
     code = "def my_function(x): return x"
     tree = ast.parse(code)
-    func_def, imports = mobius.function_extract_definition(tree)
+    func_def, imports = mobius.code_extract_definition(tree)
 
-    forward, reverse = mobius.mapping_create_name(func_def, imports)
+    forward, reverse = mobius.code_create_name_mapping(func_def, imports)
 
     assert forward["my_function"] == "_mobius_v_0"
     assert reverse["_mobius_v_0"] == "my_function"
@@ -345,9 +345,9 @@ def foo(a, b):
     return c
 """
     tree = ast.parse(code)
-    func_def, imports = mobius.function_extract_definition(tree)
+    func_def, imports = mobius.code_extract_definition(tree)
 
-    forward, reverse = mobius.mapping_create_name(func_def, imports)
+    forward, reverse = mobius.code_create_name_mapping(func_def, imports)
 
     # foo should be v_0
     assert forward["foo"] == "_mobius_v_0"
@@ -362,9 +362,9 @@ def foo(items):
     return len(items)
 """
     tree = ast.parse(code)
-    func_def, imports = mobius.function_extract_definition(tree)
+    func_def, imports = mobius.code_extract_definition(tree)
 
-    forward, reverse = mobius.mapping_create_name(func_def, imports)
+    forward, reverse = mobius.code_create_name_mapping(func_def, imports)
 
     # len is a built-in and should not be in the mapping
     assert "len" not in forward
@@ -380,9 +380,9 @@ def foo(x):
     return math.sqrt(x)
 """
     tree = ast.parse(code)
-    func_def, imports = mobius.function_extract_definition(tree)
+    func_def, imports = mobius.code_extract_definition(tree)
 
-    forward, reverse = mobius.mapping_create_name(func_def, imports)
+    forward, reverse = mobius.code_create_name_mapping(func_def, imports)
 
     # math is imported and should not be renamed
     assert "math" not in forward
@@ -396,11 +396,11 @@ def foo(x):
     return helper(x)
 """
     tree = ast.parse(code)
-    func_def, imports = mobius.function_extract_definition(tree)
+    func_def, imports = mobius.code_extract_definition(tree)
 
     # Simulate that 'helper' is an mobius alias
     mobius_aliases = {"helper"}
-    forward, reverse = mobius.mapping_create_name(func_def, imports, mobius_aliases)
+    forward, reverse = mobius.code_create_name_mapping(func_def, imports, mobius_aliases)
 
     # helper should not be renamed
     assert "helper" not in forward
@@ -417,7 +417,7 @@ def test_rewrite_mobius_imports_with_alias():
     tree = ast.parse(code)
     imports = tree.body
 
-    new_imports, alias_mapping = mobius.imports_rewrite_mobius(imports)
+    new_imports, alias_mapping = mobius.code_rewrite_mobius_imports(imports)
 
     # Should remove alias but keep mobius.pool module name
     result = ast.unparse(ast.Module(body=new_imports, type_ignores=[]))
@@ -434,7 +434,7 @@ def test_rewrite_mobius_imports_without_alias():
     tree = ast.parse(code)
     imports = tree.body
 
-    new_imports, alias_mapping = mobius.imports_rewrite_mobius(imports)
+    new_imports, alias_mapping = mobius.code_rewrite_mobius_imports(imports)
 
     result = ast.unparse(ast.Module(body=new_imports, type_ignores=[]))
     assert "from mobius.pool import abc123" in result
@@ -447,7 +447,7 @@ def test_rewrite_mobius_imports_non_mobius_imports_unchanged():
     tree = ast.parse(code)
     imports = tree.body
 
-    new_imports, alias_mapping = mobius.imports_rewrite_mobius(imports)
+    new_imports, alias_mapping = mobius.code_rewrite_mobius_imports(imports)
 
     result = ast.unparse(ast.Module(body=new_imports, type_ignores=[]))
     assert "import math" in result
@@ -469,7 +469,7 @@ def foo(x):
     alias_mapping = {"abc123": "helper"}
     name_mapping = {}
 
-    new_tree = mobius.calls_replace_mobius(tree, alias_mapping, name_mapping)
+    new_tree = mobius.code_replace_mobius_calls(tree, alias_mapping, name_mapping)
     result = ast.unparse(new_tree)
 
     # helper(x) should become abc123._mobius_v_0(x)
@@ -487,7 +487,7 @@ def foo(x):
     alias_mapping = {"abc123": "helper"}
     name_mapping = {}
 
-    new_tree = mobius.calls_replace_mobius(tree, alias_mapping, name_mapping)
+    new_tree = mobius.code_replace_mobius_calls(tree, alias_mapping, name_mapping)
     result = ast.unparse(new_tree)
 
     # other should remain unchanged
@@ -509,7 +509,7 @@ def test_clear_locations_all_location_info():
             assert node.lineno is not None
             break
 
-    mobius.ast_clear_locations(tree)
+    mobius.code_clear_locations(tree)
 
     # Verify all locations are None
     for node in ast.walk(tree):
@@ -531,9 +531,9 @@ def foo():
     return 42
 '''
     tree = ast.parse(code)
-    func_def, _ = mobius.function_extract_definition(tree)
+    func_def, _ = mobius.code_extract_definition(tree)
 
-    docstring, func_without_doc = mobius.docstring_extract(func_def)
+    docstring, func_without_doc = mobius.code_extract_docstring(func_def)
 
     assert docstring == "This is a docstring"
     assert len(func_without_doc.body) == 1  # Only return statement
@@ -547,9 +547,9 @@ def foo():
     return 42
 """
     tree = ast.parse(code)
-    func_def, _ = mobius.function_extract_definition(tree)
+    func_def, _ = mobius.code_extract_definition(tree)
 
-    docstring, func_without_doc = mobius.docstring_extract(func_def)
+    docstring, func_without_doc = mobius.code_extract_docstring(func_def)
 
     assert docstring == ""
     assert len(func_without_doc.body) == 1
@@ -566,9 +566,9 @@ def foo():
     return 42
 '''
     tree = ast.parse(code)
-    func_def, _ = mobius.function_extract_definition(tree)
+    func_def, _ = mobius.code_extract_definition(tree)
 
-    docstring, func_without_doc = mobius.docstring_extract(func_def)
+    docstring, func_without_doc = mobius.code_extract_docstring(func_def)
 
     assert "multiline" in docstring
     assert "docstring" in docstring
@@ -589,7 +589,7 @@ def calculate_sum(first, second):
     tree = ast.parse(code)
 
     code_with_doc, code_without_doc, docstring, name_mapping, alias_mapping = \
-        mobius.ast_normalize(tree, "eng")
+        mobius.code_normalize(tree, "eng")
 
     assert "_mobius_v_0" in code_with_doc  # Function name normalized
     assert docstring == "Add two numbers"
@@ -609,7 +609,7 @@ def foo():
 """
     tree = ast.parse(code)
 
-    code_with_doc, _, _, _, _ = mobius.ast_normalize(tree, "eng")
+    code_with_doc, _, _, _, _ = mobius.code_normalize(tree, "eng")
 
     # Verify imports are sorted
     assert code_with_doc.index("import ast") < code_with_doc.index("import os")
@@ -628,7 +628,7 @@ def foo(x):
     tree = ast.parse(code)
 
     code_with_doc, code_without_doc, docstring, name_mapping, alias_mapping = \
-        mobius.ast_normalize(tree, "eng")
+        mobius.code_normalize(tree, "eng")
 
     # Should remove alias but keep mobius.pool module name
     assert "from mobius.pool import abc123" in code_with_doc
@@ -711,7 +711,7 @@ def foo():
 '''
     new_doc = "New docstring"
 
-    result = mobius.docstring_replace(code, new_doc)
+    result = mobius.code_replace_docstring(code, new_doc)
 
     assert "New docstring" in result
     assert "Old docstring" not in result
@@ -725,7 +725,7 @@ def foo():
 """
     new_doc = "Added docstring"
 
-    result = mobius.docstring_replace(code, new_doc)
+    result = mobius.code_replace_docstring(code, new_doc)
 
     assert "Added docstring" in result
 
@@ -737,7 +737,7 @@ def foo():
     """Remove this"""
     return 42
 '''
-    result = mobius.docstring_replace(code, "")
+    result = mobius.code_replace_docstring(code, "")
 
     assert "Remove this" not in result
     tree = ast.parse(result)
@@ -814,8 +814,8 @@ def test_mapping_compute_hash_deterministic():
     comment = "Formal terminology"
 
     # Compute hash twice - should be identical
-    hash1 = mobius.mapping_compute_hash(docstring, name_mapping, alias_mapping, comment)
-    hash2 = mobius.mapping_compute_hash(docstring, name_mapping, alias_mapping, comment)
+    hash1 = mobius.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment)
+    hash2 = mobius.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment)
 
     assert hash1 == hash2
     assert len(hash1) == 64  # SHA256 produces 64 hex characters
@@ -828,8 +828,8 @@ def test_mapping_compute_hash_different_comments():
     name_mapping = {"_mobius_v_0": "calculate_average", "_mobius_v_1": "numbers"}
     alias_mapping = {"abc123": "helper"}
 
-    hash1 = mobius.mapping_compute_hash(docstring, name_mapping, alias_mapping, "Formal")
-    hash2 = mobius.mapping_compute_hash(docstring, name_mapping, alias_mapping, "Informal")
+    hash1 = mobius.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, "Formal")
+    hash2 = mobius.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, "Informal")
 
     assert hash1 != hash2
 
@@ -840,7 +840,7 @@ def test_mapping_compute_hash_empty_comment():
     name_mapping = {"_mobius_v_0": "calculate_average"}
     alias_mapping = {}
 
-    hash_val = mobius.mapping_compute_hash(docstring, name_mapping, alias_mapping, "")
+    hash_val = mobius.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, "")
 
     assert len(hash_val) == 64
     assert all(c in '0123456789abcdef' for c in hash_val)
@@ -854,8 +854,8 @@ def test_mapping_compute_hash_canonical_json():
     name_mapping2 = {"_mobius_v_1": "bar", "_mobius_v_0": "foo"}
     alias_mapping = {}
 
-    hash1 = mobius.mapping_compute_hash(docstring, name_mapping1, alias_mapping, "")
-    hash2 = mobius.mapping_compute_hash(docstring, name_mapping2, alias_mapping, "")
+    hash1 = mobius.code_compute_mapping_hash(docstring, name_mapping1, alias_mapping, "")
+    hash2 = mobius.code_compute_mapping_hash(docstring, name_mapping2, alias_mapping, "")
 
     assert hash1 == hash2
 
@@ -880,7 +880,7 @@ def test_schema_detect_version_v1(mock_mobius_dir):
     with open(object_json, 'w', encoding='utf-8') as f:
         json.dump(v1_data, f)
 
-    version = mobius.schema_detect_version(test_hash)
+    version = mobius.code_detect_schema(test_hash)
     assert version == 1
 
 
@@ -888,13 +888,13 @@ def test_schema_detect_version_not_found(mock_mobius_dir):
     """Test that schema_detect_version returns None for non-existent function"""
     test_hash = "nonexistent" + "0" * 54
 
-    version = mobius.schema_detect_version(test_hash)
+    version = mobius.code_detect_schema(test_hash)
     assert version is None
 
 
 def test_metadata_create_basic():
     """Test that metadata_create generates proper metadata structure"""
-    metadata = mobius.metadata_create()
+    metadata = mobius.code_create_metadata()
 
     assert 'created' in metadata
     assert 'author' in metadata
@@ -903,13 +903,13 @@ def test_metadata_create_basic():
 def test_metadata_create_with_author():
     """Test that metadata_create uses author from environment"""
     with patch.dict(os.environ, {'USER': 'testuser'}):
-        metadata = mobius.metadata_create()
+        metadata = mobius.code_create_metadata()
         assert metadata['author'] == 'testuser'
 
 
 def test_metadata_create_timestamp_format():
     """Test that metadata_create uses ISO 8601 timestamp format"""
-    metadata = mobius.metadata_create()
+    metadata = mobius.code_create_metadata()
     created = metadata['created']
 
     # Should be ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ

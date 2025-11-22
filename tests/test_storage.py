@@ -24,7 +24,7 @@ def test_function_save_v1_creates_object_json(mock_mobius_dir):
         'author': 'testuser'
     }
 
-    mobius.function_save_v1(test_hash, normalized_code, metadata)
+    mobius.code_save_v1(test_hash, normalized_code, metadata)
 
     # Check that object.json was created
     pool_dir = mock_mobius_dir / '.mobius' / 'pool'
@@ -47,9 +47,9 @@ def test_function_save_v1_no_language_data(mock_mobius_dir):
     """Test that function_save_v1 does NOT include language-specific data"""
     test_hash = "abcd1234" + "0" * 56
     normalized_code = normalize_code_for_test("def _mobius_v_0(): pass")
-    metadata = mobius.metadata_create()
+    metadata = mobius.code_create_metadata()
 
-    mobius.function_save_v1(test_hash, normalized_code, metadata)
+    mobius.code_save_v1(test_hash, normalized_code, metadata)
 
     pool_dir = mock_mobius_dir / '.mobius' / 'pool'
     func_dir = pool_dir / test_hash[:2] / test_hash[2:]
@@ -75,8 +75,8 @@ def test_mapping_save_v1_creates_mapping_json(mock_mobius_dir):
 
     # First create the function (object.json must exist)
     normalized_code = normalize_code_for_test("def _mobius_v_0(): pass")
-    metadata = mobius.metadata_create()
-    mobius.function_save_v1(func_hash, normalized_code, metadata)
+    metadata = mobius.code_create_metadata()
+    mobius.code_save_v1(func_hash, normalized_code, metadata)
 
     # Now save the mapping
     mapping_hash = mobius.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
@@ -109,7 +109,7 @@ def test_mapping_save_v1_returns_hash(mock_mobius_dir):
     comment = ""
 
     # Create function first
-    mobius.function_save_v1(func_hash, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.metadata_create())
+    mobius.code_save_v1(func_hash, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.code_create_metadata())
 
     # Save mapping
     mapping_hash = mobius.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
@@ -119,7 +119,7 @@ def test_mapping_save_v1_returns_hash(mock_mobius_dir):
     assert all(c in '0123456789abcdef' for c in mapping_hash)
 
     # Verify it matches computed hash
-    expected_hash = mobius.mapping_compute_hash(docstring, name_mapping, alias_mapping, comment)
+    expected_hash = mobius.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment)
     assert mapping_hash == expected_hash
 
 
@@ -134,8 +134,8 @@ def test_mapping_save_v1_deduplication(mock_mobius_dir):
     comment = "Same comment"
 
     # Create two different functions
-    mobius.function_save_v1(func_hash1, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.metadata_create())
-    mobius.function_save_v1(func_hash2, normalize_code_for_test("def _mobius_v_0(): return 42"), mobius.metadata_create())
+    mobius.code_save_v1(func_hash1, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.code_create_metadata())
+    mobius.code_save_v1(func_hash2, normalize_code_for_test("def _mobius_v_0(): return 42"), mobius.code_create_metadata())
 
     # Save identical mappings for both
     mapping_hash1 = mobius.mapping_save_v1(func_hash1, lang, docstring, name_mapping, alias_mapping, comment)
@@ -154,7 +154,7 @@ def test_mapping_save_v1_different_comments_different_hashes(mock_mobius_dir):
     alias_mapping = {}
 
     # Create function
-    mobius.function_save_v1(func_hash, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.metadata_create())
+    mobius.code_save_v1(func_hash, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.code_create_metadata())
 
     # Save two mappings with different comments
     hash1 = mobius.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, "Formal")
@@ -176,7 +176,7 @@ def test_v1_write_integration_full_structure(mock_mobius_dir):
     }
 
     # Save function
-    mobius.function_save_v1(func_hash, normalized_code, metadata)
+    mobius.code_save_v1(func_hash, normalized_code, metadata)
 
     # Save mappings in two languages
     eng_hash = mobius.mapping_save_v1(
@@ -227,10 +227,10 @@ def test_function_load_v1_loads_object_json(mock_mobius_dir):
     }
 
     # Save function first
-    mobius.function_save_v1(func_hash, normalized_code, metadata)
+    mobius.code_save_v1(func_hash, normalized_code, metadata)
 
     # Load it back
-    loaded_data = mobius.function_load_v1(func_hash)
+    loaded_data = mobius.code_load_v1(func_hash)
 
     # Verify data
     assert loaded_data['schema_version'] == 1
@@ -249,7 +249,7 @@ def test_mappings_list_v1_single_mapping(mock_mobius_dir):
     comment = "Test variant"
 
     # Create function and mapping
-    mobius.function_save_v1(func_hash, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.metadata_create())
+    mobius.code_save_v1(func_hash, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.code_create_metadata())
     mobius.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
 
     # List mappings
@@ -268,7 +268,7 @@ def test_mappings_list_v1_multiple_mappings(mock_mobius_dir):
     lang = "eng"
 
     # Create function
-    mobius.function_save_v1(func_hash, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.metadata_create())
+    mobius.code_save_v1(func_hash, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.code_create_metadata())
 
     # Add two mappings with different comments
     mobius.mapping_save_v1(func_hash, lang, "Doc 1", {"_mobius_v_0": "func1"}, {}, "Formal")
@@ -291,7 +291,7 @@ def test_mappings_list_v1_no_mappings(mock_mobius_dir):
     func_hash = "nomaps12" + "0" * 56
 
     # Create function without any mappings
-    mobius.function_save_v1(func_hash, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.metadata_create())
+    mobius.code_save_v1(func_hash, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.code_create_metadata())
 
     # List mappings for a language that doesn't exist
     mappings = mobius.mappings_list_v1(func_hash, "fra")
@@ -310,7 +310,7 @@ def test_mapping_load_v1_loads_correctly(mock_mobius_dir):
     comment = "Test variant"
 
     # Create function and mapping
-    mobius.function_save_v1(func_hash, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.metadata_create())
+    mobius.code_save_v1(func_hash, normalize_code_for_test("def _mobius_v_0(): pass"), mobius.code_create_metadata())
     mapping_hash = mobius.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
 
     # Load the mapping
@@ -334,10 +334,10 @@ def test_function_load_v1_integration(mock_mobius_dir):
     comment = "Simple increment"
 
     # Write v1 format
-    mobius.function_save(func_hash, lang, normalized_code, docstring, name_mapping, alias_mapping, comment)
+    mobius.code_save(func_hash, lang, normalized_code, docstring, name_mapping, alias_mapping, comment)
 
     # Read back using dispatch (should detect v1)
-    loaded_code, loaded_name, loaded_alias, loaded_doc = mobius.function_load(func_hash, lang)
+    loaded_code, loaded_name, loaded_alias, loaded_doc = mobius.code_load(func_hash, lang)
 
     # Verify correctness
     assert loaded_code == normalized_code
@@ -353,12 +353,12 @@ def test_function_load_dispatch_multiple_mappings(mock_mobius_dir):
     normalized_code = normalize_code_for_test("def _mobius_v_0(): pass")
 
     # Create function with two mappings
-    mobius.function_save_v1(func_hash, normalized_code, mobius.metadata_create())
+    mobius.code_save_v1(func_hash, normalized_code, mobius.code_create_metadata())
     hash1 = mobius.mapping_save_v1(func_hash, lang, "Doc 1", {"_mobius_v_0": "func1"}, {}, "First")
     hash2 = mobius.mapping_save_v1(func_hash, lang, "Doc 2", {"_mobius_v_0": "func2"}, {}, "Second")
 
     # Load without specifying mapping_hash (should return first alphabetically)
-    loaded_code, loaded_name, loaded_alias, loaded_doc = mobius.function_load(func_hash, lang)
+    loaded_code, loaded_name, loaded_alias, loaded_doc = mobius.code_load(func_hash, lang)
 
     # Should load one of the mappings (implementation will pick first alphabetically)
     assert loaded_code == normalized_code
@@ -373,12 +373,12 @@ def test_function_load_dispatch_explicit_mapping(mock_mobius_dir):
     normalized_code = normalize_code_for_test("def _mobius_v_0(): pass")
 
     # Create function with two mappings
-    mobius.function_save_v1(func_hash, normalized_code, mobius.metadata_create())
+    mobius.code_save_v1(func_hash, normalized_code, mobius.code_create_metadata())
     hash1 = mobius.mapping_save_v1(func_hash, lang, "Doc 1", {"_mobius_v_0": "func1"}, {}, "First")
     hash2 = mobius.mapping_save_v1(func_hash, lang, "Doc 2", {"_mobius_v_0": "func2"}, {}, "Second")
 
     # Load with specific mapping_hash
-    loaded_code, loaded_name, loaded_alias, loaded_doc = mobius.function_load(func_hash, lang, mapping_hash=hash2)
+    loaded_code, loaded_name, loaded_alias, loaded_doc = mobius.code_load(func_hash, lang, mapping_hash=hash2)
 
     # Should load the second mapping
     assert loaded_code == normalized_code

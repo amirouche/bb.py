@@ -15,27 +15,27 @@ import mobius
 
 def test_remote_type_detect_file():
     """Test detecting file:// remote type"""
-    assert mobius.remote_type_detect("file:///path/to/pool") == "file"
+    assert mobius.git_detect_remote_type("file:///path/to/pool") == "file"
 
 
 def test_remote_type_detect_git_ssh():
     """Test detecting git SSH remote type"""
-    assert mobius.remote_type_detect("git@github.com:user/repo.git") == "git-ssh"
+    assert mobius.git_detect_remote_type("git@github.com:user/repo.git") == "git-ssh"
 
 
 def test_remote_type_detect_git_https():
     """Test detecting git HTTPS remote type"""
-    assert mobius.remote_type_detect("git+https://github.com/user/repo.git") == "git-https"
+    assert mobius.git_detect_remote_type("git+https://github.com/user/repo.git") == "git-https"
 
 
 def test_remote_type_detect_git_file():
     """Test detecting local git remote type"""
-    assert mobius.remote_type_detect("git+file:///path/to/repo") == "git-file"
+    assert mobius.git_detect_remote_type("git+file:///path/to/repo") == "git-file"
 
 
 def test_remote_type_detect_unknown():
     """Test detecting unknown remote type"""
-    assert mobius.remote_type_detect("ftp://example.com") == "unknown"
+    assert mobius.git_detect_remote_type("ftp://example.com") == "unknown"
 
 
 def test_git_url_parse_ssh():

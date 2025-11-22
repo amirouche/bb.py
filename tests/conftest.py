@@ -39,7 +39,7 @@ def normalize_code_for_test(code: str) -> str:
 
     The function:
     1. Parses code into AST
-    2. Clears all line/column information recursively (using mobius.ast_clear_locations)
+    2. Clears all line/column information recursively (using mobius.code_clear_locations)
     3. Fixes missing locations
     4. Unparses back to string
 
@@ -52,7 +52,7 @@ def normalize_code_for_test(code: str) -> str:
         # Returns: "def _mobius_v_0():\\n    return 42"
     """
     tree = ast.parse(code)
-    mobius.ast_clear_locations(tree)
+    mobius.code_clear_locations(tree)
     ast.fix_missing_locations(tree)
     return ast.unparse(tree)
 
@@ -157,8 +157,8 @@ def mock_mobius_dir(tmp_path, monkeypatch):
     def _get_temp_pool_dir():
         return pool_dir
 
-    monkeypatch.setattr(mobius, 'directory_get_mobius', _get_temp_mobius_dir)
-    monkeypatch.setattr(mobius, 'directory_get_pool', _get_temp_pool_dir)
+    monkeypatch.setattr(mobius, 'storage_get_mobius_directory', _get_temp_mobius_dir)
+    monkeypatch.setattr(mobius, 'storage_get_pool_directory', _get_temp_pool_dir)
     return tmp_path
 
 
