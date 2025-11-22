@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.svg" alt="Mobius Logo" width="200" />
+</p>
+
 # mobius.py
 
 ![Tests](https://github.com/amirouche/mobius.py/actions/workflows/test.yml/badge.svg)
