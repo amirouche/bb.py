@@ -208,3 +208,8 @@ __marimo__/
 
 # Ouverture
 .mobius/
+
+# Mobius compile artifacts
+.mobius_build_*/
+main.py
+pyoxidizer.bzl
