@@ -23,6 +23,34 @@ PYTHON_BUILTINS = set(dir(builtins))
 MOBIUS_IMPORT_PREFIX = "object_"
 
 
+def check(target):
+    """
+    Decorator to mark a function as a test for another pool function.
+
+    This decorator is used to indicate that a function tests another function
+    in the mobius pool. The decorator itself is a no-op at runtime - it simply
+    returns the decorated function unchanged. Its purpose is to be parsed by
+    the AST during `mobius.py add` to extract test relationships.
+
+    Args:
+        target: The pool function being tested (e.g., object_abc123...)
+
+    Returns:
+        A decorator that returns the function unchanged
+
+    Usage:
+        from mobius import check
+        from mobius.pool import object_abc123 as my_func
+
+        @check(object_abc123)
+        def test_my_func():
+            return my_func(1, 2) == 3
+    """
+    def decorator(func):
+        return func
+    return decorator
+
+
 class ASTNormalizer(ast.NodeTransformer):
     """Normalizes an AST by renaming variables and functions"""
 
