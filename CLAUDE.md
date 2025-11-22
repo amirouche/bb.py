@@ -684,6 +684,53 @@ Regular maintenance tasks for AI assistants working on this codebase:
 - Regularly analyze type_name statistics and semantics
 - Regularly update USAGE.md
 
+### Type Name Statistics (Last updated: 2025-11-22)
+
+Analysis of function naming following the `type_name_verb_complement` pattern:
+
+| type_name | Count | Functions |
+|-----------|-------|-----------|
+| command_ | 15 | `command_init`, `command_whoami`, `command_remote_*` (5), `command_review`, `command_log`, `command_search`, `command_run`, `command_translate`, `command_caller`, `command_refactor`, `command_compile` |
+| function_ | 7 | `function_extract_definition`, `function_save`, `function_add`, `function_load` (×2), `function_show`, `function_get` |
+| git_ | 5 | `git_run`, `git_url_parse`, `git_cache_path`, `git_clone_or_fetch`, `git_commit_and_push` |
+| imports_ | 4 | `imports_get_names`, `imports_check_unused`, `imports_sort`, `imports_rewrite_mobius` |
+| dependencies_ | 4 | `dependencies_extract`, `dependencies_resolve`, `dependencies_bundle`, `dependencies_load_recursive` |
+| make_ | 4 | `make_dist`, `make_exe`, `make_embedded_resources`, `make_install` |
+| code_ | 3 | `code_denormalize` (×2), `code_strip_mobius_imports` |
+| directory_ | 3 | `directory_get_mobius`, `directory_get_pool`, `directory_get_bundle` |
+| config_ | 3 | `config_get_path`, `config_read`, `config_write` |
+| mapping_ | 2 | `mapping_create_name`, `mapping_compute_hash` |
+| ast_ | 2 | `ast_clear_locations`, `ast_normalize` |
+| docstring_ | 2 | `docstring_extract`, `docstring_replace` |
+| compile_ | 2 | `compile_generate_config`, `compile_generate_runtime` |
+| names_ | 1 | `names_collect` |
+| calls_ | 1 | `calls_replace_mobius` |
+| hash_ | 1 | `hash_compute` |
+| schema_ | 1 | `schema_detect_version` |
+| metadata_ | 1 | `metadata_create` |
+| remote_ | 1 | `remote_type_detect` |
+| execute_ | 1 | `execute_function` |
+
+**Summary:** 20 unique type_names, 60 functions total
+
+#### Identified Issues
+
+1. **Pattern violations:**
+   - `execute_function` → should be `function_execute`
+   - `make_*` functions use `verb_noun` pattern instead of `type_verb`
+
+2. **Semantic grouping questions:**
+   - `remote_type_detect` is isolated - consider `git_remote_type_detect`
+   - `config_get_path` vs `directory_get_*` - inconsistent grouping
+
+3. **Singleton type_names (potential incomplete abstractions):**
+   - `names_` (1), `calls_` (1), `hash_` (1), `schema_` (1), `metadata_` (1), `remote_` (1), `execute_` (1)
+   - Note: `schema_validate_v1` is documented in CLAUDE.md but not found in code
+
+4. **Duplicate definitions (nested scope redefinitions):**
+   - `function_load` at lines 2209 and 2794
+   - `code_denormalize` at lines 741 and 2813
+
 ## Summary
 
 Mobius is a carefully designed system for multilingual function sharing through AST normalization. The key insight is separating logic (hashed) from presentation (language-specific names/docstrings). When modifying the code:
