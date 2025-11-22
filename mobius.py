@@ -2688,10 +2688,10 @@ if result is not None:
         config=python_config,
     )
 
-    exe.add_python_resource(dist.read_package_root(
+    exe.read_package_root(
         path=".",
         packages=["mobius_runtime"],
-    ))
+    )
 
     return exe
 
