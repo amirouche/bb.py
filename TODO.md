@@ -12,7 +12,6 @@
 - `comment`: command to add/view comments on a function hash
 - `html`: command to render pool as static HTML site for browsing
 - `fork`: command to create a modified function with parent lineage tracking
-- `review`: test, QA, and bulletproof recursive dependency resolution
 - `log`: test, QA, and bulletproof output formatting and empty pool handling
 - `search`: test, QA, and bulletproof query parsing and result ranking
 - `remote`: test, QA, and bulletproof URL validation and network error handling
