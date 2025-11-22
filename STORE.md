@@ -347,15 +347,3 @@ The hash algorithm (SHA256) is fixed and doesn't need to be encoded in paths. Th
 - `pool/ab/cdef.../` instead of `pool/sha256/ab/cdef.../`
 
 If a different algorithm is needed in the future, a new schema version would be created.
-
-## Migration from v0
-
-Schema v0 (deprecated) stored everything in a single JSON file. Migration to v1:
-
-```bash
-python3 mobius.py migrate           # Migrate all v0 functions
-python3 mobius.py migrate HASH      # Migrate specific function
-python3 mobius.py migrate --keep-v0 # Keep v0 files after migration
-```
-
-v0 read support is maintained for backward compatibility.
