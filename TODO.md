@@ -27,3 +27,9 @@
 - `caller`: test, QA, and bulletproof reverse dependency discovery
 - `refactor`: test, QA, and bulletproof hash replacement and integrity checks
 - `compile`: test, QA, and bulletproof build process and dependency bundling
+- `draw`: command to render function output as image (SVG/PNG) for generative art
+- `sandbox`: command to run function in restricted mode (no I/O, no network)
+- `approve`: command for parent/moderator to mark function as reviewed
+- `family`: command to list pool contributors and their functions
+- generative art: curate starter pool of classic 2D algorithms (Perlin, spirals, L-systems)
+- kid-safe: subset interpreter with visual output and parental approval workflow
