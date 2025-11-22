@@ -55,6 +55,22 @@ def test_compile_prepares_bundle(cli_runner, tmp_path):
     assert result.returncode != 0
 
 
+def test_compile_invalid_language_code_fails(cli_runner):
+    """Test that compile fails with invalid language code"""
+    result = cli_runner.run(['compile', 'a' * 64 + '@toolong'])
+
+    assert result.returncode != 0
+    assert 'Language code must be 3 characters' in result.stderr
+
+
+def test_compile_too_short_language_code_fails(cli_runner):
+    """Test that compile fails with too short language code"""
+    result = cli_runner.run(['compile', 'a' * 64 + '@ab'])
+
+    assert result.returncode != 0
+    assert 'Language code must be 3 characters' in result.stderr
+
+
 # =============================================================================
 # Unit tests for dependency extraction (complex low-level aspect)
 # =============================================================================
@@ -187,6 +203,59 @@ def _mobius_v_0():
     assert deps.index(d_hash) < deps.index(c_hash)
     # A should be last
     assert deps[-1] == a_hash
+
+
+def test_dependencies_resolve_missing_dependency_fails(mock_mobius_dir):
+    """Test that resolution fails when dependency doesn't exist"""
+    # Create function that depends on nonexistent function
+    missing_hash = "missing0" + "0" * 56
+    main_hash = "main0002" + "0" * 56
+    main_code = normalize_code_for_test(f"""
+from mobius.pool import object_{missing_hash}
+
+def _mobius_v_0():
+    return object_{missing_hash}._mobius_v_0()
+""")
+    mobius.code_save(main_hash, "eng", main_code, "Main with missing dep", {"_mobius_v_0": "test"}, {missing_hash: "missing"})
+
+    with pytest.raises(ValueError) as exc_info:
+        mobius.code_resolve_dependencies(main_hash)
+
+    assert "not found" in str(exc_info.value).lower()
+
+
+def test_dependencies_resolve_circular_handled(mock_mobius_dir):
+    """Test that circular dependencies don't cause infinite loop"""
+    # Create two functions that depend on each other
+    a_hash = "circlea0" + "0" * 56
+    b_hash = "circleb0" + "0" * 56
+
+    # A depends on B
+    a_code = normalize_code_for_test(f"""
+from mobius.pool import object_{b_hash}
+
+def _mobius_v_0():
+    return object_{b_hash}._mobius_v_0()
+""")
+
+    # B depends on A
+    b_code = normalize_code_for_test(f"""
+from mobius.pool import object_{a_hash}
+
+def _mobius_v_0():
+    return object_{a_hash}._mobius_v_0()
+""")
+
+    mobius.code_save(a_hash, "eng", a_code, "A circular", {"_mobius_v_0": "a"}, {b_hash: "b"})
+    mobius.code_save(b_hash, "eng", b_code, "B circular", {"_mobius_v_0": "b"}, {a_hash: "a"})
+
+    # Should complete without infinite loop (visited set prevents it)
+    deps = mobius.code_resolve_dependencies(a_hash)
+
+    # Both should be present
+    assert a_hash in deps
+    assert b_hash in deps
+    assert len(deps) == 2
 
 
 # =============================================================================
