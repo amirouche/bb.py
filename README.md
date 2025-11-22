@@ -32,29 +32,6 @@ find ~/.local/mobius/pool -name "*.json"
 python3 mobius.py get <HASH>@fra
 ```
 
-## How It Works
-
-Mobius normalizes Python functions by:
-1. Parsing code to an Abstract Syntax Tree (AST)
-2. Extracting docstrings (language-specific)
-3. Renaming variables to canonical forms (`_mobius_v_0`, `_mobius_v_1`, etc.)
-4. Computing a hash on the **logic only** (excluding docstrings)
-5. Storing both the normalized code and language-specific name mappings
-
-When you retrieve a function, it's reconstructed in your target language:
-
-```bash
-# Add functions in different languages
-python3 mobius.py add examples/example_simple.py@eng
-python3 mobius.py add examples/example_simple_french.py@fra
-python3 mobius.py add examples/example_simple_spanish.py@spa
-
-# All three produce the same hash!
-# Retrieve in any language
-python3 mobius.py get <HASH>@fra  # Returns French version
-python3 mobius.py get <HASH>@spa  # Returns Spanish version
-```
-
 ## Why "Mobius"?
 
 Mobius refers to the Mobius strip - a surface with only one side, representing the continuous transformation between languages and the unity of code logic regardless of linguistic expression. Just as the Mobius strip has no boundary between its "sides," Mobius code has no boundary between languages: the same logic flows seamlessly from French to English to Spanish and back.
