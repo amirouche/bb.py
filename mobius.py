@@ -3163,9 +3163,34 @@ def compile_generate_python(func_hash: str, lang: str) -> str:
 
     Returns:
         Python source code as a string
+
+    Raises:
+        ValueError: If any dependency is missing the requested language
     """
     # Resolve all dependencies
     deps = code_resolve_dependencies(func_hash)
+
+    # Check that all dependencies have the requested language available
+    missing_lang = []
+    for dep_hash in deps:
+        mappings = mappings_list_v1(dep_hash, lang)
+        if not mappings:
+            available_langs = storage_list_languages(dep_hash)
+            missing_lang.append((dep_hash, available_langs))
+
+    if missing_lang:
+        error_lines = [f"The following functions are not available in '{lang}':"]
+        for dep_hash, available in missing_lang:
+            if available:
+                error_lines.append(f"  - {dep_hash[:16]}... (available: {', '.join(available)})")
+            else:
+                error_lines.append(f"  - {dep_hash[:16]}... (no languages available)")
+        error_lines.append("")
+        error_lines.append("Please add translations for these functions first:")
+        for dep_hash, available in missing_lang:
+            if available:
+                error_lines.append(f"  python3 mobius.py translate {dep_hash}@{available[0]} {lang}")
+        raise ValueError("\n".join(error_lines))
 
     # Load all functions
     functions = []
@@ -3173,21 +3198,10 @@ def compile_generate_python(func_hash: str, lang: str) -> str:
         func_data = code_load_v1(dep_hash)
         normalized_code = func_data['normalized_code']
 
-        # Get a mapping for this function
+        # Get a mapping for this function (we verified above that it exists)
         mappings = mappings_list_v1(dep_hash, lang)
-        if mappings:
-            mapping_hash = mappings[0][0]
-            docstring, name_mapping, alias_mapping, _ = mapping_load_v1(dep_hash, lang, mapping_hash)
-        else:
-            # Try to find any available language
-            available_langs = storage_list_languages(dep_hash)
-            if available_langs:
-                fallback_lang = available_langs[0]
-                mappings = mappings_list_v1(dep_hash, fallback_lang)
-                mapping_hash = mappings[0][0]
-                docstring, name_mapping, alias_mapping, _ = mapping_load_v1(dep_hash, fallback_lang, mapping_hash)
-            else:
-                raise ValueError(f"No language mapping found for {dep_hash}")
+        mapping_hash = mappings[0][0]
+        docstring, name_mapping, alias_mapping, _ = mapping_load_v1(dep_hash, lang, mapping_hash)
 
         # Denormalize the code
         normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
