@@ -15,6 +15,8 @@ Context sources:
 - **asyncify**: Tool for on-the-fly rewriting of synchronous Python code to async/await style
 - **todo-flask**: Reference todo application built with Flask demonstrating mobius integration
 - **ing0**: Bubblewrap wrapper to run mobius.py across Linux distributions and assist with cross-compiling
+- **chez-scheme-port**: Port Mobius to Chez Scheme
+- **beyond-babel**: Rename mobius.py to beyond-babel with CLI and module called bb.py across Linux
 
 ## Priority 1: Remote HTTP/HTTPS Support
 
