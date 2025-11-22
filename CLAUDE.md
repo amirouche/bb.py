@@ -160,14 +160,14 @@ $HOME/.local/mobius/pool/          # Default location (or $MOBIUS_DIRECTORY/pool
 
 #### `function_save_v1(hash_value, normalized_code, metadata)` (lines 495-532)
 **Stores function in v1 format** (Schema v1)
-- Creates function directory: `$MOBIUS_DIRECTORY/pool/sha256/XX/YYYYYY.../`
+- Creates function directory: `$MOBIUS_DIRECTORY/pool/XX/YYYYYY.../`
 - Writes `object.json` with schema_version=1, metadata
 - Does NOT store language-specific data (stored separately in mapping files)
 - Clean separation: code in object.json, language variants in mapping.json files
 
 #### `mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment='')` (lines 534-585)
 **Stores language mapping in v1 format** (Schema v1)
-- Creates mapping directory: `$MOBIUS_DIRECTORY/pool/sha256/XX/Y.../lang/sha256/ZZ/W.../`
+- Creates mapping directory: `$MOBIUS_DIRECTORY/pool/XX/Y.../lang/ZZ/W.../`
 - Writes `mapping.json` with docstring, name_mapping, alias_mapping, comment
 - Content-addressed by mapping hash (enables deduplication)
 - Identical mappings across functions share same file
@@ -182,20 +182,20 @@ $HOME/.local/mobius/pool/          # Default location (or $MOBIUS_DIRECTORY/pool
 
 #### `function_load_v1(hash_value)` (lines 2072-2100)
 **Loads function from pool using schema v1**
-- Reads object.json: `$MOBIUS_DIRECTORY/pool/sha256/XX/YYYYYY.../object.json`
+- Reads object.json: `$MOBIUS_DIRECTORY/pool/XX/YYYYYY.../object.json`
 - Returns: Dictionary with schema_version, hash, normalized_code, metadata
 - Does NOT load language-specific data (use mapping functions for that)
 
 #### `mappings_list_v1(func_hash, lang)` (lines 851-909)
 **Lists all mapping variants for a language** (Schema v1)
-- Scans language directory: `$MOBIUS_DIRECTORY/pool/sha256/XX/Y.../lang/`
+- Scans language directory: `$MOBIUS_DIRECTORY/pool/XX/Y.../lang/`
 - Returns: List of (mapping_hash, comment) tuples
 - Used to discover available mapping variants
 - Returns empty list if language doesn't exist
 
 #### `mapping_load_v1(func_hash, lang, mapping_hash)` (lines 912-950)
 **Loads specific language mapping** (Schema v1)
-- Reads mapping.json: `$MOBIUS_DIRECTORY/pool/sha256/XX/Y.../lang/sha256/ZZ/W.../mapping.json`
+- Reads mapping.json: `$MOBIUS_DIRECTORY/pool/XX/Y.../lang/ZZ/W.../mapping.json`
 - Returns: Tuple of (docstring, name_mapping, alias_mapping, comment)
 - Content-addressed storage enables deduplication
 
@@ -224,7 +224,7 @@ $HOME/.local/mobius/pool/          # Default location (or $MOBIUS_DIRECTORY/pool
 
 ### Storage Schema
 
-See `strategies/schema-v1.md` for the complete specification.
+See [STORE.md](STORE.md) for the complete storage specification.
 
 **Directory Structure:**
 ```
@@ -255,7 +255,7 @@ $MOBIUS_DIRECTORY/pool/            # Default: $HOME/.local/mobius/pool/
 }
 ```
 
-**mapping.json** (in lang/sha256/XX/YYY.../):
+**mapping.json** (in lang/XX/YYY.../):
 ```json
 {
   "docstring": "Calculate the average...",
@@ -381,7 +381,7 @@ def test_add_function_creates_v1_structure(cli_runner, tmp_path):
     func_hash = cli_runner.add(str(test_file), 'eng')
 
     # Assert: Check internal storage structure (grey-box)
-    func_dir = cli_runner.pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    func_dir = cli_runner.pool_dir / func_hash[:2] / func_hash[2:]
     assert func_dir.exists()
     assert (func_dir / 'object.json').exists()
     assert (func_dir / 'eng').exists()
