@@ -6,13 +6,13 @@ Multilingual function pool: same logic, different languages → same hash.
 
 ```
 usage: mobius.py [-h]
-                 {init,whoami,add,get,show,translate,run,review,log,search,remote,validate,caller,refactor,compile}
+                 {init,whoami,add,get,show,translate,run,review,log,search,remote,validate,caller,refactor,compile,fork}
                  ...
 
 mobius - Function pool manager
 
 positional arguments:
-  {init,whoami,add,get,show,translate,run,review,log,search,remote,validate,caller,refactor,compile}
+  {init,whoami,add,get,show,translate,run,review,log,search,remote,validate,caller,refactor,compile,fork}
                         Commands
     init                Initialize mobius directory and config
     whoami              Get or set user configuration
@@ -29,6 +29,7 @@ positional arguments:
     caller              Find functions that depend on a given function
     refactor            Replace a dependency in a function
     compile             Compile function to standalone executable
+    fork                Fork a function to create a modified version with lineage tracking
 
 options:
   -h, --help            show this help message and exit
@@ -53,6 +54,7 @@ options:
 | `caller` | Find functions that depend on a given function |
 | `refactor` | Replace a dependency in a function |
 | `compile` | Compile function to standalone executable |
+| `fork` | Fork a function to create a modified version with lineage tracking |
 
 ---
 
@@ -432,6 +434,44 @@ Replace a dependency in a function with a different function.
 # Replace dependency 'old_hash' with 'new_hash' in function 'func_hash'
 python3 mobius.py refactor func_hash old_hash new_hash
 ```
+
+---
+
+### `fork` - Create a modified version with lineage
+
+```
+usage: mobius.py fork [-h] hash
+
+positional arguments:
+  hash        Function hash with language (e.g., abc123...@eng)
+
+options:
+  -h, --help  show this help message and exit
+```
+
+Fork a function to create a modified version with parent lineage tracking. Opens the function in your `$EDITOR` (or `nano` fallback), allows modifications, and saves as a new function with the original recorded as parent in metadata.
+
+**Workflow:**
+1. Opens denormalized code in your editor
+2. Make changes and save the file
+3. If logic changed: creates new function with parent lineage in metadata
+4. If only names/docstring changed: adds new mapping to existing function
+
+**Examples:**
+```bash
+# Fork a function for modification
+python3 mobius.py fork abc123...@eng
+
+# Set preferred editor
+export EDITOR=vim
+python3 mobius.py fork abc123...@fra
+```
+
+**Lineage tracking:**
+The forked function's metadata includes a `parent` field pointing to the original hash, enabling:
+- Tracing function evolution history
+- Understanding derivation relationships
+- Auditing changes over time
 
 ---
 
