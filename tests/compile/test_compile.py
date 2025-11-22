@@ -329,10 +329,10 @@ def test_compile_python_mode_creates_file(cli_runner, tmp_path):
     main_py = tmp_path / 'main.py'
     assert main_py.exists()
 
-    # Verify the content
+    # Verify the content (without --debug, uses normalized names)
     content = main_py.read_text()
     assert '#!/usr/bin/env python3' in content
-    assert 'def greet(name):' in content
+    assert 'def _mobius_' in content  # Normalized function name
     assert 'if __name__ == "__main__":' in content
 
 
@@ -381,8 +381,12 @@ def test_compile_generate_python(mock_mobius_dir):
 ''')
     mobius.code_save(func_hash, "eng", normalized_code, "Test function", {"_mobius_v_0": "test_func"}, {})
 
+    # Without debug_mode, uses normalized names
     python_code = mobius.compile_generate_python(func_hash, "eng")
-
     assert '#!/usr/bin/env python3' in python_code
-    assert 'def test_func():' in python_code
+    assert 'def _mobius_pytest01():' in python_code  # Normalized name
     assert 'if __name__ == "__main__":' in python_code
+
+    # With debug_mode=True, uses human-readable names
+    python_code_debug = mobius.compile_generate_python(func_hash, "eng", debug_mode=True)
+    assert 'def test_func():' in python_code_debug
