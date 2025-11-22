@@ -30,7 +30,7 @@ from mobius.pool import object_{target_hash} as add_numbers
 def test_add():
     """Test add_numbers function"""
     result = add_numbers(2, 3)
-    return result == 5
+    assert result == 5
 ''')
 
     # Test: Run add command for the test function
@@ -83,7 +83,8 @@ from mobius.pool import object_{target2_hash} as subtract
 @check(object_{target2_hash})
 def test_math():
     """Test both add and subtract functions"""
-    return add(5, 3) == 8 and subtract(5, 3) == 2
+    assert add(5, 3) == 8
+    assert subtract(5, 3) == 2
 ''')
 
     # Test: Run add command
@@ -127,7 +128,7 @@ from mobius.pool import object_{target_hash} as multiply
 @check(object_{target_hash})
 def test_multiply():
     """Test multiply function"""
-    return multiply(3, 4) == 12
+    assert multiply(3, 4) == 12
 ''')
 
     result = cli_runner.run(['add', f'{test_file}@eng'])
@@ -172,7 +173,7 @@ from mobius.pool import object_{fake_hash} as fake_func
 @check(object_{fake_hash})
 def test_fake():
     """Test fake function"""
-    return fake_func() == 42
+    assert fake_func() == 42
 ''')
 
     # Test: Run add command
