@@ -546,7 +546,11 @@ def command_init():
 
     # Create pool directory (git repository for objects)
     pool_dir = storage_get_pool_directory()
-    pool_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        pool_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(f"Error: Failed to create pool directory: {e}", file=sys.stderr)
+        sys.exit(1)
 
     # Create config file with defaults
     config_path = storage_get_config_path()
