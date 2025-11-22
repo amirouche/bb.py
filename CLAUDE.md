@@ -310,6 +310,8 @@ Key features:
 
 **Rationale**: This convention groups related operations alphabetically and makes the primary subject clear at a glance, which is particularly useful in a function-centric architecture where functions are the primary unit of composition.
 
+**Avoid type_name proliferation**: Too many distinct type_names hurts readability and discoverability. Prefer consolidating related concepts under a common prefix. Target type_names: `code_`, `command_`, `compile_`, `git_`, `storage_`, `hash_`.
+
 ### Testing Conventions
 
 - **Test framework**: pytest
