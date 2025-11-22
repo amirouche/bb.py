@@ -24,9 +24,9 @@ cat examples/example_simple_spanish.py  # Spanish
 # Add a function to the pool
 python3 mobius.py add examples/example_simple.py@eng
 
-# Get the hash (stored in $HOME/.local/mobius/objects/ by default)
+# Get the hash (stored in $HOME/.local/mobius/pool/ by default)
 # Note: Use $MOBIUS_DIRECTORY to customize the location
-find ~/.local/mobius/objects -name "*.json"
+find ~/.local/mobius/pool -name "*.json"
 
 # Retrieve in different language
 python3 mobius.py get <HASH>@fra
