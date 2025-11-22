@@ -12,7 +12,6 @@
 - `comment`: command to add/view comments on a function hash
 - `html`: command to render pool as static HTML site for browsing
 - `fork`: command to create a modified function with parent lineage tracking
-- `add`: test, QA, and bulletproof parsing, normalization, and hash stability
 - `get`: test, QA, and bulletproof (deprecated, ensure graceful migration to show)
 - `show`: test, QA, and bulletproof mapping selection and output formatting
 - `translate`: test, QA, and bulletproof interactive prompts and validation
