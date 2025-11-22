@@ -143,6 +143,37 @@ def code_extract_definition(tree: ast.Module) -> Tuple[Union[ast.FunctionDef, as
     return function_def, imports
 
 
+def code_extract_check_decorators(function_def: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> List[str]:
+    """
+    Extract target function hashes from @check decorators.
+
+    The @check decorator marks a function as a test for another function in the pool.
+    Syntax: @check(object_HASH) where object_HASH is a mobius pool import.
+
+    Args:
+        function_def: The function definition AST node
+
+    Returns:
+        List of function hashes (without object_ prefix) that this function tests
+    """
+    checks = []
+
+    for decorator in function_def.decorator_list:
+        # Look for @check(object_HASH) pattern
+        if isinstance(decorator, ast.Call):
+            # Check if it's a call to 'check'
+            if isinstance(decorator.func, ast.Name) and decorator.func.id == 'check':
+                # Get the argument (should be a Name node like 'object_abc123...')
+                if len(decorator.args) == 1 and isinstance(decorator.args[0], ast.Name):
+                    arg_name = decorator.args[0].id
+                    # Extract hash from object_HASH format
+                    if arg_name.startswith(MOBIUS_IMPORT_PREFIX):
+                        func_hash = arg_name[len(MOBIUS_IMPORT_PREFIX):]
+                        checks.append(func_hash)
+
+    return checks
+
+
 def code_create_name_mapping(function_def: Union[ast.FunctionDef, ast.AsyncFunctionDef], imports: List[ast.stmt],
                         mobius_aliases: Set[str] = None) -> Tuple[Dict[str, str], Dict[str, str]]:
     """
@@ -437,7 +468,7 @@ def code_detect_schema(func_hash: str) -> int:
     return None
 
 
-def code_create_metadata(parent: str = None) -> Dict[str, any]:
+def code_create_metadata(parent: str = None, checks: List[str] = None) -> Dict[str, any]:
     """
     Create default metadata for a function.
 
@@ -446,9 +477,11 @@ def code_create_metadata(parent: str = None) -> Dict[str, any]:
     - name: User's name from config
     - email: User's email from config
     - parent: Optional parent function hash (for lineage tracking)
+    - checks: Optional list of function hashes this function tests
 
     Args:
         parent: Optional parent function hash (for fork lineage tracking)
+        checks: Optional list of function hashes this function tests (from @check decorators)
 
     Returns:
         Dictionary with metadata fields
@@ -471,6 +504,9 @@ def code_create_metadata(parent: str = None) -> Dict[str, any]:
 
     if parent:
         metadata['parent'] = parent
+
+    if checks:
+        metadata['checks'] = checks
 
     return metadata
 
@@ -727,7 +763,7 @@ def mapping_save_v1(func_hash: str, lang: str, docstring: str,
 
 def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
                   name_mapping: Dict[str, str], alias_mapping: Dict[str, str], comment: str = "",
-                  parent: str = None):
+                  parent: str = None, checks: List[str] = None):
     """
     Save function to mobius directory using schema v1 (current default).
 
@@ -742,9 +778,10 @@ def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
         alias_mapping: Mobius function hash -> alias mapping
         comment: Optional comment explaining this mapping variant
         parent: Optional parent function hash (for fork lineage tracking)
+        checks: Optional list of function hashes this function tests (from @check decorators)
     """
-    # Create metadata (with optional parent for lineage)
-    metadata = code_create_metadata(parent=parent)
+    # Create metadata (with optional parent for lineage and checks)
+    metadata = code_create_metadata(parent=parent, checks=checks)
 
     # Save function (object.json)
     code_save_v1(hash_value, normalized_code, metadata)
@@ -2148,6 +2185,14 @@ def code_add(file_path_with_lang: str, comment: str = ""):
         print(f"Error: Failed to parse {file_path}: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # Extract function definition to get @check decorators before normalization
+    try:
+        function_def, _ = code_extract_definition(tree)
+        checks = code_extract_check_decorators(function_def)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
     # Normalize the AST
     try:
         normalized_code_with_docstring, normalized_code_without_docstring, docstring, name_mapping, alias_mapping = code_normalize(tree, lang)
@@ -2156,8 +2201,9 @@ def code_add(file_path_with_lang: str, comment: str = ""):
         sys.exit(1)
 
     # Verify all mobius imports resolve to objects in the local pool
+    pool_dir = storage_get_pool_directory()
+
     if alias_mapping:
-        pool_dir = storage_get_pool_directory()
         missing_deps = []
         for dep_hash, alias in alias_mapping.items():
             dep_dir = pool_dir / dep_hash[:2] / dep_hash[2:]
@@ -2171,11 +2217,26 @@ def code_add(file_path_with_lang: str, comment: str = ""):
             print("\nPlease add these functions to the pool first, or pull them from a remote.", file=sys.stderr)
             sys.exit(1)
 
+    # Verify all @check target hashes exist in the local pool
+    if checks:
+        missing_checks = []
+        for check_hash in checks:
+            check_dir = pool_dir / check_hash[:2] / check_hash[2:]
+            if not (check_dir / 'object.json').exists():
+                missing_checks.append(check_hash)
+
+        if missing_checks:
+            print("Error: The following @check target functions do not exist in the local pool:", file=sys.stderr)
+            for check_hash in missing_checks:
+                print(f"  - {check_hash[:12]}...", file=sys.stderr)
+            print("\nPlease add these functions to the pool first, or pull them from a remote.", file=sys.stderr)
+            sys.exit(1)
+
     # Compute hash on code WITHOUT docstring (so same logic = same hash regardless of language)
     hash_value = hash_compute(normalized_code_without_docstring)
 
     # Save to v1 format (store the version WITH docstring for display purposes)
-    code_save(hash_value, lang, normalized_code_with_docstring, docstring, name_mapping, alias_mapping, comment)
+    code_save(hash_value, lang, normalized_code_with_docstring, docstring, name_mapping, alias_mapping, comment, checks=checks)
 
 
 def code_replace_docstring(code: str, new_docstring: str) -> str:
@@ -2761,6 +2822,72 @@ def command_caller(hash_value: str):
     # Print results
     for caller_hash in sorted(callers):
         print(f"mobius.py show {caller_hash}")
+
+
+def command_check(hash_value: str):
+    """
+    Find and run all tests for the given function.
+
+    Scans all functions in the pool looking for functions that have
+    the given hash in their metadata.checks list. Prints `mobius.py run TEST_HASH`
+    for each test function found, or runs them directly.
+
+    Args:
+        hash_value: Function hash (64-character hex) to find tests for
+    """
+    # Validate hash format
+    if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value.lower()):
+        print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Check if function exists
+    version = code_detect_schema(hash_value)
+    if version is None:
+        print(f"Error: Function not found: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    pool_dir = storage_get_pool_directory()
+
+    if not pool_dir.exists():
+        print("No tests found.")
+        return
+
+    tests = []
+
+    # Scan for v1 functions (pool/XX/YYY.../object.json)
+    for hash_prefix_dir in pool_dir.iterdir():
+        if not hash_prefix_dir.is_dir():
+            continue
+
+        for func_dir in hash_prefix_dir.iterdir():
+            if not func_dir.is_dir():
+                continue
+
+            object_json = func_dir / 'object.json'
+            if not object_json.exists():
+                continue
+
+            try:
+                with open(object_json, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                func_hash = data['hash']
+                metadata = data.get('metadata', {})
+                checks = metadata.get('checks', [])
+
+                # Check if this function tests the target hash
+                if hash_value in checks:
+                    tests.append(func_hash)
+            except (IOError, json.JSONDecodeError):
+                continue
+
+    if not tests:
+        print("No tests found.")
+        return
+
+    # Print results
+    for test_hash in sorted(tests):
+        print(f"mobius.py run {test_hash}")
 
 
 def command_refactor(what_hash: str, from_hash: str, to_hash: str):
@@ -3684,6 +3811,10 @@ def main():
     caller_parser = subparsers.add_parser('caller', help='Find functions that depend on a given function')
     caller_parser.add_argument('hash', help='Function hash to find callers of')
 
+    # Check command
+    check_parser = subparsers.add_parser('check', help='Find and run tests for a function')
+    check_parser.add_argument('hash', help='Function hash to find tests for')
+
     # Refactor command
     refactor_parser = subparsers.add_parser('refactor', help='Replace a dependency in a function')
     refactor_parser.add_argument('what', help='Function hash to modify')
@@ -3771,6 +3902,8 @@ def main():
                 sys.exit(1)
     elif args.command == 'caller':
         command_caller(args.hash)
+    elif args.command == 'check':
+        command_check(args.hash)
     elif args.command == 'refactor':
         command_refactor(args.what, args.from_hash, args.to_hash)
     elif args.command == 'compile':
