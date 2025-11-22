@@ -931,3 +931,52 @@ def test_metadata_create_timestamp_format():
     # Should be ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
     assert 'T' in created
     assert len(created) >= 19  # At minimum: 2025-01-01T00:00:00
+
+
+# ============================================================================
+# Tests for hash determinism across languages
+# ============================================================================
+
+def test_hash_determinism_multilingual_same_logic():
+    """Test that functions with identical logic but different names produce the same hash.
+
+    This verifies the core Mobius principle: same logic = same hash, regardless of
+    variable names or human language used. Uses the example files:
+    - examples/example_simple.py (English)
+    - examples/example_simple_french.py (French)
+    """
+    examples_dir = Path(__file__).parent.parent / 'examples'
+    english_file = examples_dir / 'example_simple.py'
+    french_file = examples_dir / 'example_simple_french.py'
+
+    # Read both files
+    english_code = english_file.read_text(encoding='utf-8')
+    french_code = french_file.read_text(encoding='utf-8')
+
+    # Parse to AST
+    english_tree = ast.parse(english_code)
+    french_tree = ast.parse(french_code)
+
+    # Normalize both
+    eng_with_doc, eng_without_doc, eng_docstring, eng_name_mapping, eng_alias_mapping = \
+        mobius.code_normalize(english_tree, "eng")
+    fra_with_doc, fra_without_doc, fra_docstring, fra_name_mapping, fra_alias_mapping = \
+        mobius.code_normalize(french_tree, "fra")
+
+    # Compute hashes on code WITHOUT docstring (this is critical for multilingual support)
+    english_hash = mobius.hash_compute(eng_without_doc)
+    french_hash = mobius.hash_compute(fra_without_doc)
+
+    # Core assertion: same logic = same hash
+    assert english_hash == french_hash, (
+        f"Hash mismatch! English and French versions should have identical hashes.\n"
+        f"English hash: {english_hash}\n"
+        f"French hash: {french_hash}\n"
+        f"English normalized (without doc):\n{eng_without_doc}\n"
+        f"French normalized (without doc):\n{fra_without_doc}"
+    )
+
+    # Additional sanity checks
+    assert len(english_hash) == 64, "Hash should be 64 hex characters (SHA256)"
+    assert eng_docstring != fra_docstring, "Docstrings should differ (different languages)"
+    assert eng_name_mapping != fra_name_mapping, "Name mappings should differ (different variable names)"

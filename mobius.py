@@ -189,9 +189,6 @@ def code_create_name_mapping(function_def: Union[ast.FunctionDef, ast.AsyncFunct
     # XXX: all_names: do not sort, keep the order ast traversal
     # discovery.
 
-    # TODO: add a test about hash determinism, use the following
-    # examples: examples/example_simple.py and
-    # examples/example_simple_french.py.
     for name in all_names:
         normalized = f'_mobius_v_{counter}'
         forward_mapping[name] = normalized
