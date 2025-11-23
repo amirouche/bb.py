@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mobius.py"
+name = "bb.py"
 version = "0.1.0"
 description = "A function pool manager for Python that enables multilingual function sharing through AST normalization"
 readme = "README.md"
@@ -27,12 +27,12 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/amirouche/mobius.py"
-Repository = "https://github.com/amirouche/mobius.py"
-Issues = "https://github.com/amirouche/mobius.py/issues"
+Homepage = "https://github.com/amirouche/bb.py"
+Repository = "https://github.com/amirouche/bb.py"
+Issues = "https://github.com/amirouche/bb.py/issues"
 
 [project.scripts]
-mobius = "mobius:main"
+bb = "bb:main"
 
 [project.optional-dependencies]
 dev = [
@@ -41,4 +41,4 @@ dev = [
 ]
 
 [tool.setuptools]
-py-modules = ["mobius"]
+py-modules = ["bb"]

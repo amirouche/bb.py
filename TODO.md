@@ -13,4 +13,4 @@
 - `translate`: add Spanish translation for add function (d6ecfc90...)
 - `translate`: add Spanish translation for twice function (28cdad41...)
 - `review`: make interactive, request explicit ack for security/correctness, one function at a time starting from lowest level, remember reviewed functions
-- `validate`: validate whole mobius directory including pool and config
+- `validate`: validate whole bb directory including pool and config

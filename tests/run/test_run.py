@@ -1,5 +1,5 @@
 """
-Tests for 'mobius.py run' command.
+Tests for 'bb.py run' command.
 
 Grey-box integration tests for function execution.
 """
@@ -13,8 +13,8 @@ import pytest
 
 
 def cli_run(args: list, env: dict = None) -> subprocess.CompletedProcess:
-    """Run mobius.py CLI command."""
-    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'mobius.py')] + args
+    """Run bb.py CLI command."""
+    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'bb.py')] + args
 
     run_env = os.environ.copy()
     if env:
@@ -30,8 +30,8 @@ def cli_run(args: list, env: dict = None) -> subprocess.CompletedProcess:
 
 def test_run_without_language_works(tmp_path):
     """Test that run works without language suffix when function exists"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Add a function first
     test_file = tmp_path / "func.py"
@@ -52,9 +52,9 @@ def test_run_without_language_works(tmp_path):
 
 def test_run_without_language_nonexistent_fails(tmp_path):
     """Test that run fails without language suffix when function doesn't exist"""
-    mobius_dir = tmp_path / '.mobius'
-    (mobius_dir / 'pool').mkdir(parents=True)
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    (bb_dir / 'pool').mkdir(parents=True)
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     fake_hash = '0' * 64
     result = cli_run(['run', fake_hash], env=env)
@@ -65,8 +65,8 @@ def test_run_without_language_nonexistent_fails(tmp_path):
 
 def test_run_debug_requires_language(tmp_path):
     """Test that run --debug requires language suffix"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Add a function first
     test_file = tmp_path / "func.py"
@@ -87,8 +87,8 @@ def test_run_debug_requires_language(tmp_path):
 
 def test_run_invalid_language_fails(tmp_path):
     """Test that run fails with too short language code"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     fake_hash = '0' * 64
     result = cli_run(['run', f'{fake_hash}@ab'], env=env)
@@ -99,8 +99,8 @@ def test_run_invalid_language_fails(tmp_path):
 
 def test_run_invalid_hash_fails(tmp_path):
     """Test that run fails with invalid hash format"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     result = cli_run(['run', 'not-valid-hash@eng'], env=env)
 
@@ -110,9 +110,9 @@ def test_run_invalid_hash_fails(tmp_path):
 
 def test_run_nonexistent_function_fails(tmp_path):
     """Test that run fails for nonexistent function"""
-    mobius_dir = tmp_path / '.mobius'
-    (mobius_dir / 'pool').mkdir(parents=True)
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    (bb_dir / 'pool').mkdir(parents=True)
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     fake_hash = 'f' * 64
     result = cli_run(['run', f'{fake_hash}@eng'], env=env)
@@ -123,8 +123,8 @@ def test_run_nonexistent_function_fails(tmp_path):
 
 def test_run_with_string_argument(tmp_path):
     """Test running function with string argument"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     test_file = tmp_path / "func.py"
@@ -145,8 +145,8 @@ def test_run_with_string_argument(tmp_path):
 
 def test_run_with_multiple_string_arguments(tmp_path):
     """Test running function with multiple string arguments (no implicit coercion)"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup - function concatenates strings
     test_file = tmp_path / "func.py"
@@ -167,8 +167,8 @@ def test_run_with_multiple_string_arguments(tmp_path):
 
 def test_run_displays_function_code(tmp_path):
     """Test that run displays the function code"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     test_file = tmp_path / "func.py"
@@ -190,8 +190,8 @@ def test_run_displays_function_code(tmp_path):
 
 def test_run_function_with_exception(tmp_path):
     """Test that run handles function exceptions gracefully"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Function that raises exception
     test_file = tmp_path / "func.py"

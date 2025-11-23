@@ -1,20 +1,20 @@
-# Mobius Usage
+# Beyond Babel Usage
 
 Multilingual function pool: same logic, different languages → same hash.
 
 ## Top-Level Usage
 
 ```
-usage: mobius.py [-h]
+usage: bb.py [-h]
                  {init,whoami,add,get,show,translate,run,review,log,search,remote,validate,caller,refactor,compile,fork}
                  ...
 
-mobius - Function pool manager
+bb - Function pool manager
 
 positional arguments:
   {init,whoami,add,get,show,translate,run,review,log,search,remote,validate,caller,refactor,compile,fork}
                         Commands
-    init                Initialize mobius directory and config
+    init                Initialize bb directory and config
     whoami              Get or set user configuration
     add                 Add a function to the pool
     get                 Get a function from the pool
@@ -39,7 +39,7 @@ options:
 
 | Command | Description |
 |---------|-------------|
-| `init` | Initialize mobius directory and config |
+| `init` | Initialize bb directory and config |
 | `whoami` | Get or set user configuration |
 | `add` | Add a function to the pool |
 | `get` | Get a function from the pool (deprecated, use `show`) |
@@ -63,20 +63,20 @@ options:
 ### `init` - Initialize configuration
 
 ```
-usage: mobius.py init [-h]
+usage: bb.py init [-h]
 
 options:
   -h, --help  show this help message and exit
 ```
 
-Creates the mobius directory and configuration file. Automatically run when needed, but can be called explicitly.
+Creates the bb directory and configuration file. Automatically run when needed, but can be called explicitly.
 
-- Creates: `$HOME/.local/mobius/` (or `$MOBIUS_DIRECTORY`)
-- Creates: `~/.config/mobius/config.json`
+- Creates: `$HOME/.local/bb/` (or `$BB_DIRECTORY`)
+- Creates: `~/.config.bb/config.json`
 
 **Example:**
 ```bash
-python3 mobius.py init
+python3 bb.py init
 ```
 
 ---
@@ -84,7 +84,7 @@ python3 mobius.py init
 ### `whoami` - User configuration
 
 ```
-usage: mobius.py whoami [-h] {username,email,public-key,language} [value ...]
+usage: bb.py whoami [-h] {username,email,public-key,language} [value ...]
 
 positional arguments:
   {username,email,public-key,language}
@@ -100,22 +100,22 @@ Get or set user configuration. Without VALUE, displays current setting. With VAL
 **Examples:**
 ```bash
 # Get username
-python3 mobius.py whoami username
+python3 bb.py whoami username
 
 # Set username
-python3 mobius.py whoami username johndoe
+python3 bb.py whoami username johndoe
 
 # Set email
-python3 mobius.py whoami email john@example.com
+python3 bb.py whoami email john@example.com
 
 # Set public key URL
-python3 mobius.py whoami public-key https://example.com/keys/johndoe.pub
+python3 bb.py whoami public-key https://example.com/keys/johndoe.pub
 
 # Set preferred languages (space-separated)
-python3 mobius.py whoami language eng fra spa
+python3 bb.py whoami language eng fra spa
 
 # Get preferred languages
-python3 mobius.py whoami language
+python3 bb.py whoami language
 ```
 
 ---
@@ -125,7 +125,7 @@ python3 mobius.py whoami language
 ### `add` - Store a function
 
 ```
-usage: mobius.py add [-h] [--comment COMMENT] file
+usage: bb.py add [-h] [--comment COMMENT] file
 
 positional arguments:
   file               Path to Python file with @lang suffix (e.g., file.py@eng)
@@ -139,8 +139,8 @@ Normalizes and stores a Python function. Variable names and docstrings are langu
 
 **Examples:**
 ```bash
-python3 mobius.py add calculate_average.py@eng
-python3 mobius.py add calculer_moyenne.py@fra --comment "version formelle"
+python3 bb.py add calculate_average.py@eng
+python3 bb.py add calculer_moyenne.py@fra --comment "version formelle"
 ```
 
 Both produce the same hash if logic is identical.
@@ -150,7 +150,7 @@ Both produce the same hash if logic is identical.
 ### `show` - Display a function
 
 ```
-usage: mobius.py show [-h] hash
+usage: bb.py show [-h] hash
 
 positional arguments:
   hash        Function hash with @lang[@mapping_hash] (e.g., abc123...@eng or
@@ -165,17 +165,17 @@ Display function with language-specific names. If multiple mappings exist for a 
 **Examples:**
 ```bash
 # Single mapping: displays function directly
-python3 mobius.py show abc123...@eng
+python3 bb.py show abc123...@eng
 
 # Multiple mappings: shows menu with commands
-python3 mobius.py show abc123...@eng
+python3 bb.py show abc123...@eng
 # Output:
 # Multiple mappings found for 'eng'. Please choose one:
-# mobius.py show abc123...@eng@xyz789...  # Formal terminology
-# mobius.py show abc123...@eng@def456...  # Casual style
+# bb.py show abc123...@eng@xyz789...  # Formal terminology
+# bb.py show abc123...@eng@def456...  # Casual style
 
 # Explicit mapping selection
-python3 mobius.py show abc123...@eng@xyz789...
+python3 bb.py show abc123...@eng@xyz789...
 ```
 
 ---
@@ -183,7 +183,7 @@ python3 mobius.py show abc123...@eng@xyz789...
 ### `get` - Retrieve a function (deprecated)
 
 ```
-usage: mobius.py get [-h] hash
+usage: bb.py get [-h] hash
 
 positional arguments:
   hash        Function hash with @lang suffix (e.g., abc123...@eng)
@@ -201,7 +201,7 @@ Reconstructs function with language-specific names.
 ### `translate` - Add translation
 
 ```
-usage: mobius.py translate [-h] hash target_lang
+usage: bb.py translate [-h] hash target_lang
 
 positional arguments:
   hash         Function hash with source language (e.g., abc123...@eng)
@@ -216,7 +216,7 @@ Add a translation for an existing function. Prompts for translated variable name
 **Examples:**
 ```bash
 # Translate English function to French
-python3 mobius.py translate abc123...@eng fra
+python3 bb.py translate abc123...@eng fra
 
 # The command will:
 # 1. Show the source function (English)
@@ -231,7 +231,7 @@ python3 mobius.py translate abc123...@eng fra
 ### `validate` - Validate function structure
 
 ```
-usage: mobius.py validate [-h] hash
+usage: bb.py validate [-h] hash
 
 positional arguments:
   hash        Function hash to validate
@@ -244,7 +244,7 @@ Verify v1 function structure and hash integrity.
 
 **Example:**
 ```bash
-python3 mobius.py validate abc123...
+python3 bb.py validate abc123...
 ```
 
 ---
@@ -254,7 +254,7 @@ python3 mobius.py validate abc123...
 ### `run` - Execute function interactively
 
 ```
-usage: mobius.py run [-h] [--debug] hash [func_args ...]
+usage: bb.py run [-h] [--debug] hash [func_args ...]
 
 positional arguments:
   hash        Function hash with language (e.g., abc123...@eng)
@@ -270,13 +270,13 @@ Load and execute a function from the pool interactively. With `--debug`, runs wi
 **Examples:**
 ```bash
 # Run function interactively
-python3 mobius.py run abc123...@eng
+python3 bb.py run abc123...@eng
 
 # Run with debugger
-python3 mobius.py run abc123...@fra --debug
+python3 bb.py run abc123...@fra --debug
 
 # Run with arguments
-python3 mobius.py run abc123...@eng -- arg1 arg2
+python3 bb.py run abc123...@eng -- arg1 arg2
 ```
 
 ---
@@ -284,7 +284,7 @@ python3 mobius.py run abc123...@eng -- arg1 arg2
 ### `compile` - Compile function to executable
 
 ```
-usage: mobius.py compile [-h] [--output OUTPUT] hash
+usage: bb.py compile [-h] [--output OUTPUT] hash
 
 positional arguments:
   hash                  Function hash with language (e.g., abc123...@eng)
@@ -300,11 +300,11 @@ Compile function to standalone executable.
 **Examples:**
 ```bash
 # Compile with default output name
-python3 mobius.py compile abc123...@eng
+python3 bb.py compile abc123...@eng
 
 # Compile with custom output path
-python3 mobius.py compile abc123...@eng --output my_function
-python3 mobius.py compile abc123...@fra -o ./bin/ma_fonction
+python3 bb.py compile abc123...@eng --output my_function
+python3 bb.py compile abc123...@fra -o ./bin/ma_fonction
 ```
 
 ---
@@ -314,7 +314,7 @@ python3 mobius.py compile abc123...@fra -o ./bin/ma_fonction
 ### `review` - Review function and dependencies
 
 ```
-usage: mobius.py review [-h] hash
+usage: bb.py review [-h] hash
 
 positional arguments:
   hash        Function hash to review
@@ -328,7 +328,7 @@ Recursively review a function and all its dependencies. Displays functions in us
 **Example:**
 ```bash
 # Review function and dependencies
-python3 mobius.py review abc123...
+python3 bb.py review abc123...
 ```
 
 ---
@@ -336,7 +336,7 @@ python3 mobius.py review abc123...
 ### `log` - Show pool history
 
 ```
-usage: mobius.py log [-h]
+usage: bb.py log [-h]
 
 options:
   -h, --help  show this help message and exit
@@ -346,7 +346,7 @@ Display a git-like commit log of all functions in the pool with metadata.
 
 **Example:**
 ```bash
-python3 mobius.py log
+python3 bb.py log
 # Output:
 # Function Pool Log (3 functions)
 # Hash: abc123...
@@ -361,7 +361,7 @@ python3 mobius.py log
 ### `search` - Search functions
 
 ```
-usage: mobius.py search [-h] query [query ...]
+usage: bb.py search [-h] query [query ...]
 
 positional arguments:
   query       Search terms
@@ -375,10 +375,10 @@ Search for functions by name, docstring, or code content.
 **Examples:**
 ```bash
 # Search for "average"
-python3 mobius.py search average
+python3 bb.py search average
 
 # Search for multiple terms
-python3 mobius.py search calculate mean
+python3 bb.py search calculate mean
 
 # Results show:
 # - Function name
@@ -393,7 +393,7 @@ python3 mobius.py search calculate mean
 ### `caller` - Find function callers
 
 ```
-usage: mobius.py caller [-h] hash
+usage: bb.py caller [-h] hash
 
 positional arguments:
   hash        Function hash to find callers of
@@ -406,7 +406,7 @@ Find functions that depend on a given function.
 
 **Example:**
 ```bash
-python3 mobius.py caller abc123...
+python3 bb.py caller abc123...
 ```
 
 ---
@@ -416,7 +416,7 @@ python3 mobius.py caller abc123...
 ### `refactor` - Replace a dependency
 
 ```
-usage: mobius.py refactor [-h] what from to
+usage: bb.py refactor [-h] what from to
 
 positional arguments:
   what        Function hash to modify
@@ -432,7 +432,7 @@ Replace a dependency in a function with a different function.
 **Example:**
 ```bash
 # Replace dependency 'old_hash' with 'new_hash' in function 'func_hash'
-python3 mobius.py refactor func_hash old_hash new_hash
+python3 bb.py refactor func_hash old_hash new_hash
 ```
 
 ---
@@ -440,7 +440,7 @@ python3 mobius.py refactor func_hash old_hash new_hash
 ### `fork` - Create a modified version with lineage
 
 ```
-usage: mobius.py fork [-h] hash
+usage: bb.py fork [-h] hash
 
 positional arguments:
   hash        Function hash with language (e.g., abc123...@eng)
@@ -460,11 +460,11 @@ Fork a function to create a modified version with parent lineage tracking. Opens
 **Examples:**
 ```bash
 # Fork a function for modification
-python3 mobius.py fork abc123...@eng
+python3 bb.py fork abc123...@eng
 
 # Set preferred editor
 export EDITOR=vim
-python3 mobius.py fork abc123...@fra
+python3 bb.py fork abc123...@fra
 ```
 
 **Lineage tracking:**
@@ -480,7 +480,7 @@ The forked function's metadata includes a `parent` field pointing to the origina
 ### `remote` - Manage remotes
 
 ```
-usage: mobius.py remote [-h] {add,remove,list,pull,push} ...
+usage: bb.py remote [-h] {add,remove,list,pull,push} ...
 
 positional arguments:
   {add,remove,list,pull,push}
@@ -500,7 +500,7 @@ options:
 ### `remote add` - Add remote
 
 ```
-usage: mobius.py remote add [-h] name url
+usage: bb.py remote add [-h] name url
 
 positional arguments:
   name        Remote name
@@ -515,10 +515,10 @@ Add a remote repository. Supports `file://`, `http://`, and `https://` URLs.
 **Examples:**
 ```bash
 # Add local file remote
-python3 mobius.py remote add shared file:///shared/pool
+python3 bb.py remote add shared file:///shared/pool
 
 # Add HTTP remote (not yet fully implemented)
-python3 mobius.py remote add origin https://mobius.example.com/pool
+python3 bb.py remote add origin https://bb.example.com/pool
 ```
 
 ---
@@ -526,7 +526,7 @@ python3 mobius.py remote add origin https://mobius.example.com/pool
 ### `remote remove` - Remove remote
 
 ```
-usage: mobius.py remote remove [-h] name
+usage: bb.py remote remove [-h] name
 
 positional arguments:
   name        Remote name to remove
@@ -539,7 +539,7 @@ Remove a configured remote.
 
 **Example:**
 ```bash
-python3 mobius.py remote remove shared
+python3 bb.py remote remove shared
 ```
 
 ---
@@ -547,7 +547,7 @@ python3 mobius.py remote remove shared
 ### `remote list` - List remotes
 
 ```
-usage: mobius.py remote list [-h]
+usage: bb.py remote list [-h]
 
 options:
   -h, --help  show this help message and exit
@@ -557,11 +557,11 @@ List all configured remotes.
 
 **Example:**
 ```bash
-python3 mobius.py remote list
+python3 bb.py remote list
 # Output:
 # Configured remotes:
 #   shared: file:///shared/pool
-#   origin: https://mobius.example.com/pool
+#   origin: https://bb.example.com/pool
 ```
 
 ---
@@ -569,7 +569,7 @@ python3 mobius.py remote list
 ### `remote pull` - Fetch from remote
 
 ```
-usage: mobius.py remote pull [-h] name
+usage: bb.py remote pull [-h] name
 
 positional arguments:
   name        Remote name to pull from
@@ -582,7 +582,7 @@ Fetch functions from a remote repository. Currently supports `file://` URLs. HTT
 
 **Example:**
 ```bash
-python3 mobius.py remote pull shared
+python3 bb.py remote pull shared
 ```
 
 ---
@@ -590,7 +590,7 @@ python3 mobius.py remote pull shared
 ### `remote push` - Publish to remote
 
 ```
-usage: mobius.py remote push [-h] name
+usage: bb.py remote push [-h] name
 
 positional arguments:
   name        Remote name to push to
@@ -603,27 +603,27 @@ Publish functions to a remote repository. Currently supports `file://` URLs. HTT
 
 **Example:**
 ```bash
-python3 mobius.py remote push shared
+python3 bb.py remote push shared
 ```
 
 ---
 
 ## Environment Variables
 
-### `MOBIUS_DIRECTORY`
+### `BB_DIRECTORY`
 
 Storage location for function pool.
 
-- Default: `$HOME/.local/mobius/`
-- Custom: `export MOBIUS_DIRECTORY=/path/to/pool`
+- Default: `$HOME/.local/bb/`
+- Custom: `export BB_DIRECTORY=/path/to/pool`
 
 **Example:**
 ```bash
-export MOBIUS_DIRECTORY=/shared/pool
-python3 mobius.py add function.py@eng
+export BB_DIRECTORY=/shared/pool
+python3 bb.py add function.py@eng
 ```
 
-### `MOBIUS_USER`
+### `BB_USER`
 
 Not used. Author identity is automatically taken from `$USER` or `$USERNAME` environment variables.
 

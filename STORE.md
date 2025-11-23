@@ -1,10 +1,10 @@
-# Mobius Storage Specification (v1)
+# Beyond Babel Storage Specification (v1)
 
-This document describes the storage format for Mobius function pools.
+This document describes the storage format for Beyond Babel function pools.
 
 ## Overview
 
-Mobius uses a content-addressed filesystem storage where:
+Beyond Babel uses a content-addressed filesystem storage where:
 - **Functions** are stored by their SHA256 hash
 - **Mappings** (language-specific names/docstrings) are stored separately, also content-addressed
 - **Deduplication** happens automatically - identical content shares storage
@@ -12,7 +12,7 @@ Mobius uses a content-addressed filesystem storage where:
 ## Directory Structure
 
 ```
-$MOBIUS_DIRECTORY/pool/
+$BB_DIRECTORY/pool/
   ab/                              # First 2 chars of function hash
     c123def456.../                 # Function directory (remaining hash chars)
       object.json                  # Core function data
@@ -30,7 +30,7 @@ $MOBIUS_DIRECTORY/pool/
 
 | Component | Description | Example |
 |-----------|-------------|---------|
-| `pool/` | Root pool directory | `~/.local/mobius/pool/` |
+| `pool/` | Root pool directory | `~/.local/bb/pool/` |
 | `ab/` | First 2 chars of function hash | `ab/` for hash `abc123...` |
 | `c123.../` | Remaining 62 chars of function hash | Directory name |
 | `object.json` | Function data file | Always this name |
@@ -49,7 +49,7 @@ Core function data, language-independent.
 {
   "schema_version": 1,
   "hash": "abc123def456...",
-  "normalized_code": "def _mobius_v_0(_mobius_v_1):\n    \"\"\"Docstring\"\"\"\n    return _mobius_v_1 * 2",
+  "normalized_code": "def _bb_v_0(_bb_v_1):\n    \"\"\"Docstring\"\"\"\n    return _bb_v_1 * 2",
   "metadata": {
     "created": "2025-11-21T10:00:00Z",
     "author": "username"
@@ -75,9 +75,9 @@ Language-specific naming and documentation.
 {
   "docstring": "Calculate the average of a list of numbers",
   "name_mapping": {
-    "_mobius_v_0": "calculate_average",
-    "_mobius_v_1": "numbers",
-    "_mobius_v_2": "total"
+    "_bb_v_0": "calculate_average",
+    "_bb_v_1": "numbers",
+    "_bb_v_2": "total"
   },
   "alias_mapping": {
     "abc123def456...": "helper_function"
@@ -92,7 +92,7 @@ Language-specific naming and documentation.
 |-------|------|----------|-------------|
 | `docstring` | string | Yes | Language-specific docstring |
 | `name_mapping` | object | Yes | Normalized name → original name |
-| `alias_mapping` | object | Yes | Hash → import alias (for mobius imports) |
+| `alias_mapping` | object | Yes | Hash → import alias (for bb imports) |
 | `comment` | string | Yes | Variant description (can be empty) |
 
 ## Hash Computation
@@ -135,21 +135,21 @@ mapping_hash = hashlib.sha256(json_str.encode('utf-8')).hexdigest()
 
 ### Variable Naming
 
-All user-defined names are renamed to `_mobius_v_N`:
+All user-defined names are renamed to `_bb_v_N`:
 
 | Original | Normalized |
 |----------|------------|
-| Function name | `_mobius_v_0` |
-| First parameter | `_mobius_v_1` |
-| Second parameter | `_mobius_v_2` |
-| Local variables | `_mobius_v_3`, `_mobius_v_4`, ... |
+| Function name | `_bb_v_0` |
+| First parameter | `_bb_v_1` |
+| Second parameter | `_bb_v_2` |
+| Local variables | `_bb_v_3`, `_bb_v_4`, ... |
 
 ### Excluded from Renaming
 
 These names are **never** renamed:
 - Python builtins (`len`, `sum`, `print`, `range`, etc.)
 - Imported names (`math`, `Counter`, `np`, etc.)
-- Mobius import aliases (tracked separately in `alias_mapping`)
+- BB import aliases (tracked separately in `alias_mapping`)
 
 ### Import Handling
 
@@ -159,13 +159,13 @@ import math
 from collections import Counter
 ```
 
-**Mobius imports** have aliases removed during normalization:
+**BB imports** have aliases removed during normalization:
 ```python
 # Original
-from mobius.pool import object_abc123 as helper
+from bb.pool import object_abc123 as helper
 
 # Normalized (alias tracked in alias_mapping)
-from mobius.pool import object_abc123
+from bb.pool import object_abc123
 ```
 
 ## Multiple Mappings
@@ -198,14 +198,14 @@ Language codes can be:
 
 ## Storage Location
 
-Default: `$HOME/.local/mobius/`
+Default: `$HOME/.local/bb/`
 
 Override with environment variable:
 ```bash
-export MOBIUS_DIRECTORY=/custom/path
+export BB_DIRECTORY=/custom/path
 ```
 
-Pool directory: `$MOBIUS_DIRECTORY/pool/`
+Pool directory: `$BB_DIRECTORY/pool/`
 
 ## Validation
 
@@ -240,7 +240,7 @@ pool/ab/cdef.../
 {
   "schema_version": 1,
   "hash": "abcdef...",
-  "normalized_code": "def _mobius_v_0(_mobius_v_1):\n    \"\"\"Calculate the average of a list of numbers\"\"\"\n    _mobius_v_2 = sum(_mobius_v_1)\n    return _mobius_v_2 / len(_mobius_v_1)",
+  "normalized_code": "def _bb_v_0(_bb_v_1):\n    \"\"\"Calculate the average of a list of numbers\"\"\"\n    _bb_v_2 = sum(_bb_v_1)\n    return _bb_v_2 / len(_bb_v_1)",
   "metadata": {
     "created": "2025-11-21T10:00:00Z",
     "author": "johndoe"
@@ -253,9 +253,9 @@ pool/ab/cdef.../
 {
   "docstring": "Calculate the average of a list of numbers",
   "name_mapping": {
-    "_mobius_v_0": "calculate_average",
-    "_mobius_v_1": "numbers",
-    "_mobius_v_2": "total"
+    "_bb_v_0": "calculate_average",
+    "_bb_v_1": "numbers",
+    "_bb_v_2": "total"
   },
   "alias_mapping": {},
   "comment": ""
@@ -280,7 +280,7 @@ Each mapping.json contains language-specific names:
 ```json
 {
   "docstring": "Calculate the average",
-  "name_mapping": {"_mobius_v_0": "calculate_average", "_mobius_v_1": "numbers"},
+  "name_mapping": {"_bb_v_0": "calculate_average", "_bb_v_1": "numbers"},
   "alias_mapping": {},
   "comment": ""
 }
@@ -290,17 +290,17 @@ Each mapping.json contains language-specific names:
 ```json
 {
   "docstring": "Calculer la moyenne",
-  "name_mapping": {"_mobius_v_0": "calculer_moyenne", "_mobius_v_1": "nombres"},
+  "name_mapping": {"_bb_v_0": "calculer_moyenne", "_bb_v_1": "nombres"},
   "alias_mapping": {},
   "comment": ""
 }
 ```
 
-### Function with Mobius Import
+### Function with BB Import
 
 **Source:**
 ```python
-from mobius.pool import object_abc123 as helper
+from bb.pool import object_abc123 as helper
 
 def process(data):
     """Process data using helper"""
@@ -309,18 +309,18 @@ def process(data):
 
 **Normalized code:**
 ```python
-from mobius.pool import object_abc123
+from bb.pool import object_abc123
 
-def _mobius_v_0(_mobius_v_1):
+def _bb_v_0(_bb_v_1):
     """Process data using helper"""
-    return object_abc123._mobius_v_0(_mobius_v_1) * 2
+    return object_abc123._bb_v_0(_bb_v_1) * 2
 ```
 
 **mapping.json:**
 ```json
 {
   "docstring": "Process data using helper",
-  "name_mapping": {"_mobius_v_0": "process", "_mobius_v_1": "data"},
+  "name_mapping": {"_bb_v_0": "process", "_bb_v_1": "data"},
   "alias_mapping": {"abc123...": "helper"},
   "comment": ""
 }

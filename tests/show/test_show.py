@@ -1,5 +1,5 @@
 """
-Integration tests for 'mobius.py show' command.
+Integration tests for 'bb.py show' command.
 
 Grey-box style:
 - Setup: Use 'add' command to create functions
@@ -26,7 +26,7 @@ def test_show_displays_denormalized_code(cli_runner, tmp_path):
     assert 'def greet(name):' in result.stdout
     assert 'Hello' in result.stdout
     # Should NOT show normalized names
-    assert '_mobius_v_0' not in result.stdout
+    assert '_bb_v_0' not in result.stdout
 
 
 def test_show_displays_docstring(cli_runner, tmp_path):

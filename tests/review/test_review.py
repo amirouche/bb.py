@@ -1,5 +1,5 @@
 """
-Tests for 'mobius.py review' command.
+Tests for 'bb.py review' command.
 
 Grey-box integration tests for function review with dependency resolution.
 Note: review is now interactive, so some tests use stdin injection.
@@ -14,8 +14,8 @@ import pytest
 
 
 def cli_run(args: list, env: dict = None, input_text: str = None) -> subprocess.CompletedProcess:
-    """Run mobius.py CLI command with optional stdin input."""
-    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'mobius.py')] + args
+    """Run bb.py CLI command with optional stdin input."""
+    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'bb.py')] + args
 
     run_env = os.environ.copy()
     if env:
@@ -32,8 +32,8 @@ def cli_run(args: list, env: dict = None, input_text: str = None) -> subprocess.
 
 def test_review_invalid_hash_fails(tmp_path):
     """Test that review fails with invalid hash format"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     result = cli_run(['review', 'not-a-valid-hash'], env=env)
 
@@ -43,9 +43,9 @@ def test_review_invalid_hash_fails(tmp_path):
 
 def test_review_nonexistent_function_warns(tmp_path):
     """Test that review warns for nonexistent function"""
-    mobius_dir = tmp_path / '.mobius'
-    (mobius_dir / 'pool').mkdir(parents=True)
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    (bb_dir / 'pool').mkdir(parents=True)
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     fake_hash = 'f' * 64
     result = cli_run(['review', fake_hash], env=env)
@@ -56,8 +56,8 @@ def test_review_nonexistent_function_warns(tmp_path):
 
 def test_review_displays_function_code(tmp_path):
     """Test that review displays function code"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     cli_run(['init'], env=env)
@@ -82,8 +82,8 @@ def test_review_displays_function_code(tmp_path):
 
 def test_review_shows_function_review_header(tmp_path):
     """Test that review shows proper header"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     cli_run(['init'], env=env)
@@ -102,8 +102,8 @@ def test_review_shows_function_review_header(tmp_path):
 
 def test_review_uses_preferred_language(tmp_path):
     """Test that review uses user's preferred languages"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Initialize and set French as preferred language
     cli_run(['init'], env=env)
@@ -129,8 +129,8 @@ def test_review_uses_preferred_language(tmp_path):
 
 def test_review_fallback_when_language_unavailable(tmp_path):
     """Test that review warns when function not in preferred language"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Initialize with Spanish as preferred language
     cli_run(['init'], env=env)
@@ -151,8 +151,8 @@ def test_review_fallback_when_language_unavailable(tmp_path):
 
 def test_review_default_language_fallback(tmp_path):
     """Test that review falls back to 'eng' when no preferred languages set"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Add function without init (no preferred languages)
     test_file = tmp_path / "func.py"
@@ -170,8 +170,8 @@ def test_review_default_language_fallback(tmp_path):
 
 def test_review_saves_state(tmp_path):
     """Test that review saves reviewed functions to state file"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     cli_run(['init'], env=env)
@@ -187,7 +187,7 @@ def test_review_saves_state(tmp_path):
     assert result.returncode == 0
     assert 'approved' in result.stdout.lower()
 
-    state_file = mobius_dir / 'review_state.json'
+    state_file = bb_dir / 'review_state.json'
     assert state_file.exists()
 
     with open(state_file, 'r') as f:
@@ -197,8 +197,8 @@ def test_review_saves_state(tmp_path):
 
 def test_review_skips_already_reviewed(tmp_path):
     """Test that review skips already reviewed functions"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     cli_run(['init'], env=env)
@@ -220,8 +220,8 @@ def test_review_skips_already_reviewed(tmp_path):
 
 def test_review_quit_saves_progress(tmp_path):
     """Test that 'q' quits review and saves progress"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     cli_run(['init'], env=env)

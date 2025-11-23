@@ -1,6 +1,6 @@
 # ROADMAP
 
-This document tracks the development roadmap for Mobius.
+This document tracks the development roadmap for Beyond Babel.
 
 Context sources:
 - `LIMITS.md` - Current capabilities and known limitations
@@ -10,19 +10,19 @@ Context sources:
 ## Priority 0: Applications
 
 - **ffff**: CLI zettelkasten for linked ideas with a Forth-like interpreter
-- **mobius**: Rewrite of mobius in mobius (self-hosting)
-- **p5py**: Port p5.js creative coding library to Python using mobius for function sharing
+- **bb**: Rewrite of bb in bb (self-hosting)
+- **p5py**: Port p5.js creative coding library to Python using bb for function sharing
 - **asyncify**: Tool for on-the-fly rewriting of synchronous Python code to async/await style
-- **todo-flask**: Reference todo application built with Flask demonstrating mobius integration
-- **ing0**: Bubblewrap wrapper to run mobius.py across Linux distributions and assist with cross-compiling
-- **chez-scheme-port**: Port Mobius to Chez Scheme
-- **beyond-babel**: Rename mobius.py to beyond-babel with CLI and module called bb.py across Linux
+- **todo-flask**: Reference todo application built with Flask demonstrating bb integration
+- **ing0**: Bubblewrap wrapper to run bb.py across Linux distributions and assist with cross-compiling
+- **chez-scheme-port**: Port Beyond Babel to Chez Scheme
+- **beyond-babel**: Rename bb.py to beyond-babel with CLI and module called bb.py across Linux
 
 ## Priority 1: Remote HTTP/HTTPS Support
 
 ### HTTP/HTTPS Remotes
 - Implement HTTP API client for HTTP/HTTPS remotes
-- Add `mobius.py remote add NAME URL` support for HTTP/HTTPS URLs
+- Add `bb.py remote add NAME URL` support for HTTP/HTTPS URLs
 - Add authentication/authorization for push operations
 - Implement conflict resolution for remote operations
 - Add caching layer for remote fetches
@@ -36,15 +36,15 @@ Context sources:
 ### Search Filtering
 - Add filtering by language, author, date to `search` command
 - Display function statistics (downloads, ratings if available)
-- Implement `mobius.py log [NAME | URL]` to show log of specific remote
+- Implement `bb.py log [NAME | URL]` to show log of specific remote
 
 ### Search Indexing (Performance Enhancement)
 - Implement local index for faster search operations
 - Index structure: metadata cache (function hashes, docstrings, tags, dependencies)
-- Index file: `$MOBIUS_DIRECTORY/index.db` (SQLite or JSON-based)
+- Index file: `$BB_DIRECTORY/index.db` (SQLite or JSON-based)
 - Automatically update index on `add`, `translate`, and `get` operations
-- Implement `mobius.py index rebuild` command to rebuild index from objects directory
-- Implement `mobius.py index verify` command to check index consistency
+- Implement `bb.py index rebuild` command to rebuild index from objects directory
+- Implement `bb.py index verify` command to check index consistency
 - Support incremental indexing (only reindex changed functions)
 - Search query optimization:
   - Full-text search on docstrings across all languages
@@ -68,7 +68,7 @@ Context sources:
 
 ### Packaging
 - Create `pyproject.toml` for modern Python packaging
-- Add entry point: `mobius` command
+- Add entry point: `bb` command
 - Test `pip install -e .` works correctly
 - Publish to pypi.org
 - Add mypy type checking configuration
@@ -90,7 +90,7 @@ Context sources:
 ### Multilingual Test Corpus
 - Create `tests/corpus/simple_functions/` with parallel implementations
 - Create `tests/corpus/with_imports/` with import examples
-- Create `tests/corpus/compositional/` with mobius imports
+- Create `tests/corpus/compositional/` with bb imports
 - Implement corpus discovery and equivalence testing
 - Add test cases in 5+ languages (eng, fra, spa, ara, zho)
 
@@ -111,7 +111,7 @@ Context sources:
 
 Transcript testing uses markdown files to define CLI test scenarios declaratively.
 
-**Why it works for Mobius**:
+**Why it works for Beyond Babel**:
 - CLI commands produce deterministic, predictable output
 - Tests follow a consistent setup → command → assert pattern
 - Non-programmers can contribute test cases
@@ -135,10 +135,10 @@ def greet(name):
 ## Transcript
 
 ```console
-$ mobius.py add greet.py@eng
+$ bb.py add greet.py@eng
 Hash: {HASH}
 
-$ mobius.py show {HASH}@eng
+$ bb.py show {HASH}@eng
 def greet(name):
     """Greet someone by name"""
     return f'Hello, {name}!'
@@ -177,7 +177,7 @@ def greet(name):
 - Expand pattern library to top 100 equivalent patterns
 - Implement user feedback system for marking functions as equivalent
 - Store equivalence relationships in pool metadata
-- Add `mobius search --similar <hash>` command
+- Add `bb search --similar <hash>` command
 
 ### Long Term (2+ years)
 - Experiment with ML-based code embeddings (CodeBERT)
@@ -200,14 +200,14 @@ def greet(name):
 - Document impact on multilingual equivalence
 
 ### Import Validation
-- Implement validation that mobius imports exist in pool
+- Implement validation that bb imports exist in pool
 - Add `--validate-imports` flag to `add` command
 - Warn (don't error) when imports are missing
 
 ### CLI Improvements
-- Add `mobius list` command to show pool contents
-- Add `mobius list --hash <HASH>` to show languages for hash
-- Add `mobius stats <HASH>` to show function statistics
+- Add `bb list` command to show pool contents
+- Add `bb list --hash <HASH>` to show languages for hash
+- Add `bb stats <HASH>` to show function statistics
 - Add `--verbose` flag for detailed output
 - Add `--version` flag
 - Improve error messages with suggestions
@@ -216,7 +216,7 @@ def greet(name):
 
 ### Traceback Localization
 - Implement traceback rewriting to show native language variable names
-- When exception occurs, map `_mobius_v_X` back to original names
+- When exception occurs, map `_bb_v_X` back to original names
 - Show both normalized and native language versions of traceback
 - Preserve line numbers from original source
 
@@ -224,7 +224,7 @@ def greet(name):
 - Integrate with Python debugger (pdb)
 - Show variables in native language during debugging
 - Allow setting breakpoints using native language names
-- Implement `mobius.py run HASH@lang --debug` for interactive debugging
+- Implement `bb.py run HASH@lang --debug` for interactive debugging
 - Support stepping through code with native language context
 
 ## Priority 8: Infrastructure (Microlibrary Vision)
@@ -235,8 +235,8 @@ def greet(name):
 - Implement S3/blob storage for function JSON
 - Implement Redis caching layer
 - Implement search by hash, signature, description
-- Add `mobius publish` command
-- Add `mobius pull` command from registry
+- Add `bb publish` command
+- Add `bb pull` command from registry
 - Create basic web UI for browsing
 
 ### Phase 2: Community Features (Months 7-9)
@@ -248,7 +248,7 @@ def greet(name):
 - Add reputation system for contributors
 
 ### Phase 3: Developer Tools (Months 10-12)
-- Create VS Code extension for mobius
+- Create VS Code extension for bb
 - Implement GitHub Actions integration
 - Create pre-commit hooks template
 - Build documentation website
@@ -257,7 +257,7 @@ def greet(name):
 ### Phase 4: Federation (Year 2)
 - Design federated registry protocol
 - Implement private registry support
-- Add registry configuration in `~/.config/mobius/config.yaml`
+- Add registry configuration in `~/.config.bb/config.yaml`
 - Implement registry priority and fallback
 - Add semantic search with ML embeddings
 
@@ -285,7 +285,7 @@ def greet(name):
 ### User Documentation
 - Document workarounds for unsupported features (classes, globals, etc.)
 - Create migration guide for future schema version changes
-- Add more examples of compositional functions with mobius imports
+- Add more examples of compositional functions with bb imports
 - Create quickstart tutorial
 - Create video walkthrough
 

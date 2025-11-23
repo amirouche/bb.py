@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mobius - A function pool manager for Python code
+bb - A function pool manager for Python code
 """
 import ast
 import argparse
@@ -17,10 +17,10 @@ from typing import Dict, Set, Tuple, List, Union
 # Get all Python built-in names
 PYTHON_BUILTINS = set(dir(builtins))
 
-# Prefix for mobius.pool imports to ensure valid Python identifiers
+# Prefix for bb.pool imports to ensure valid Python identifiers
 # SHA256 hashes can start with digits (0-9), which are invalid as Python identifiers
 # By prefixing with "object_", we ensure all import names are valid
-MOBIUS_IMPORT_PREFIX = "object_"
+BB_IMPORT_PREFIX = "object_"
 
 
 def check(target):
@@ -28,9 +28,9 @@ def check(target):
     Decorator to mark a function as a test for another pool function.
 
     This decorator is used to indicate that a function tests another function
-    in the mobius pool. The decorator itself is a no-op at runtime - it simply
+    in the bb pool. The decorator itself is a no-op at runtime - it simply
     returns the decorated function unchanged. Its purpose is to be parsed by
-    the AST during `mobius.py add` to extract test relationships.
+    the AST during `bb.py add` to extract test relationships.
 
     Args:
         target: The pool function being tested (e.g., object_abc123...)
@@ -39,8 +39,8 @@ def check(target):
         A decorator that returns the function unchanged
 
     Usage:
-        from mobius import check
-        from mobius.pool import object_abc123 as my_func
+        from bb import check
+        from bb.pool import object_abc123 as my_func
 
         @check(object_abc123)
         def test_my_func():
@@ -176,7 +176,7 @@ def code_extract_check_decorators(function_def: Union[ast.FunctionDef, ast.Async
     Extract target function hashes from @check decorators.
 
     The @check decorator marks a function as a test for another function in the pool.
-    Syntax: @check(object_HASH) where object_HASH is a mobius pool import.
+    Syntax: @check(object_HASH) where object_HASH is a bb pool import.
 
     Args:
         function_def: The function definition AST node
@@ -195,23 +195,23 @@ def code_extract_check_decorators(function_def: Union[ast.FunctionDef, ast.Async
                 if len(decorator.args) == 1 and isinstance(decorator.args[0], ast.Name):
                     arg_name = decorator.args[0].id
                     # Extract hash from object_HASH format
-                    if arg_name.startswith(MOBIUS_IMPORT_PREFIX):
-                        func_hash = arg_name[len(MOBIUS_IMPORT_PREFIX):]
+                    if arg_name.startswith(BB_IMPORT_PREFIX):
+                        func_hash = arg_name[len(BB_IMPORT_PREFIX):]
                         checks.append(func_hash)
 
     return checks
 
 
 def code_create_name_mapping(function_def: Union[ast.FunctionDef, ast.AsyncFunctionDef], imports: List[ast.stmt],
-                        mobius_aliases: Set[str] = None) -> Tuple[Dict[str, str], Dict[str, str]]:
+                        bb_aliases: Set[str] = None) -> Tuple[Dict[str, str], Dict[str, str]]:
     """
     Create mapping from original names to normalized names.
     Returns (forward_mapping, reverse_mapping)
-    Forward: original -> _mobius_v_X
-    Reverse: _mobius_v_X -> original
+    Forward: original -> _bb_v_X
+    Reverse: _bb_v_X -> original
     """
-    if mobius_aliases is None:
-        mobius_aliases = set()
+    if bb_aliases is None:
+        bb_aliases = set()
 
     imported_names = set()
     for imp in imports:
@@ -226,21 +226,21 @@ def code_create_name_mapping(function_def: Union[ast.FunctionDef, ast.AsyncFunct
     reverse_mapping = {}
     counter = 0
 
-    # Function name is always _mobius_v_0
-    forward_mapping[function_def.name] = '_mobius_v_0'
-    reverse_mapping['_mobius_v_0'] = function_def.name
+    # Function name is always _bb_v_0
+    forward_mapping[function_def.name] = '_bb_v_0'
+    reverse_mapping['_bb_v_0'] = function_def.name
     counter += 1
 
-    # Collect all names in the function (excluding imported names, built-ins, and mobius aliases)
+    # Collect all names in the function (excluding imported names, built-ins, and bb aliases)
     # Use a set to track seen names and avoid duplicates
     seen_names = set()
     all_names = list()
     for node in ast.walk(function_def):
-        if isinstance(node, ast.Name) and node.id not in imported_names and node.id not in PYTHON_BUILTINS and node.id not in mobius_aliases:
+        if isinstance(node, ast.Name) and node.id not in imported_names and node.id not in PYTHON_BUILTINS and node.id not in bb_aliases:
             if node.id not in seen_names:
                 seen_names.add(node.id)
                 all_names.append(node.id)
-        elif isinstance(node, ast.arg) and node.arg not in imported_names and node.arg not in PYTHON_BUILTINS and node.arg not in mobius_aliases:
+        elif isinstance(node, ast.arg) and node.arg not in imported_names and node.arg not in PYTHON_BUILTINS and node.arg not in bb_aliases:
             if node.arg not in seen_names:
                 seen_names.add(node.arg)
                 all_names.append(node.arg)
@@ -249,7 +249,7 @@ def code_create_name_mapping(function_def: Union[ast.FunctionDef, ast.AsyncFunct
     # discovery.
 
     for name in all_names:
-        normalized = f'_mobius_v_{counter}'
+        normalized = f'_bb_v_{counter}'
         forward_mapping[name] = normalized
         reverse_mapping[normalized] = name
         counter += 1
@@ -257,33 +257,33 @@ def code_create_name_mapping(function_def: Union[ast.FunctionDef, ast.AsyncFunct
     return forward_mapping, reverse_mapping
 
 
-def code_rewrite_mobius_imports(imports: List[ast.stmt]) -> Tuple[List[ast.stmt], Dict[str, str]]:
+def code_rewrite_bb_imports(imports: List[ast.stmt]) -> Tuple[List[ast.stmt], Dict[str, str]]:
     """
-    Remove aliases from 'mobius' imports and track them for later restoration.
+    Remove aliases from 'bb' imports and track them for later restoration.
     Returns (new_imports, alias_mapping)
     alias_mapping maps: actual_function_hash (without prefix) -> alias_in_lang
 
     Input format expected:
-        from mobius.pool import object_c0ff33 as kawa
+        from bb.pool import object_c0ff33 as kawa
 
     Output:
-        - import becomes: from mobius.pool import object_c0ff33
+        - import becomes: from bb.pool import object_c0ff33
         - alias_mapping stores: {"c0ff33...": "kawa"} (actual hash without object_ prefix)
     """
     new_imports = []
     alias_mapping = {}
 
     for imp in imports:
-        if isinstance(imp, ast.ImportFrom) and imp.module == 'mobius.pool':
-            # Rewrite: from mobius.pool import object_c0ffeebad as kawa
-            # To: from mobius.pool import object_c0ffeebad
+        if isinstance(imp, ast.ImportFrom) and imp.module == 'bb.pool':
+            # Rewrite: from bb.pool import object_c0ffeebad as kawa
+            # To: from bb.pool import object_c0ffeebad
             new_names = []
             for alias in imp.names:
                 import_name = alias.name  # e.g., "object_c0ff33..."
 
                 # Extract actual hash by stripping the prefix
-                if import_name.startswith(MOBIUS_IMPORT_PREFIX):
-                    actual_hash = import_name[len(MOBIUS_IMPORT_PREFIX):]
+                if import_name.startswith(BB_IMPORT_PREFIX):
+                    actual_hash = import_name[len(BB_IMPORT_PREFIX):]
                 else:
                     # Backward compatibility: no prefix (shouldn't happen in new code)
                     actual_hash = import_name
@@ -296,7 +296,7 @@ def code_rewrite_mobius_imports(imports: List[ast.stmt]) -> Tuple[List[ast.stmt]
                 new_names.append(ast.alias(name=import_name, asname=None))
 
             new_imp = ast.ImportFrom(
-                module='mobius.pool',
+                module='bb.pool',
                 names=new_names,
                 level=0
             )
@@ -307,30 +307,30 @@ def code_rewrite_mobius_imports(imports: List[ast.stmt]) -> Tuple[List[ast.stmt]
     return new_imports, alias_mapping
 
 
-def code_replace_mobius_calls(tree: ast.AST, alias_mapping: Dict[str, str], name_mapping: Dict[str, str]):
+def code_replace_bb_calls(tree: ast.AST, alias_mapping: Dict[str, str], name_mapping: Dict[str, str]):
     """
-    Replace calls to aliased mobius functions.
-    E.g., kawa(...) becomes object_c0ffeebad._mobius_v_0(...)
+    Replace calls to aliased bb functions.
+    E.g., kawa(...) becomes object_c0ffeebad._bb_v_0(...)
 
     alias_mapping maps actual hash (without prefix) -> alias name
     The replacement uses object_<hash> to match the import name.
     """
-    class MobiusCallReplacer(ast.NodeTransformer):
+    class BBCallReplacer(ast.NodeTransformer):
         def visit_Name(self, node):
-            # If this name is an alias for an mobius function
+            # If this name is an alias for a bb function
             for func_hash, alias in alias_mapping.items():
                 if node.id == alias:
-                    # Replace with object_c0ffeebad._mobius_v_0
+                    # Replace with object_c0ffeebad._bb_v_0
                     # Use prefixed name to match the import statement
-                    prefixed_name = MOBIUS_IMPORT_PREFIX + func_hash
+                    prefixed_name = BB_IMPORT_PREFIX + func_hash
                     return ast.Attribute(
                         value=ast.Name(id=prefixed_name, ctx=ast.Load()),
-                        attr='_mobius_v_0',
+                        attr='_bb_v_0',
                         ctx=node.ctx
                     )
             return node
 
-    replacer = MobiusCallReplacer()
+    replacer = BBCallReplacer()
     return replacer.visit(tree)
 
 
@@ -370,7 +370,7 @@ def code_extract_docstring(function_def: Union[ast.FunctionDef, ast.AsyncFunctio
 
 def code_normalize(tree: ast.Module, lang: str) -> Tuple[str, str, str, Dict[str, str], Dict[str, str]]:
     """
-    Normalize the AST according to mobius rules.
+    Normalize the AST according to bb rules.
     Returns (normalized_code_with_docstring, normalized_code_without_docstring, docstring, name_mapping, alias_mapping)
     """
     # Sort imports
@@ -382,14 +382,14 @@ def code_normalize(tree: ast.Module, lang: str) -> Tuple[str, str, str, Dict[str
     # Extract docstring from function
     docstring, function_without_docstring = code_extract_docstring(function_def)
 
-    # Rewrite mobius imports
-    imports, alias_mapping = code_rewrite_mobius_imports(imports)
+    # Rewrite bb imports
+    imports, alias_mapping = code_rewrite_bb_imports(imports)
 
-    # Get the set of mobius aliases (values in alias_mapping)
-    mobius_aliases = set(alias_mapping.values())
+    # Get the set of bb aliases (values in alias_mapping)
+    bb_aliases = set(alias_mapping.values())
 
     # Create name mapping
-    forward_mapping, reverse_mapping = code_create_name_mapping(function_def, imports, mobius_aliases)
+    forward_mapping, reverse_mapping = code_create_name_mapping(function_def, imports, bb_aliases)
 
     # Create two modules: one with docstring (for display) and one without (for hashing)
     module_with_docstring = ast.Module(body=imports + [function_def], type_ignores=[])
@@ -397,8 +397,8 @@ def code_normalize(tree: ast.Module, lang: str) -> Tuple[str, str, str, Dict[str
 
     # Process both modules identically
     for module in [module_with_docstring, module_without_docstring]:
-        # Replace mobius calls with their normalized form
-        module = code_replace_mobius_calls(module, alias_mapping, forward_mapping)
+        # Replace bb calls with their normalized form
+        module = code_replace_bb_calls(module, alias_mapping, forward_mapping)
 
         # Normalize names
         normalizer = ASTNormalizer(forward_mapping)
@@ -450,7 +450,7 @@ def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
     Args:
         docstring: The function docstring for this mapping
         name_mapping: Normalized name -> original name mapping
-        alias_mapping: Mobius function hash -> alias mapping
+        alias_mapping: BB function hash -> alias mapping
         comment: Optional comment explaining this mapping variant
 
     Returns:
@@ -475,7 +475,7 @@ def code_detect_schema(func_hash: str) -> int:
     Detect the schema version of a stored function.
 
     Checks the filesystem to determine if a function is stored in v1 format:
-    - v1: $MOBIUS_DIRECTORY/objects/sha256/XX/YYYYYY.../object.json
+    - v1: $BB_DIRECTORY/objects/sha256/XX/YYYYYY.../object.json
 
     Args:
         func_hash: The function hash to check
@@ -539,44 +539,44 @@ def code_create_metadata(parent: str = None, checks: List[str] = None) -> Dict[s
     return metadata
 
 
-def storage_get_mobius_directory() -> Path:
+def storage_get_bb_directory() -> Path:
     """
-    Get the mobius base directory from environment variable or default to '$HOME/.local/mobius/'.
-    Environment variable: MOBIUS_DIRECTORY
+    Get the bb base directory from environment variable or default to '$HOME/.local/bb/'.
+    Environment variable: BB_DIRECTORY
 
     Directory structure:
-        $MOBIUS_DIRECTORY/
+        $BB_DIRECTORY/
         ├── pool/          # Pool directory (git repository for objects)
         │   └── sha256/    # Hash algorithm prefix
         │       └── XX/    # First 2 chars of hash
         └── config.json    # Configuration file
     """
-    env_dir = os.environ.get('MOBIUS_DIRECTORY')
+    env_dir = os.environ.get('BB_DIRECTORY')
     if env_dir:
         return Path(env_dir)
-    # Default to $HOME/.local/mobius/
+    # Default to $HOME/.local/bb/
     home = os.environ.get('HOME', os.path.expanduser('~'))
-    return Path(home) / '.local' / 'mobius'
+    return Path(home) / '.local' / 'bb'
 
 
 def storage_get_pool_directory() -> Path:
     """
     Get the pool directory (git repository) where objects are stored.
-    Returns: $MOBIUS_DIRECTORY/pool/
+    Returns: $BB_DIRECTORY/pool/
     """
-    return storage_get_mobius_directory() / 'pool'
+    return storage_get_bb_directory() / 'pool'
 
 
 def storage_get_config_path() -> Path:
     """
     Get the path to the config file.
-    Config is stored in $MOBIUS_DIRECTORY/config.json
-    Can be overridden with MOBIUS_CONFIG_PATH environment variable for testing.
+    Config is stored in $BB_DIRECTORY/config.json
+    Can be overridden with BB_CONFIG_PATH environment variable for testing.
     """
-    config_override = os.environ.get('MOBIUS_CONFIG_PATH')
+    config_override = os.environ.get('BB_CONFIG_PATH')
     if config_override:
         return Path(config_override)
-    return storage_get_mobius_directory() / 'config.json'
+    return storage_get_bb_directory() / 'config.json'
 
 
 def storage_read_config() -> Dict[str, any]:
@@ -622,9 +622,9 @@ def storage_write_config(config: Dict[str, any]):
 
 def command_init():
     """
-    Initialize mobius directory and config file.
+    Initialize bb directory and config file.
     """
-    mobius_dir = storage_get_mobius_directory()
+    bb_dir = storage_get_bb_directory()
 
     # Create pool directory (git repository for objects)
     pool_dir = storage_get_pool_directory()
@@ -651,7 +651,7 @@ def command_init():
         storage_write_config(config)
         print(f"Created config file: {config_path}")
 
-    print(f"Initialized mobius directory: {mobius_dir}")
+    print(f"Initialized bb directory: {bb_dir}")
 
 
 def command_whoami(subcommand: str, value: list = None):
@@ -705,11 +705,11 @@ def command_whoami(subcommand: str, value: list = None):
 
 def code_save_v1(hash_value: str, normalized_code: str, metadata: Dict[str, any]):
     """
-    Save function to mobius directory using schema v1.
+    Save function to bb directory using schema v1.
 
     Creates the function directory and object.json file:
-    - Directory: $MOBIUS_DIRECTORY/pool/sha256/XX/YYYYYY.../
-    - File: $MOBIUS_DIRECTORY/pool/sha256/XX/YYYYYY.../object.json
+    - Directory: $BB_DIRECTORY/pool/sha256/XX/YYYYYY.../
+    - File: $BB_DIRECTORY/pool/sha256/XX/YYYYYY.../object.json
 
     Args:
         hash_value: Function hash (64-character hex)
@@ -742,11 +742,11 @@ def mapping_save_v1(func_hash: str, lang: str, docstring: str,
                    name_mapping: Dict[str, str], alias_mapping: Dict[str, str],
                    comment: str = "") -> str:
     """
-    Save language mapping to mobius directory using schema v1.
+    Save language mapping to bb directory using schema v1.
 
     Creates the mapping directory and mapping.json file:
-    - Directory: $MOBIUS_DIRECTORY/objects/sha256/XX/Y.../lang/sha256/ZZ/W.../
-    - File: $MOBIUS_DIRECTORY/objects/sha256/XX/Y.../lang/sha256/ZZ/W.../mapping.json
+    - Directory: $BB_DIRECTORY/objects/sha256/XX/Y.../lang/sha256/ZZ/W.../
+    - File: $BB_DIRECTORY/objects/sha256/XX/Y.../lang/sha256/ZZ/W.../mapping.json
 
     The mapping is content-addressed, enabling deduplication.
 
@@ -755,7 +755,7 @@ def mapping_save_v1(func_hash: str, lang: str, docstring: str,
         lang: Language code (e.g., "eng", "fra")
         docstring: Function docstring for this language
         name_mapping: Normalized name -> original name mapping
-        alias_mapping: Mobius function hash -> alias mapping
+        alias_mapping: BB function hash -> alias mapping
         comment: Optional comment explaining this mapping variant
 
     Returns:
@@ -793,7 +793,7 @@ def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
                   name_mapping: Dict[str, str], alias_mapping: Dict[str, str], comment: str = "",
                   parent: str = None, checks: List[str] = None):
     """
-    Save function to mobius directory using schema v1 (current default).
+    Save function to bb directory using schema v1 (current default).
 
     This is the main entry point for saving functions. It uses schema v1 format.
 
@@ -803,7 +803,7 @@ def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
         normalized_code: Normalized code with docstring
         docstring: Function docstring for this language
         name_mapping: Normalized name -> original name mapping
-        alias_mapping: Mobius function hash -> alias mapping
+        alias_mapping: BB function hash -> alias mapping
         comment: Optional comment explaining this mapping variant
         parent: Optional parent function hash (for fork lineage tracking)
         checks: Optional list of function hashes this function tests (from @check decorators)
@@ -821,7 +821,7 @@ def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
 def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_mapping: Dict[str, str]) -> str:
     """
     Denormalize code by applying reverse name mappings.
-    name_mapping: maps normalized names (_mobius_v_X) to original names
+    name_mapping: maps normalized names (_bb_v_X) to original names
     alias_mapping: maps actual hash IDs (without object_ prefix) to alias names
 
     Normalized code uses object_<hash> in imports and attributes.
@@ -863,13 +863,13 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
             return node
 
         def visit_Attribute(self, node):
-            # Replace object_c0ffeebad._mobius_v_0(...) with alias(...)
+            # Replace object_c0ffeebad._bb_v_0(...) with alias(...)
             if (isinstance(node.value, ast.Name) and
-                node.attr == '_mobius_v_0'):
+                node.attr == '_bb_v_0'):
                 prefixed_name = node.value.id
                 # Strip object_ prefix to get actual hash
-                if prefixed_name.startswith(MOBIUS_IMPORT_PREFIX):
-                    actual_hash = prefixed_name[len(MOBIUS_IMPORT_PREFIX):]
+                if prefixed_name.startswith(BB_IMPORT_PREFIX):
+                    actual_hash = prefixed_name[len(BB_IMPORT_PREFIX):]
                 else:
                     actual_hash = prefixed_name  # Backward compatibility
 
@@ -880,17 +880,17 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
             return node
 
         def visit_ImportFrom(self, node):
-            # Add aliases back to 'from mobius.pool import object_X'
-            if node.module == 'mobius.pool':
-                node.module = 'mobius.pool'
+            # Add aliases back to 'from bb.pool import object_X'
+            if node.module == 'bb.pool':
+                node.module = 'bb.pool'
                 # Add aliases back
                 new_names = []
                 for alias_node in node.names:
                     import_name = alias_node.name  # e.g., "object_c0ff33..."
 
                     # Strip object_ prefix to get actual hash
-                    if import_name.startswith(MOBIUS_IMPORT_PREFIX):
-                        actual_hash = import_name[len(MOBIUS_IMPORT_PREFIX):]
+                    if import_name.startswith(BB_IMPORT_PREFIX):
+                        actual_hash = import_name[len(BB_IMPORT_PREFIX):]
                     else:
                         actual_hash = import_name  # Backward compatibility
 
@@ -1030,8 +1030,8 @@ def git_cache_path(remote_name: str) -> Path:
     Returns:
         Path to the cached repository directory
     """
-    mobius_dir = storage_get_mobius_directory()
-    return mobius_dir / 'cache' / 'git' / remote_name
+    bb_dir = storage_get_bb_directory()
+    return bb_dir / 'cache' / 'git' / remote_name
 
 
 def git_clone_or_fetch(git_url: str, local_path: Path) -> bool:
@@ -1363,7 +1363,7 @@ def command_remote_push(name: str):
 
         # Commit and push changes
         print(f"Committing {pushed_count} new functions...")
-        commit_msg = f"Add {pushed_count} function(s) from mobius push"
+        commit_msg = f"Add {pushed_count} function(s) from bb push"
         if not git_commit_and_push(cache_path, commit_msg):
             print("Error: Failed to commit and push changes", file=sys.stderr)
             sys.exit(1)
@@ -1378,7 +1378,7 @@ def command_remote_push(name: str):
 
 def code_extract_dependencies(normalized_code: str) -> List[str]:
     """
-    Extract mobius dependencies from normalized code.
+    Extract bb dependencies from normalized code.
 
     Returns:
         List of actual function hashes (without object_ prefix) that this function depends on
@@ -1387,12 +1387,12 @@ def code_extract_dependencies(normalized_code: str) -> List[str]:
     tree = ast.parse(normalized_code)
 
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == 'mobius.pool':
+        if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
             for alias in node.names:
                 import_name = alias.name  # e.g., "object_c0ff33..."
                 # Strip object_ prefix to get actual hash
-                if import_name.startswith(MOBIUS_IMPORT_PREFIX):
-                    actual_hash = import_name[len(MOBIUS_IMPORT_PREFIX):]
+                if import_name.startswith(BB_IMPORT_PREFIX):
+                    actual_hash = import_name[len(BB_IMPORT_PREFIX):]
                 else:
                     actual_hash = import_name  # Backward compatibility
                 dependencies.append(actual_hash)
@@ -1483,8 +1483,8 @@ def review_load_state() -> set:
     Returns:
         Set of reviewed function hashes
     """
-    mobius_dir = storage_get_mobius_directory()
-    state_file = mobius_dir / 'review_state.json'
+    bb_dir = storage_get_bb_directory()
+    state_file = bb_dir / 'review_state.json'
 
     if not state_file.exists():
         return set()
@@ -1504,10 +1504,10 @@ def review_save_state(reviewed: set):
     Args:
         reviewed: Set of reviewed function hashes
     """
-    mobius_dir = storage_get_mobius_directory()
-    mobius_dir.mkdir(parents=True, exist_ok=True)
+    bb_dir = storage_get_bb_directory()
+    bb_dir.mkdir(parents=True, exist_ok=True)
 
-    state_file = mobius_dir / 'review_state.json'
+    state_file = bb_dir / 'review_state.json'
     data = {'reviewed': list(reviewed)}
 
     with open(state_file, 'w', encoding='utf-8') as f:
@@ -1553,7 +1553,7 @@ def command_review(hash_value: str):
     if not to_review:
         print("All functions in this dependency tree have already been reviewed.")
         print(f"Total reviewed: {len(reviewed)} function(s)")
-        print("\nTo reset review state, delete: ~/.local/mobius/review_state.json")
+        print("\nTo reset review state, delete: ~/.local/bb/review_state.json")
         return
 
     print("Interactive Function Review")
@@ -1578,7 +1578,7 @@ def command_review(hash_value: str):
         for lang in preferred_langs:
             try:
                 normalized_code, name_mapping, alias_mapping, docstring = code_load(current_hash, lang)
-                func_name = name_mapping.get('_mobius_v_0', 'unknown')
+                func_name = name_mapping.get('_bb_v_0', 'unknown')
 
                 # Show function header
                 print(f"[{i+1}/{len(to_review)}] Function: {func_name} ({lang})")
@@ -1765,7 +1765,7 @@ def command_search(query: List[str]):
                             lang = lang_dir.name
                             try:
                                 _, name_mapping, _, docstring = code_load(func_hash, lang)
-                                func_name = name_mapping.get('_mobius_v_0', 'unknown')
+                                func_name = name_mapping.get('_bb_v_0', 'unknown')
 
                                 # Search in function name, docstring, and original variable names
                                 all_original_names = ' '.join(name_mapping.values()).lower()
@@ -1811,28 +1811,28 @@ def command_search(query: List[str]):
         print(f"Match: {match_str}")
         if result['docstring']:
             print(f"Description: {result['docstring']}...")
-        print(f"View: mobius.py show {result['hash']}@{result['lang']}")
+        print(f"View: bb.py show {result['hash']}@{result['lang']}")
         print()
 
 
-def code_strip_mobius_imports(code: str) -> str:
+def code_strip_bb_imports(code: str) -> str:
     """
-    Strip mobius.pool import statements from code.
+    Strip bb.pool import statements from code.
 
     These imports are handled separately by loading dependencies into the namespace.
 
     Args:
-        code: Source code with possible mobius.pool imports
+        code: Source code with possible bb.pool imports
 
     Returns:
-        Code with mobius.pool imports removed
+        Code with bb.pool imports removed
     """
     tree = ast.parse(code)
 
-    # Filter out mobius.pool imports
+    # Filter out bb.pool imports
     new_body = []
     for node in tree.body:
-        if isinstance(node, ast.ImportFrom) and node.module == 'mobius.pool':
+        if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
             continue
         new_body.append(node)
 
@@ -1845,7 +1845,7 @@ def code_load_dependencies_recursive(func_hash: str, lang: str, namespace: dict,
     Recursively load a function and all its dependencies into a namespace.
 
     Creates a module-like object for each dependency that can be accessed as:
-    object_HASH._mobius_v_0(args) -> alias(args)
+    object_HASH._bb_v_0(args) -> alias(args)
 
     Args:
         func_hash: Actual function hash (without object_ prefix) to load
@@ -1861,7 +1861,7 @@ def code_load_dependencies_recursive(func_hash: str, lang: str, namespace: dict,
 
     if func_hash in loaded:
         # Already loaded, return the existing module (stored with prefix)
-        prefixed_name = MOBIUS_IMPORT_PREFIX + func_hash
+        prefixed_name = BB_IMPORT_PREFIX + func_hash
         return namespace.get(prefixed_name)
 
     loaded.add(func_hash)
@@ -1882,18 +1882,18 @@ def code_load_dependencies_recursive(func_hash: str, lang: str, namespace: dict,
     normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
     original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
 
-    # Strip mobius imports (dependencies are already in namespace)
-    executable_code = code_strip_mobius_imports(original_code)
+    # Strip bb imports (dependencies are already in namespace)
+    executable_code = code_strip_bb_imports(original_code)
 
     # For each alias in alias_mapping, add the dependency function to namespace with that name
     # alias_mapping maps actual_hash -> alias
     for dep_hash, alias in alias_mapping.items():
-        prefixed_dep_name = MOBIUS_IMPORT_PREFIX + dep_hash
+        prefixed_dep_name = BB_IMPORT_PREFIX + dep_hash
         if prefixed_dep_name in namespace:
             # The dependency's function is already loaded, make alias point to it
             dep_module = namespace[prefixed_dep_name]
-            if hasattr(dep_module, '_mobius_v_0'):
-                namespace[alias] = dep_module._mobius_v_0
+            if hasattr(dep_module, '_bb_v_0'):
+                namespace[alias] = dep_module._bb_v_0
 
     # Execute the code in the namespace (dependencies are already loaded)
     try:
@@ -1905,17 +1905,17 @@ def code_load_dependencies_recursive(func_hash: str, lang: str, namespace: dict,
         sys.exit(1)
 
     # Get function name and create a module-like object for this hash
-    func_name = name_mapping.get('_mobius_v_0', 'unknown')
+    func_name = name_mapping.get('_bb_v_0', 'unknown')
 
     if func_name in namespace:
-        # Create a simple namespace object that has _mobius_v_0 attribute
+        # Create a simple namespace object that has _bb_v_0 attribute
         # Store it under the prefixed name (object_<hash>) for lookup
-        class MobiusModule:
+        class BBModule:
             pass
 
-        module = MobiusModule()
-        module._mobius_v_0 = namespace[func_name]
-        prefixed_name = MOBIUS_IMPORT_PREFIX + func_hash
+        module = BBModule()
+        module._bb_v_0 = namespace[func_name]
+        prefixed_name = BB_IMPORT_PREFIX + func_hash
         namespace[prefixed_name] = module
 
     return namespace.get(func_name)
@@ -1994,7 +1994,7 @@ def command_run(hash_with_lang: str, debug: bool = False, func_args: list = None
         sys.exit(1)
 
     # Get function name from mapping
-    func_name = name_mapping.get('_mobius_v_0', 'unknown_function')
+    func_name = name_mapping.get('_bb_v_0', 'unknown_function')
 
     # Create execution namespace
     namespace = {}
@@ -2017,18 +2017,18 @@ def command_run(hash_with_lang: str, debug: bool = False, func_args: list = None
     print("=" * 60)
     print()
 
-    # Strip mobius imports (dependencies are already in namespace)
-    executable_code = code_strip_mobius_imports(original_code)
+    # Strip bb imports (dependencies are already in namespace)
+    executable_code = code_strip_bb_imports(original_code)
 
     # For each alias in alias_mapping, add the dependency function to namespace with that name
     # alias_mapping maps actual_hash (without prefix) -> alias
     for dep_hash, alias in alias_mapping.items():
-        prefixed_dep_name = MOBIUS_IMPORT_PREFIX + dep_hash
+        prefixed_dep_name = BB_IMPORT_PREFIX + dep_hash
         if prefixed_dep_name in namespace:
             # The dependency's function is already loaded, make alias point to it
             dep_module = namespace[prefixed_dep_name]
-            if hasattr(dep_module, '_mobius_v_0'):
-                namespace[alias] = dep_module._mobius_v_0
+            if hasattr(dep_module, '_bb_v_0'):
+                namespace[alias] = dep_module._bb_v_0
 
     # Execute the code
     try:
@@ -2177,12 +2177,12 @@ def command_translate(hash_with_lang: str, target_lang: str):
     print(f"Mapping hash: {mapping_hash}")
     print()
     print(f"Translation saved successfully!")
-    print(f"View with: mobius.py show {hash_value}@{target_lang}")
+    print(f"View with: bb.py show {hash_value}@{target_lang}")
 
 
 def code_add(file_path_with_lang: str, comment: str = ""):
     """
-    Add a function to the mobius pool using schema v1.
+    Add a function to the bb pool using schema v1.
 
     Args:
         file_path_with_lang: File path with language suffix (e.g., "file.py@eng")
@@ -2230,7 +2230,7 @@ def code_add(file_path_with_lang: str, comment: str = ""):
         print(f"Error: Failed to normalize AST: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Verify all mobius imports resolve to objects in the local pool
+    # Verify all bb imports resolve to objects in the local pool
     pool_dir = storage_get_pool_directory()
 
     if alias_mapping:
@@ -2241,7 +2241,7 @@ def code_add(file_path_with_lang: str, comment: str = ""):
                 missing_deps.append((dep_hash, alias))
 
         if missing_deps:
-            print("Error: The following mobius imports do not exist in the local pool:", file=sys.stderr)
+            print("Error: The following bb imports do not exist in the local pool:", file=sys.stderr)
             for dep_hash, alias in missing_deps:
                 print(f"  - {alias} (hash: {dep_hash[:12]}...)", file=sys.stderr)
             print("\nPlease add these functions to the pool first, or pull them from a remote.", file=sys.stderr)
@@ -2312,7 +2312,7 @@ def code_replace_docstring(code: str, new_docstring: str) -> str:
 
 def code_load_v1(hash_value: str) -> Dict[str, any]:
     """
-    Load function from mobius directory using schema v1.
+    Load function from bb directory using schema v1.
 
     Loads only the object.json file (no language-specific data).
 
@@ -2443,7 +2443,7 @@ def mapping_load_v1(func_hash: str, lang: str, mapping_hash: str) -> Tuple[str, 
 
 def code_load(hash_value: str, lang: str, mapping_hash: str = None) -> Tuple[str, Dict[str, str], Dict[str, str], str]:
     """
-    Load a function from the mobius pool (v1 format only).
+    Load a function from the bb pool (v1 format only).
 
     Args:
         hash_value: Function hash (64-character hex)
@@ -2493,7 +2493,7 @@ def code_load(hash_value: str, lang: str, mapping_hash: str = None) -> Tuple[str
 
 def code_show(hash_with_lang_and_mapping: str):
     """
-    Show a function from the mobius pool with mapping selection support.
+    Show a function from the bb pool with mapping selection support.
 
     Supports three formats:
     - HASH@LANG: Show single mapping, or menu if multiple exist
@@ -2551,7 +2551,7 @@ def code_show(hash_with_lang_and_mapping: str):
         print(f"Multiple mappings found for '{lang}'. Please choose one:\n")
         for m_hash, comment in sorted(mappings):
             comment_suffix = f"  # {comment}" if comment else ""
-            print(f"mobius.py show {hash_value}@{lang}@{m_hash}{comment_suffix}")
+            print(f"bb.py show {hash_value}@{lang}@{m_hash}{comment_suffix}")
         return
 
     # Load the selected mapping
@@ -2570,7 +2570,7 @@ def code_show(hash_with_lang_and_mapping: str):
 
 
 def code_get(hash_with_lang: str):
-    """Get a function from the mobius pool (backward compatible with show command)"""
+    """Get a function from the bb pool (backward compatible with show command)"""
     # Deprecation warning
     print("Warning: 'get' is deprecated. Use 'show' instead for better mapping support.", file=sys.stderr)
 
@@ -2680,7 +2680,7 @@ def schema_validate_v1(func_hash: str) -> tuple:
 
 def schema_validate_directory() -> tuple:
     """
-    Validate the entire mobius directory structure.
+    Validate the entire bb directory structure.
 
     Checks:
     - Config file exists and is valid JSON
@@ -2703,15 +2703,15 @@ def schema_validate_directory() -> tuple:
         'dependencies_missing': []
     }
 
-    mobius_dir = storage_get_mobius_directory()
+    bb_dir = storage_get_bb_directory()
 
-    # Check if mobius directory exists
-    if not mobius_dir.exists():
-        errors.append(f"Mobius directory does not exist: {mobius_dir}")
+    # Check if bb directory exists
+    if not bb_dir.exists():
+        errors.append(f"BB directory does not exist: {bb_dir}")
         return False, errors, stats
 
     # Validate config file
-    config_path = mobius_dir / 'config.json'
+    config_path = bb_dir / 'config.json'
     if config_path.exists():
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
@@ -2797,7 +2797,7 @@ def command_caller(hash_value: str):
     """
     Find all functions that depend on the given function.
 
-    Scans all functions in the pool and prints `mobius.py show CALLER_HASH`
+    Scans all functions in the pool and prints `bb.py show CALLER_HASH`
     for each function that imports the given hash.
 
     Args:
@@ -2851,7 +2851,7 @@ def command_caller(hash_value: str):
 
     # Print results
     for caller_hash in sorted(callers):
-        print(f"mobius.py show {caller_hash}")
+        print(f"bb.py show {caller_hash}")
 
 
 def command_check(hash_value: str):
@@ -2859,7 +2859,7 @@ def command_check(hash_value: str):
     Find and run all tests for the given function.
 
     Scans all functions in the pool looking for functions that have
-    the given hash in their metadata.checks list. Prints `mobius.py run TEST_HASH`
+    the given hash in their metadata.checks list. Prints `bb.py run TEST_HASH`
     for each test function found, or runs them directly.
 
     Args:
@@ -2917,7 +2917,7 @@ def command_check(hash_value: str):
 
     # Print results
     for test_hash in sorted(tests):
-        print(f"mobius.py run {test_hash}")
+        print(f"bb.py run {test_hash}")
 
 
 def command_refactor(what_hash: str, from_hash: str, to_hash: str):
@@ -2973,19 +2973,19 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str):
 
     class DependencyReplacer(ast.NodeTransformer):
         def visit_ImportFrom(self, node):
-            if node.module == 'mobius.pool':
+            if node.module == 'bb.pool':
                 new_names = []
                 for alias in node.names:
                     import_name = alias.name
                     # Check if this is the from_hash import
-                    if import_name.startswith(MOBIUS_IMPORT_PREFIX):
-                        actual_hash = import_name[len(MOBIUS_IMPORT_PREFIX):]
+                    if import_name.startswith(BB_IMPORT_PREFIX):
+                        actual_hash = import_name[len(BB_IMPORT_PREFIX):]
                     else:
                         actual_hash = import_name
 
                     if actual_hash == from_hash:
                         # Replace with to_hash
-                        new_name = MOBIUS_IMPORT_PREFIX + to_hash
+                        new_name = BB_IMPORT_PREFIX + to_hash
                         new_names.append(ast.alias(name=new_name, asname=alias.asname))
                     else:
                         new_names.append(alias)
@@ -2993,17 +2993,17 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str):
             return node
 
         def visit_Attribute(self, node):
-            # Transform object_from_hash._mobius_v_0 -> object_to_hash._mobius_v_0
+            # Transform object_from_hash._bb_v_0 -> object_to_hash._bb_v_0
             if (isinstance(node.value, ast.Name) and
-                node.attr == '_mobius_v_0'):
+                node.attr == '_bb_v_0'):
                 prefixed_name = node.value.id
-                if prefixed_name.startswith(MOBIUS_IMPORT_PREFIX):
-                    actual_hash = prefixed_name[len(MOBIUS_IMPORT_PREFIX):]
+                if prefixed_name.startswith(BB_IMPORT_PREFIX):
+                    actual_hash = prefixed_name[len(BB_IMPORT_PREFIX):]
                 else:
                     actual_hash = prefixed_name
 
                 if actual_hash == from_hash:
-                    node.value.id = MOBIUS_IMPORT_PREFIX + to_hash
+                    node.value.id = BB_IMPORT_PREFIX + to_hash
             self.generic_visit(node)
             return node
 
@@ -3051,7 +3051,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str):
             mapping_save_v1(new_hash, lang, docstring, name_mapping, new_alias_mapping, comment)
 
     # Print the result command
-    print(f"mobius.py show {new_hash}")
+    print(f"bb.py show {new_hash}")
 
 
 # =============================================================================
@@ -3074,7 +3074,7 @@ def compile_generate_config(func_hash: str, lang: str, output_name: str, inline_
     if inline_mode:
         # Simpler config for inline mode - just run __main__.py
         return f'''# PyOxidizer configuration for {output_name}
-# Generated by mobius.py compile (inline mode)
+# Generated by bb.py compile (inline mode)
 
 def compile_create_dist():
     return default_python_distribution()
@@ -3113,7 +3113,7 @@ resolve_targets()
     else:
         # Debug mode: use runtime for dynamic loading
         return f'''# PyOxidizer configuration for {output_name}
-# Generated by mobius.py compile (debug mode)
+# Generated by bb.py compile (debug mode)
 
 def compile_create_dist():
     return default_python_distribution()
@@ -3124,8 +3124,8 @@ def compile_create_exe(dist):
 import sys
 sys.path.insert(0, '.')
 
-# Import mobius runtime
-from mobius_runtime import code_execute
+# Import bb runtime
+from bb_runtime import code_execute
 
 # Execute the function
 result = code_execute('{func_hash}', '{lang}', sys.argv[1:])
@@ -3140,7 +3140,7 @@ if result is not None:
 
     exe.read_package_root(
         path=".",
-        packages=["mobius_runtime"],
+        packages=["bb_runtime"],
     )
 
     return exe
@@ -3164,7 +3164,7 @@ resolve_targets()
 
 def compile_generate_runtime(func_hash: str, lang: str, output_dir: Path) -> Path:
     """
-    Generate the mobius runtime module for the compiled executable.
+    Generate the bb runtime module for the compiled executable.
 
     Args:
         func_hash: Function hash to compile
@@ -3174,12 +3174,12 @@ def compile_generate_runtime(func_hash: str, lang: str, output_dir: Path) -> Pat
     Returns:
         Path to the generated runtime module
     """
-    runtime_dir = output_dir / 'mobius_runtime'
+    runtime_dir = output_dir / 'bb_runtime'
     runtime_dir.mkdir(parents=True, exist_ok=True)
 
-    # Copy the necessary parts of mobius for runtime
+    # Copy the necessary parts of bb for runtime
     runtime_code = '''"""
-Mobius Runtime - Minimal runtime for compiled functions
+BB Runtime - Minimal runtime for compiled functions
 """
 import ast
 import json
@@ -3188,7 +3188,7 @@ import sys
 from pathlib import Path
 
 
-MOBIUS_IMPORT_PREFIX = "object_"
+BB_IMPORT_PREFIX = "object_"
 
 
 def storage_get_bundle_directory() -> Path:
@@ -3315,7 +3315,7 @@ def code_execute(func_hash: str, lang: str, args: list):
     exec(denormalized_code, namespace)
 
     # Find the function in namespace
-    func_name = name_mapping.get('_mobius_v_0', '_mobius_v_0')
+    func_name = name_mapping.get('_bb_v_0', '_bb_v_0')
     func = namespace.get(func_name)
 
     if func is None:
@@ -3389,7 +3389,7 @@ def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool =
             error_lines.append("Please add translations for these functions first:")
             for dep_hash, available in missing_lang:
                 if available:
-                    error_lines.append(f"  python3 mobius.py translate {dep_hash}@{available[0]} {lang}")
+                    error_lines.append(f"  python3 bb.py translate {dep_hash}@{available[0]} {lang}")
             raise ValueError("\n".join(error_lines))
 
     # Load all functions
@@ -3397,7 +3397,7 @@ def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool =
     # Create a mapping from hash to unique function name for normal mode
     hash_to_func_name = {}
     for dep_hash in deps:
-        hash_to_func_name[dep_hash] = f'_mobius_{dep_hash[:8]}'
+        hash_to_func_name[dep_hash] = f'_bb_{dep_hash[:8]}'
 
     for dep_hash in deps:
         func_data = code_load_v1(dep_hash)
@@ -3412,22 +3412,22 @@ def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool =
             # Denormalize the code
             normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
             code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
-            func_name = name_mapping.get('_mobius_v_0', '_mobius_v_0')
+            func_name = name_mapping.get('_bb_v_0', '_bb_v_0')
         else:
             # Normal mode: use normalized code with unique function names
             code = normalized_code
             func_name = hash_to_func_name[dep_hash]
 
-            # Rename the function from _mobius_v_0 to unique name
-            code = code.replace('def _mobius_v_0(', f'def {func_name}(', 1)
+            # Rename the function from _bb_v_0 to unique name
+            code = code.replace('def _bb_v_0(', f'def {func_name}(', 1)
 
-            # Replace calls to other mobius functions with their unique names
+            # Replace calls to other bb functions with their unique names
             for other_hash, other_name in hash_to_func_name.items():
-                # Replace object_HASH._mobius_v_0 with the unique function name
-                code = code.replace(f'object_{other_hash}._mobius_v_0', other_name)
+                # Replace object_HASH._bb_v_0 with the unique function name
+                code = code.replace(f'object_{other_hash}._bb_v_0', other_name)
 
-        # Strip mobius imports - dependencies will be included inline
-        code = code_strip_mobius_imports(code)
+        # Strip bb imports - dependencies will be included inline
+        code = code_strip_bb_imports(code)
 
         functions.append({
             'hash': dep_hash,
@@ -3436,7 +3436,7 @@ def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool =
         })
 
     # Build the Python file
-    lines = ['#!/usr/bin/env python3', '"""', f'Compiled mobius function: {func_hash}', '"""', '']
+    lines = ['#!/usr/bin/env python3', '"""', f'Compiled bb function: {func_hash}', '"""', '']
 
     # Collect all standard imports from all functions
     all_imports = set()
@@ -3574,7 +3574,7 @@ def command_compile(hash_with_lang: str, python_mode: bool = False, debug_mode: 
             sys.exit(1)
 
         # Create build directory
-        build_dir = Path(f'.mobius_build_{func_hash[:8]}')
+        build_dir = Path(f'.bb_build_{func_hash[:8]}')
         build_dir.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -3749,7 +3749,7 @@ def command_fork(hash_with_lang: str):
             print(f"\nForked function saved: {new_hash}")
             print(f"Parent: {func_hash}")
 
-        print(f"View with: mobius.py show {new_hash}@{lang}")
+        print(f"View with: bb.py show {new_hash}@{lang}")
 
     finally:
         # Clean up temp file
@@ -3760,11 +3760,11 @@ def command_fork(hash_with_lang: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='mobius - Function pool manager')
+    parser = argparse.ArgumentParser(description='bb - Function pool manager')
     subparsers = parser.add_subparsers(dest='command', help='Commands')
 
     # Init command
-    init_parser = subparsers.add_parser('init', help='Initialize mobius directory and config')
+    init_parser = subparsers.add_parser('init', help='Initialize bb directory and config')
 
     # Whoami command
     whoami_parser = subparsers.add_parser('whoami', help='Get or set user configuration')
@@ -3832,10 +3832,10 @@ def main():
     remote_push_parser.add_argument('name', help='Remote name to push to')
 
     # Validate command
-    validate_parser = subparsers.add_parser('validate', help='Validate function or entire mobius directory')
+    validate_parser = subparsers.add_parser('validate', help='Validate function or entire bb directory')
     validate_parser.add_argument('hash', nargs='?', help='Function hash to validate (omit for whole directory)')
     validate_parser.add_argument('--all', '-a', action='store_true',
-                                 help='Validate entire mobius directory including pool and config')
+                                 help='Validate entire bb directory including pool and config')
 
     # Caller command
     caller_parser = subparsers.add_parser('caller', help='Find functions that depend on a given function')
@@ -3902,7 +3902,7 @@ def main():
         if args.all or not args.hash:
             # Validate entire directory
             is_valid, errors, stats = schema_validate_directory()
-            print("Mobius Directory Validation")
+            print("BB Directory Validation")
             print("=" * 60)
             print(f"Functions total:   {stats['functions_total']}")
             print(f"Functions valid:   {stats['functions_valid']}")
@@ -3912,7 +3912,7 @@ def main():
             print()
 
             if is_valid:
-                print("✓ Mobius directory is valid")
+                print("✓ BB directory is valid")
             else:
                 print("✗ Validation errors found:", file=sys.stderr)
                 for error in errors[:20]:  # Limit to first 20 errors

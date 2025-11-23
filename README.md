@@ -1,24 +1,24 @@
 <p align="center">
-  <img src="logo.svg" alt="Mobius Logo" width="200" />
+  <img src="logo.svg" alt="Beyond Babel Logo" width="200" />
 </p>
 
-# mobius.py
+# bb.py
 
-![Tests](https://github.com/amirouche/mobius.py/actions/workflows/test.yml/badge.svg)
+![Tests](https://github.com/amirouche/bb.py/actions/workflows/test.yml/badge.svg)
 
 **Beyond Babel, Python all around the world, one function at a time**
 
 > ⚠️ **Experimental**: This is research software under active development.
 
-Write functions in your language. Share logic universally. Mobius creates bridges through shared logic—not by erasing differences, but by recognizing equivalence where it naturally emerges.
+Write functions in your language. Share logic universally. Beyond Babel creates bridges through shared logic—not by erasing differences, but by recognizing equivalence where it naturally emerges.
 
-Mobius is a function pool where the same code written in different human languages produces the same hash.
+Beyond Babel is a function pool where the same code written in different human languages produces the same hash.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/amirouche/mobius.py
-cd mobius.py
+git clone https://github.com/amirouche/bb.py
+cd bb.py
 
 # View examples
 cat examples/example_simple.py          # English
@@ -26,19 +26,19 @@ cat examples/example_simple_french.py   # French
 cat examples/example_simple_spanish.py  # Spanish
 
 # Add a function to the pool
-python3 mobius.py add examples/example_simple.py@eng
+python3 bb.py add examples/example_simple.py@eng
 
-# Get the hash (stored in $HOME/.local/mobius/pool/ by default)
-# Note: Use $MOBIUS_DIRECTORY to customize the location
-find ~/.local/mobius/pool -name "*.json"
+# Get the hash (stored in $HOME/.local/bb/pool/ by default)
+# Note: Use $BB_DIRECTORY to customize the location
+find ~/.local/bb/pool -name "*.json"
 
 # Retrieve in different language
-python3 mobius.py get <HASH>@fra
+python3 bb.py get <HASH>@fra
 ```
 
-## Why "Mobius"?
+## Why "Beyond Babel"?
 
-Mobius refers to the Mobius strip - a surface with only one side, representing the continuous transformation between languages and the unity of code logic regardless of linguistic expression. Just as the Mobius strip has no boundary between its "sides," Mobius code has no boundary between languages: the same logic flows seamlessly from French to English to Spanish and back.
+Beyond Babel refers to the Tower of Babel story - where humanity was divided by language barriers. Beyond Babel transcends those barriers, enabling code logic to flow seamlessly across human languages. Just as people once shared a common language, Beyond Babel code has no boundary between languages: the same logic flows seamlessly from French to English to Spanish and back.
 
 ## Related Work
 

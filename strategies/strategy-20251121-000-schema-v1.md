@@ -19,7 +19,7 @@ This document outlines the strategy for migrating from schema v0 (single JSON fi
 
 ### Storage Structure
 ```
-$MOBIUS_DIRECTORY/objects/
+$BB_DIRECTORY/objects/
   XX/
     YYYYYY.json  # Single file contains everything
 ```
@@ -29,18 +29,18 @@ $MOBIUS_DIRECTORY/objects/
 {
   "version": 0,
   "hash": "abc123def456...",
-  "normalized_code": "def _mobius_v_0(...):\n    ...",
+  "normalized_code": "def _bb_v_0(...):\n    ...",
   "docstrings": {"eng": "...", "fra": "..."},
   "name_mappings": {"eng": {...}, "fra": {...}},
   "alias_mappings": {"eng": {...}, "fra": {...}}
 }
 ```
 
-### Affected Functions (mobius.py)
+### Affected Functions (bb.py)
 
 | Function | Lines | Purpose | Modification Needed |
 |----------|-------|---------|-------------------|
-| `directory_get_mobius()` | 326-336 | Get mobius directory | **No change** |
+| `directory_get_bb()` | 326-336 | Get bb directory | **No change** |
 | `hash_compute()` | 321-323 | Compute SHA256 | **Extend** for algorithm support |
 | `function_save()` | 339-376 | Save function (v0) | **Major rewrite** |
 | `function_load()` | 530-567 | Load function (v0) | **Major rewrite** |
@@ -58,7 +58,7 @@ $MOBIUS_DIRECTORY/objects/
 
 ### Storage Structure
 ```
-$MOBIUS_DIRECTORY/objects/
+$BB_DIRECTORY/objects/
   sha256/                       # Hash algorithm name
     ab/                         # First 2 chars of function hash
       c123def456.../            # Function directory (remaining hash chars)
@@ -84,7 +84,7 @@ $MOBIUS_DIRECTORY/objects/
   "schema_version": 1,
   "hash": "abc123def456...",
   "hash_algorithm": "sha256",
-  "normalized_code": "def _mobius_v_0(...):\n    ...",
+  "normalized_code": "def _bb_v_0(...):\n    ...",
   "encoding": "none",
   "metadata": {
     "created": "2025-11-21T10:00:00Z",
@@ -101,7 +101,7 @@ $MOBIUS_DIRECTORY/objects/
 ```json
 {
   "docstring": "Calculate the average of a list of numbers",
-  "name_mapping": {"_mobius_v_0": "calculate_average", "_mobius_v_1": "numbers"},
+  "name_mapping": {"_bb_v_0": "calculate_average", "_bb_v_1": "numbers"},
   "alias_mapping": {"abc123": "helper"},
   "comment": "Formal mathematical terminology variant"
 }
@@ -237,18 +237,18 @@ $MOBIUS_DIRECTORY/objects/
 
 **CLI Commands**:
 ```bash
-mobius.py migrate               # Migrate all v0 -> v1 (delete v0 after success)
-mobius.py migrate --keep-v0     # Migrate but keep v0 files (safe mode)
-mobius.py migrate --dry-run     # Show what would be migrated
-mobius.py migrate HASH          # Migrate specific function
-mobius.py validate              # Validate entire pool
-mobius.py validate HASH         # Validate specific function
+bb.py migrate               # Migrate all v0 -> v1 (delete v0 after success)
+bb.py migrate --keep-v0     # Migrate but keep v0 files (safe mode)
+bb.py migrate --dry-run     # Show what would be migrated
+bb.py migrate HASH          # Migrate specific function
+bb.py validate              # Validate entire pool
+bb.py validate HASH         # Validate specific function
 ```
 
 **Testing**:
 - Integration test: migrate simple v0 function, verify v0 deleted
 - Integration test: migrate function with multiple languages
-- Integration test: migrate function with mobius imports
+- Integration test: migrate function with bb imports
 - Integration test: migrate with --keep-v0 flag, verify v0 preserved
 - Integration test: dry-run doesn't modify files
 - Integration test: validate detects corruption
@@ -272,15 +272,15 @@ mobius.py validate HASH         # Validate specific function
 The `show` command replaces and unifies the `get` command with better support for multiple mappings:
 
 ```bash
-mobius.py show HASH@LANG             # Auto-select behavior
-mobius.py show HASH@LANG@LANGHASH    # Explicit mapping selection
+bb.py show HASH@LANG             # Auto-select behavior
+bb.py show HASH@LANG@LANGHASH    # Explicit mapping selection
 ```
 
 **Behavior**:
 
 1. **Single mapping exists**: Print the denormalized function code directly
    ```bash
-   $ mobius.py show abc123...@eng
+   $ bb.py show abc123...@eng
    def calculate_average(numbers):
        """Calculate the average of a list of numbers"""
        return sum(numbers) / len(numbers)
@@ -288,18 +288,18 @@ mobius.py show HASH@LANG@LANGHASH    # Explicit mapping selection
 
 2. **Multiple mappings exist**: Show selection menu with commands
    ```bash
-   $ mobius.py show abc123...@eng
+   $ bb.py show abc123...@eng
    Multiple mappings found for 'eng'. Please choose one:
 
-   mobius.py show abc123...@eng@xyz789...  # Formal mathematical terminology variant
-   mobius.py show abc123...@eng@def456...  # Casual style with informal names
-   mobius.py show abc123...@eng@mno012...  # Domain-specific scientific terminology
+   bb.py show abc123...@eng@xyz789...  # Formal mathematical terminology variant
+   bb.py show abc123...@eng@def456...  # Casual style with informal names
+   bb.py show abc123...@eng@mno012...  # Domain-specific scientific terminology
    ```
    Each line shows the full command with the mapping hash and the comment explaining the variant.
 
 3. **Explicit mapping hash**: Print the specific mapping
    ```bash
-   $ mobius.py show abc123...@eng@xyz789...
+   $ bb.py show abc123...@eng@xyz789...
    def calculate_average(numbers):
        """Calculate the average of a list of numbers"""
        return sum(numbers) / len(numbers)
@@ -319,7 +319,7 @@ mobius.py show HASH@LANG@LANGHASH    # Explicit mapping selection
 2. Add `show` subcommand to CLI parser
 3. Update `function_add()` to accept optional `--comment` parameter:
    ```bash
-   mobius.py add example.py@eng --comment "Formal mathematical terminology"
+   bb.py add example.py@eng --comment "Formal mathematical terminology"
    ```
 
 **Testing**:
@@ -357,9 +357,9 @@ mobius.py show HASH@LANG@LANGHASH    # Explicit mapping selection
 
 **Example warning**:
 ```bash
-$ mobius.py show abc123...@eng
+$ bb.py show abc123...@eng
 Warning: Function 'abc123...' uses deprecated schema v0.
-Please migrate: mobius.py migrate abc123...
+Please migrate: bb.py migrate abc123...
 Reading v0 format...
 
 def calculate_average(numbers):
@@ -369,8 +369,8 @@ def calculate_average(numbers):
 ### User Guidance
 
 **For users with existing v0 pools**:
-1. Run migration tool: `mobius.py migrate`
-2. Validate results: `mobius.py validate`
+1. Run migration tool: `bb.py migrate`
+2. Validate results: `bb.py validate`
 3. All v0 files automatically deleted after successful migration
 4. Use `--keep-v0` flag if cautious
 
@@ -443,11 +443,11 @@ Since v1 is the only write format, no configuration needed. The code automatical
 
 **Example**:
 ```bash
-$ mobius.py show HASH@eng
+$ bb.py show HASH@eng
 Multiple mappings found for 'eng'. Please choose one:
 
-mobius.py show HASH@eng@xyz789...  # Formal mathematical terminology
-mobius.py show HASH@eng@def456...  # Casual informal style
+bb.py show HASH@eng@xyz789...  # Formal mathematical terminology
+bb.py show HASH@eng@def456...  # Casual informal style
 ```
 
 **Rationale**: Explicit is better than implicit. Users see all options and can copy-paste the command they want.
@@ -640,7 +640,7 @@ mobius.py show HASH@eng@def456...  # Casual informal style
 
 ## Conclusion
 
-The migration from schema v0 to v1 is a significant undertaking that will **future-proof** the mobius storage format. The proposed **5-phase approach** with **immediate v1 adoption** provides:
+The migration from schema v0 to v1 is a significant undertaking that will **future-proof** the bb storage format. The proposed **5-phase approach** with **immediate v1 adoption** provides:
 
 - **Simplicity**: No dispatch logic, no configuration - v1 is the only write format
 - **Safety**: Read-only v0 support for backward compatibility, validation before migration

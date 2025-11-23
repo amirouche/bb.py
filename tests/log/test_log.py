@@ -1,5 +1,5 @@
 """
-Tests for 'mobius.py log' command.
+Tests for 'bb.py log' command.
 
 Grey-box integration tests for pool log display.
 """
@@ -13,8 +13,8 @@ import pytest
 
 
 def cli_run(args: list, env: dict = None) -> subprocess.CompletedProcess:
-    """Run mobius.py CLI command."""
-    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'mobius.py')] + args
+    """Run bb.py CLI command."""
+    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'bb.py')] + args
 
     run_env = os.environ.copy()
     if env:
@@ -30,8 +30,8 @@ def cli_run(args: list, env: dict = None) -> subprocess.CompletedProcess:
 
 def test_log_empty_pool(tmp_path):
     """Test that log handles empty pool gracefully"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     result = cli_run(['log'], env=env)
 
@@ -41,9 +41,9 @@ def test_log_empty_pool(tmp_path):
 
 def test_log_empty_pool_with_pool_dir(tmp_path):
     """Test that log handles empty pool directory"""
-    mobius_dir = tmp_path / '.mobius'
-    (mobius_dir / 'pool').mkdir(parents=True)
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    (bb_dir / 'pool').mkdir(parents=True)
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     result = cli_run(['log'], env=env)
 
@@ -53,8 +53,8 @@ def test_log_empty_pool_with_pool_dir(tmp_path):
 
 def test_log_displays_function_info(tmp_path):
     """Test that log displays function hash, date, and author"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     test_file = tmp_path / "func.py"
@@ -74,8 +74,8 @@ def test_log_displays_function_info(tmp_path):
 
 def test_log_shows_header_with_count(tmp_path):
     """Test that log shows header with function count"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Add a function
     test_file = tmp_path / "func.py"
@@ -93,8 +93,8 @@ def test_log_shows_header_with_count(tmp_path):
 
 def test_log_shows_languages(tmp_path):
     """Test that log displays available languages"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     test_file = tmp_path / "func.py"
@@ -112,8 +112,8 @@ def test_log_shows_languages(tmp_path):
 
 def test_log_multiple_languages(tmp_path):
     """Test that log shows multiple languages for same function"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Add same function in multiple languages
     test_file = tmp_path / "func.py"
@@ -141,8 +141,8 @@ def test_log_multiple_languages(tmp_path):
 
 def test_log_multiple_functions(tmp_path):
     """Test that log shows multiple functions"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Add multiple different functions
     test_file1 = tmp_path / "func1.py"
