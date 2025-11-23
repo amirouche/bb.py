@@ -390,3 +390,47 @@ def test_compile_generate_python(mock_bb_dir):
     # With debug_mode=True, uses human-readable names
     python_code_debug = bb.compile_generate_python(func_hash, "eng", debug_mode=True)
     assert 'def test_func():' in python_code_debug
+
+
+def test_compile_recursive_function_no_debug(mock_bb_dir):
+    """Test compiling a recursive function without debug mode"""
+    func_hash = "recursive" + "0" * 55
+    # Recursive factorial function
+    normalized_code = normalize_code_for_test('''def _bb_v_0(_bb_v_1):
+    """Calculate factorial"""
+    if _bb_v_1 <= 1:
+        return 1
+    return _bb_v_1 * _bb_v_0(_bb_v_1 - 1)
+''')
+    bb.code_save(func_hash, "eng", normalized_code, "Calculate factorial",
+                 {"_bb_v_0": "factorial", "_bb_v_1": "n"}, {})
+
+    # Without debug_mode, uses hash-based names
+    python_code = bb.compile_generate_python(func_hash, "eng")
+
+    # Both function definition AND recursive call should use the same name
+    assert 'def _bb_recursiv(' in python_code  # Function definition
+    assert '_bb_recursiv(_bb_v_1 - 1)' in python_code  # Recursive call renamed
+    assert '_bb_v_0' not in python_code  # No leftover _bb_v_0 references
+
+
+def test_compile_recursive_function_debug_mode(mock_bb_dir):
+    """Test compiling a recursive function with debug mode"""
+    func_hash = "recursdb" + "0" * 56
+    # Recursive factorial function
+    normalized_code = normalize_code_for_test('''def _bb_v_0(_bb_v_1):
+    """Calculate factorial"""
+    if _bb_v_1 <= 1:
+        return 1
+    return _bb_v_1 * _bb_v_0(_bb_v_1 - 1)
+''')
+    bb.code_save(func_hash, "eng", normalized_code, "Calculate factorial",
+                 {"_bb_v_0": "factorial", "_bb_v_1": "n"}, {})
+
+    # With debug_mode=True, uses human-readable names
+    python_code = bb.compile_generate_python(func_hash, "eng", debug_mode=True)
+
+    # Both function definition AND recursive call should use human-readable name
+    assert 'def factorial(' in python_code  # Function definition
+    assert 'factorial(n - 1)' in python_code  # Recursive call renamed
+    assert '_bb_v_0' not in python_code  # No leftover _bb_v_0 references

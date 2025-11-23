@@ -233,7 +233,8 @@ def code_create_name_mapping(function_def: Union[ast.FunctionDef, ast.AsyncFunct
 
     # Collect all names in the function (excluding imported names, built-ins, and bb aliases)
     # Use a set to track seen names and avoid duplicates
-    seen_names = set()
+    # Include function name in seen_names to handle recursive calls correctly
+    seen_names = {function_def.name}
     all_names = list()
     for node in ast.walk(function_def):
         if isinstance(node, ast.Name) and node.id not in imported_names and node.id not in PYTHON_BUILTINS and node.id not in bb_aliases:
@@ -3418,8 +3419,32 @@ def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool =
             code = normalized_code
             func_name = hash_to_func_name[dep_hash]
 
-            # Rename the function from _bb_v_0 to unique name
-            code = code.replace('def _bb_v_0(', f'def {func_name}(', 1)
+            # Rename the function from _bb_v_0 to unique name using AST
+            # This properly handles recursive calls (not just the definition)
+            tree = ast.parse(code)
+
+            class FunctionRenamer(ast.NodeTransformer):
+                def visit_Name(self, node):
+                    # Replace recursive calls to _bb_v_0
+                    if node.id == '_bb_v_0':
+                        node.id = func_name
+                    return node
+
+                def visit_FunctionDef(self, node):
+                    # Replace function definition name
+                    if node.name == '_bb_v_0':
+                        node.name = func_name
+                    self.generic_visit(node)
+                    return node
+
+                def visit_AsyncFunctionDef(self, node):
+                    if node.name == '_bb_v_0':
+                        node.name = func_name
+                    self.generic_visit(node)
+                    return node
+
+            tree = FunctionRenamer().visit(tree)
+            code = ast.unparse(tree)
 
             # Replace calls to other bb functions with their unique names
             for other_hash, other_name in hash_to_func_name.items():
