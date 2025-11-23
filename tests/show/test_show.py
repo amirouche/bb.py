@@ -150,8 +150,8 @@ def test_show_multilang_french(cli_runner, tmp_path):
     assert 'Multiplier valeur par facteur' in result.stdout
 
 
-def test_show_missing_language_suffix_fails(cli_runner, tmp_path):
-    """Test that show fails without language suffix"""
+def test_show_without_language_lists_languages(cli_runner, tmp_path):
+    """Test that show without @lang lists available languages"""
     # Setup
     test_file = tmp_path / "test.py"
     test_file.write_text('def foo(): pass')
@@ -160,8 +160,11 @@ def test_show_missing_language_suffix_fails(cli_runner, tmp_path):
     # Test: Run without @lang
     result = cli_runner.run(['show', func_hash])
 
-    # Assert: Should fail
-    assert result.returncode != 0
+    # Assert: Should list available languages
+    assert result.returncode == 0
+    assert 'Available languages' in result.stdout
+    assert 'eng' in result.stdout
+    assert '1 mapping(s)' in result.stdout
 
 
 def test_show_nonexistent_function_fails(cli_runner):

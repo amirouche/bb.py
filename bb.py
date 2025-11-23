@@ -2858,20 +2858,44 @@ def code_show(hash_with_lang_and_mapping: str):
     Show a function from the bb pool with mapping selection support.
 
     Supports three formats:
+    - HASH: List available languages
     - HASH@LANG: Show single mapping, or menu if multiple exist
     - HASH@LANG@MAPPING_HASH: Show specific mapping
 
     Args:
-        hash_with_lang_and_mapping: Function identifier in format HASH@LANG[@MAPPING_HASH]
+        hash_with_lang_and_mapping: Function identifier in format HASH[@LANG[@MAPPING_HASH]]
     """
     # Parse the format
     if '@' not in hash_with_lang_and_mapping:
-        print("Error: Missing language suffix. Use format: HASH@lang[@mapping_hash]", file=sys.stderr)
-        sys.exit(1)
+        # Just hash provided - list available languages
+        hash_value = hash_with_lang_and_mapping
+
+        # Validate hash format
+        if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value.lower()):
+            print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}", file=sys.stderr)
+            sys.exit(1)
+
+        # Check if function exists
+        version = code_detect_schema(hash_value)
+        if version is None:
+            print(f"Error: Function not found: {hash_value}", file=sys.stderr)
+            sys.exit(1)
+
+        # List available languages
+        languages = storage_list_languages(hash_value)
+        if not languages:
+            print(f"No languages found for {hash_value}", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"Available languages for {hash_value}:")
+        for lang in languages:
+            mappings = mappings_list_v1(hash_value, lang)
+            print(f"  {lang} - {len(mappings)} mapping(s)")
+        return
 
     parts = hash_with_lang_and_mapping.split('@')
     if len(parts) < 2:
-        print("Error: Invalid format. Use format: HASH@lang[@mapping_hash]", file=sys.stderr)
+        print("Error: Invalid format. Use format: HASH[@lang[@mapping_hash]]", file=sys.stderr)
         sys.exit(1)
 
     hash_value = parts[0]
