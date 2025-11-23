@@ -568,6 +568,14 @@ def storage_get_pool_directory() -> Path:
     return storage_get_bb_directory() / 'pool'
 
 
+def storage_get_git_directory() -> Path:
+    """
+    Get the git directory where published functions are stored.
+    Returns: $BB_DIRECTORY/git/
+    """
+    return storage_get_bb_directory() / 'git'
+
+
 def storage_get_config_path() -> Path:
     """
     Get the path to the config file.
@@ -1111,6 +1119,152 @@ def git_commit_and_push(local_path: Path, message: str) -> bool:
         return False
 
     return True
+
+
+# =============================================================================
+# Commit Functions
+# =============================================================================
+
+def commit_init_git_repo() -> Path:
+    """
+    Initialize the git repository for committing if it doesn't exist.
+
+    Returns:
+        Path to the git directory
+    """
+    git_dir = storage_get_git_directory()
+
+    if not git_dir.exists():
+        git_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check if it's already a git repo
+    git_metadata = git_dir / '.git'
+    if not git_metadata.exists():
+        result = git_run(['init'], cwd=str(git_dir))
+        if result.returncode != 0:
+            print(f"Error: Failed to initialize git repository: {result.stderr}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Initialized git repository at {git_dir}")
+
+    return git_dir
+
+
+def commit_open_editor_for_message() -> str:
+    """
+    Open the user's editor to write a commit message.
+
+    Returns:
+        The commit message entered by the user
+    """
+    import tempfile
+
+    editor = os.environ.get('EDITOR', os.environ.get('VISUAL', 'vi'))
+
+    # Create a temporary file for the commit message
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write('\n')
+        f.write('# Enter commit message above.\n')
+        f.write('# Lines starting with # will be ignored.\n')
+        temp_path = f.name
+
+    try:
+        # Open editor
+        result = subprocess.run([editor, temp_path])
+        if result.returncode != 0:
+            print("Error: Editor exited with non-zero status", file=sys.stderr)
+            sys.exit(1)
+
+        # Read the message
+        with open(temp_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        # Filter out comment lines and strip
+        message_lines = [line.rstrip() for line in lines if not line.startswith('#')]
+        message = '\n'.join(message_lines).strip()
+
+        if not message:
+            print("Error: Empty commit message, aborting", file=sys.stderr)
+            sys.exit(1)
+
+        return message
+    finally:
+        os.unlink(temp_path)
+
+
+def command_commit(hash_value: str, comment: str = None):
+    """
+    Commit a function and its dependencies to the git repository.
+
+    Copies the function, all its mappings, and all recursive dependencies
+    (with their mappings) to $BB_DIRECTORY/git/ and creates a git commit.
+
+    Args:
+        hash_value: Function hash to commit
+        comment: Commit message (if None, opens editor)
+    """
+    import shutil
+
+    # Validate hash format
+    if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value):
+        print(f"Error: Invalid hash format: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Check if function exists
+    version = code_detect_schema(hash_value)
+    if version is None:
+        print(f"Error: Function not found: {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Resolve all dependencies
+    print(f"Resolving dependencies for {hash_value}...")
+    try:
+        all_hashes = code_resolve_dependencies(hash_value)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Found {len(all_hashes)} function(s) to commit")
+
+    # Initialize git repo
+    git_dir = commit_init_git_repo()
+    pool_dir = storage_get_pool_directory()
+
+    # Copy all functions with their mappings
+    for func_hash in all_hashes:
+        src_dir = pool_dir / func_hash[:2] / func_hash[2:]
+        dst_dir = git_dir / func_hash[:2] / func_hash[2:]
+
+        if src_dir.exists():
+            # Copy entire function directory (includes object.json and all language mappings)
+            shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
+            print(f"  Copied {func_hash[:12]}...")
+
+    # Stage all changes
+    result = git_run(['add', '-A'], cwd=str(git_dir))
+    if result.returncode != 0:
+        print(f"Error: git add failed: {result.stderr}", file=sys.stderr)
+        sys.exit(1)
+
+    # Check if there are changes to commit
+    result = git_run(['diff', '--cached', '--quiet'], cwd=str(git_dir))
+    if result.returncode == 0:
+        print("No new changes to commit")
+        return
+
+    # Get commit message
+    if comment:
+        message = comment
+    else:
+        message = commit_open_editor_for_message()
+
+    # Commit
+    result = git_run(['commit', '-m', message], cwd=str(git_dir))
+    if result.returncode != 0:
+        print(f"Error: git commit failed: {result.stderr}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Committed {len(all_hashes)} function(s)")
+    print(f"Commit message: {message}")
 
 
 def command_remote_add(name: str, url: str):
@@ -3819,6 +3973,11 @@ def main():
     fork_parser = subparsers.add_parser('fork', help='Fork a function to create a modified version with lineage tracking')
     fork_parser.add_argument('hash', help='Function hash with language (e.g., abc123...@eng)')
 
+    # Commit command
+    commit_parser = subparsers.add_parser('commit', help='Commit function and dependencies to git repository')
+    commit_parser.add_argument('hash', help='Function hash to commit')
+    commit_parser.add_argument('--comment', '-c', help='Commit message (opens editor if not provided)')
+
     args = parser.parse_args()
 
     if args.command == 'init':
@@ -3896,6 +4055,8 @@ def main():
         command_compile(args.hash, python_mode=args.python, debug_mode=args.debug)
     elif args.command == 'fork':
         command_fork(args.hash)
+    elif args.command == 'commit':
+        command_commit(args.hash, comment=args.comment)
     else:
         parser.print_help()
 
