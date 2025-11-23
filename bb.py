@@ -1280,7 +1280,7 @@ def command_commit(hash_value: str, comment: str = None):
     print(f"Commit message: {message}")
 
 
-def command_remote_add(name: str, url: str):
+def command_remote_add(name: str, url: str, read_only: bool = False):
     """
     Add a remote repository.
 
@@ -1291,6 +1291,7 @@ def command_remote_add(name: str, url: str):
             - git@host:user/repo.git (Git SSH)
             - git+https://host/user/repo.git (Git HTTPS)
             - git+file:///path/to/repo (Local Git repository)
+        read_only: If True, remote is read-only (push will be rejected)
     """
     config = storage_read_config()
 
@@ -1310,13 +1311,18 @@ def command_remote_add(name: str, url: str):
         print("  git+file:///path/to/repo      - Local Git repository", file=sys.stderr)
         sys.exit(1)
 
-    config['remotes'][name] = {
+    remote_config = {
         'url': url,
         'type': remote_type
     }
+    if read_only:
+        remote_config['read_only'] = True
+
+    config['remotes'][name] = remote_config
 
     storage_write_config(config)
-    print(f"Added remote '{name}': {url} (type: {remote_type})")
+    ro_suffix = " (read-only)" if read_only else ""
+    print(f"Added remote '{name}': {url} (type: {remote_type}){ro_suffix}")
 
 
 def command_remote_remove(name: str):
@@ -1481,6 +1487,12 @@ def command_remote_push(name: str):
         sys.exit(1)
 
     remote = config['remotes'][name]
+
+    # Check if remote is read-only
+    if remote.get('read_only', False):
+        print(f"Error: Remote '{name}' is read-only", file=sys.stderr)
+        sys.exit(1)
+
     url = remote['url']
     remote_type = remote.get('type', git_detect_remote_type(url))
 
@@ -1634,6 +1646,10 @@ def command_remote_sync():
         remote_type = remote.get('type', git_detect_remote_type(url))
 
         if remote_type not in ('git-ssh', 'git-https', 'git-file'):
+            continue
+
+        # Skip read-only remotes
+        if remote.get('read_only', False):
             continue
 
         parsed = git_url_parse(url)
@@ -3926,6 +3942,7 @@ def main():
     remote_add_parser = remote_subparsers.add_parser('add', help='Add remote repository')
     remote_add_parser.add_argument('name', help='Remote name')
     remote_add_parser.add_argument('url', help='Remote URL (http://, https://, or file://)')
+    remote_add_parser.add_argument('--read-only', action='store_true', help='Mark remote as read-only (push will be rejected)')
 
     # Remote remove
     remote_remove_parser = remote_subparsers.add_parser('remove', help='Remove remote repository')
@@ -4002,7 +4019,7 @@ def main():
         command_search(args.query)
     elif args.command == 'remote':
         if args.remote_command == 'add':
-            command_remote_add(args.name, args.url)
+            command_remote_add(args.name, args.url, read_only=args.read_only)
         elif args.remote_command == 'remove':
             command_remote_remove(args.name)
         elif args.remote_command == 'list':
