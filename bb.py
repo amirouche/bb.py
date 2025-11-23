@@ -1129,6 +1129,8 @@ def commit_init_git_repo() -> Path:
     """
     Initialize the git repository for committing if it doesn't exist.
 
+    Configures git user.name and user.email from bb config.
+
     Returns:
         Path to the git directory
     """
@@ -1144,6 +1146,15 @@ def commit_init_git_repo() -> Path:
         if result.returncode != 0:
             print(f"Error: Failed to initialize git repository: {result.stderr}", file=sys.stderr)
             sys.exit(1)
+
+        # Configure git user from bb config
+        config = storage_read_config()
+        name = config['user'].get('name', '') or 'bb'
+        email = config['user'].get('email', '') or 'bb@localhost'
+
+        git_run(['config', 'user.name', name], cwd=str(git_dir))
+        git_run(['config', 'user.email', email], cwd=str(git_dir))
+
         print(f"Initialized git repository at {git_dir}")
 
     return git_dir
