@@ -3760,126 +3760,6 @@ def command_compile(hash_with_lang: str, python_mode: bool = False, debug_mode: 
     print("Compilation complete!")
 
 
-def command_fork(hash_with_lang: str):
-    """
-    Fork a function to create a modified version with parent lineage tracking.
-
-    Opens the function in an editor, allows modifications, and saves as a new
-    function with the original hash recorded as parent in metadata.
-
-    Args:
-        hash_with_lang: Function hash with language suffix (HASH@lang)
-    """
-    import tempfile
-    import subprocess
-
-    # Parse the hash and language
-    if '@' not in hash_with_lang:
-        print("Error: Missing language suffix. Use format: HASH@lang", file=sys.stderr)
-        sys.exit(1)
-
-    func_hash, lang = hash_with_lang.rsplit('@', 1)
-
-    # Validate hash format
-    if len(func_hash) != 64 or not all(c in '0123456789abcdef' for c in func_hash.lower()):
-        print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {func_hash}", file=sys.stderr)
-        sys.exit(1)
-
-    # Validate language code
-    if len(lang) < 3 or len(lang) > 256:
-        print(f"Error: Language code must be 3-256 characters. Got: {lang}", file=sys.stderr)
-        sys.exit(1)
-
-    # Check if function exists
-    version = code_detect_schema(func_hash)
-    if version is None:
-        print(f"Error: Function not found: {func_hash}", file=sys.stderr)
-        sys.exit(1)
-
-    # Load the function
-    try:
-        normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, lang)
-    except SystemExit:
-        print(f"Error: Could not load function {func_hash}@{lang}", file=sys.stderr)
-        sys.exit(1)
-
-    # Denormalize for editing
-    normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
-    original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
-
-    # Get editor from environment
-    editor = os.environ.get('EDITOR', os.environ.get('VISUAL', 'nano'))
-
-    # Create a temporary file with the code
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
-        f.write(original_code)
-        temp_path = f.name
-
-    try:
-        # Open in editor
-        print(f"Opening {func_hash[:8]}...@{lang} in {editor}...")
-        print("Make your changes and save the file to create a fork.")
-        print()
-
-        result = subprocess.run([editor, temp_path])
-        if result.returncode != 0:
-            print(f"Error: Editor exited with code {result.returncode}", file=sys.stderr)
-            sys.exit(1)
-
-        # Read the edited code
-        with open(temp_path, 'r', encoding='utf-8') as f:
-            edited_code = f.read()
-
-        # Check if code was modified
-        if edited_code.strip() == original_code.strip():
-            print("No changes detected. Fork cancelled.")
-            sys.exit(0)
-
-        # Parse the edited code
-        try:
-            tree = ast.parse(edited_code)
-        except SyntaxError as e:
-            print(f"Error: Syntax error in edited code: {e}", file=sys.stderr)
-            sys.exit(1)
-
-        # Normalize the new code
-        try:
-            new_normalized_with_doc, new_normalized_without_doc, new_docstring, new_name_mapping, new_alias_mapping = code_normalize(tree, lang)
-        except Exception as e:
-            print(f"Error: Failed to normalize code: {e}", file=sys.stderr)
-            sys.exit(1)
-
-        # Compute new hash
-        new_hash = hash_compute(new_normalized_without_doc)
-
-        # Check if hash is the same (logic unchanged despite surface changes)
-        if new_hash == func_hash:
-            print("Warning: The logic hasn't changed (same hash). This will add a new mapping to the existing function.")
-            confirm = input("Continue? [y/N]: ").strip().lower()
-            if confirm != 'y':
-                print("Fork cancelled.")
-                sys.exit(0)
-            # Save as new mapping with parent reference in comment
-            comment = f"Forked from {func_hash[:8]}...@{lang}"
-            mapping_save_v1(new_hash, lang, new_docstring, new_name_mapping, new_alias_mapping, comment)
-            print(f"\nNew mapping saved to existing function: {new_hash}@{lang}")
-        else:
-            # Save as new function with parent lineage (docstring stored in mapping.json)
-            code_save(new_hash, lang, new_normalized_without_doc, new_docstring, new_name_mapping, new_alias_mapping,
-                      comment=f"Forked from {func_hash[:8]}...", parent=func_hash)
-            print(f"\nForked function saved: {new_hash}")
-            print(f"Parent: {func_hash}")
-
-        print(f"View with: bb.py show {new_hash}@{lang}")
-
-    finally:
-        # Clean up temp file
-        try:
-            os.unlink(temp_path)
-        except OSError:
-            pass
-
-
 def main():
     parser = argparse.ArgumentParser(description='bb - Function pool manager')
     subparsers = parser.add_subparsers(dest='command', help='Commands')
@@ -3980,10 +3860,6 @@ def main():
     compile_parser.add_argument('--debug', action='store_true',
                                 help='Use human-readable names (requires HASH@lang and all translations)')
 
-    # Fork command
-    fork_parser = subparsers.add_parser('fork', help='Fork a function to create a modified version with lineage tracking')
-    fork_parser.add_argument('hash', help='Function hash with language (e.g., abc123...@eng)')
-
     # Commit command
     commit_parser = subparsers.add_parser('commit', help='Commit function and dependencies to git repository')
     commit_parser.add_argument('hash', help='Function hash to commit')
@@ -4064,8 +3940,6 @@ def main():
         command_refactor(args.what, args.from_hash, args.to_hash)
     elif args.command == 'compile':
         command_compile(args.hash, python_mode=args.python, debug_mode=args.debug)
-    elif args.command == 'fork':
-        command_fork(args.hash)
     elif args.command == 'commit':
         command_commit(args.hash, comment=args.comment)
     else:
