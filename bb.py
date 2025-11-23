@@ -1154,6 +1154,8 @@ def commit_init_git_repo() -> Path:
 
         git_run(['config', 'user.name', name], cwd=str(git_dir))
         git_run(['config', 'user.email', email], cwd=str(git_dir))
+        # Disable commit signing for this repository
+        git_run(['config', 'commit.gpgsign', 'false'], cwd=str(git_dir))
 
         print(f"Initialized git repository at {git_dir}")
 

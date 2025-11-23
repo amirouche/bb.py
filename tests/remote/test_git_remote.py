@@ -186,7 +186,11 @@ def test_remote_push_file(cli_runner, tmp_path):
     # Setup: Add a function to local pool
     test_file = tmp_path / "func.py"
     test_file.write_text('def foo(): pass')
-    cli_runner.add(str(test_file), 'eng')
+    func_hash = cli_runner.add(str(test_file), 'eng')
+
+    # Commit the function to git directory
+    result = cli_runner.run(['commit', func_hash, '--comment', 'test'])
+    assert result.returncode == 0
 
     # Create remote and push
     remote_pool = tmp_path / "remote_pool"
