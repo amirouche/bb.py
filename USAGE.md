@@ -6,13 +6,13 @@ Multilingual function pool: same logic, different languages → same hash.
 
 ```
 usage: bb.py [-h]
-                 {init,whoami,add,get,show,translate,run,review,log,search,remote,validate,caller,refactor,compile,fork}
+                 {init,whoami,add,get,show,translate,run,review,log,search,remote,validate,caller,refactor,compile,commit}
                  ...
 
 bb - Function pool manager
 
 positional arguments:
-  {init,whoami,add,get,show,translate,run,review,log,search,remote,validate,caller,refactor,compile,fork}
+  {init,whoami,add,get,show,translate,run,review,log,search,remote,validate,caller,refactor,compile,commit}
                         Commands
     init                Initialize bb directory and config
     whoami              Get or set user configuration
@@ -29,7 +29,7 @@ positional arguments:
     caller              Find functions that depend on a given function
     refactor            Replace a dependency in a function
     compile             Compile function to standalone executable
-    fork                Fork a function to create a modified version with lineage tracking
+    commit              Commit function to git repository for sharing
 
 options:
   -h, --help            show this help message and exit
@@ -54,7 +54,7 @@ options:
 | `caller` | Find functions that depend on a given function |
 | `refactor` | Replace a dependency in a function |
 | `compile` | Compile function to standalone executable |
-| `fork` | Fork a function to create a modified version with lineage tracking |
+| `commit` | Commit function to git repository for sharing |
 
 ---
 
@@ -566,6 +566,38 @@ python3 bb.py remote list
 
 ---
 
+### `commit` - Stage function for sharing
+
+```
+usage: bb.py commit [-h] [--comment COMMENT] hash
+
+positional arguments:
+  hash               Function hash to commit
+
+options:
+  -h, --help         show this help message and exit
+  --comment COMMENT  Commit message (opens editor if omitted)
+```
+
+Commit a function and all its recursive dependencies to the git repository at `$BB_DIRECTORY/git/`. This stages functions for sharing via `remote push`.
+
+**Key points:**
+- Copies function, all language mappings, and all dependencies
+- Creates a git commit with the provided message
+- If `--comment` is omitted, opens your default editor for the message
+- Must be done before `remote push`
+
+**Examples:**
+```bash
+# Commit with inline message
+python3 bb.py commit abc123def456... --comment "Add prime generator function"
+
+# Commit with editor for message
+python3 bb.py commit abc123def456...
+```
+
+---
+
 ### `remote pull` - Fetch from remote
 
 ```
@@ -578,7 +610,7 @@ options:
   -h, --help  show this help message and exit
 ```
 
-Fetch functions from a remote repository. Currently supports `file://` URLs. HTTP/HTTPS support planned.
+Fetch functions from a remote repository. Validates remote is a valid bb pool before fetching. Supports `file://` URLs and git remotes.
 
 **Example:**
 ```bash

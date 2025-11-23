@@ -15,9 +15,9 @@ transcripts/
 
 ## Numbering Scheme
 
-Files use a two-character base32-like identifier: `00`, `01`, ... `09`, `0A`, `0B`, ... `0V`, `10`, etc.
+Files use a two-character base36 identifier: `00`, `01`, ... `09`, `0A`, `0B`, ... `0Z`, `10`, etc.
 
-Characters: `0-9` (10) + `A-V` (22) = 32 values per digit.
+Characters: `0-9` (10) + `A-Z` (26) = 36 values per digit.
 
 ## Transcript Format
 
