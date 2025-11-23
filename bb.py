@@ -1354,6 +1354,8 @@ def command_remote_pull(name: str):
     """
     Fetch functions from a remote repository.
 
+    Fetches into $BB_DIRECTORY/git/ then copies new functions to pool.
+
     Args:
         name: Remote name to pull from
     """
@@ -1369,6 +1371,10 @@ def command_remote_pull(name: str):
     url = remote['url']
     remote_type = remote.get('type', git_detect_remote_type(url))
 
+    # Get local directories
+    git_dir = storage_get_git_directory()
+    pool_dir = storage_get_pool_directory()
+
     print(f"Pulling from remote '{name}': {url}")
     print()
 
@@ -1380,76 +1386,92 @@ def command_remote_pull(name: str):
             print(f"Error: Remote path does not exist: {remote_path}", file=sys.stderr)
             sys.exit(1)
 
-        # Copy functions from remote to local pool
-        local_pool = storage_get_pool_directory()
-        local_objects = local_pool
-        remote_objects = remote_path
+        # First copy to git directory, then to pool
+        git_dir.mkdir(parents=True, exist_ok=True)
 
-        if not remote_objects.exists():
-            print(f"Error: Remote objects directory not found: {remote_objects}", file=sys.stderr)
-            sys.exit(1)
+        pulled_to_git = 0
+        pulled_to_pool = 0
 
-        # Copy all objects
-        pulled_count = 0
-        for item in remote_objects.rglob('*.json'):
-            rel_path = item.relative_to(remote_objects)
-            local_item = local_objects / rel_path
+        for item in remote_path.rglob('*.json'):
+            rel_path = item.relative_to(remote_path)
 
-            if not local_item.exists():
-                local_item.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, local_item)
-                pulled_count += 1
+            # Copy to git directory
+            git_item = git_dir / rel_path
+            if not git_item.exists():
+                git_item.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, git_item)
+                pulled_to_git += 1
 
-        print(f"Pulled {pulled_count} new functions from '{name}'")
+            # Copy to pool directory
+            pool_item = pool_dir / rel_path
+            if not pool_item.exists():
+                pool_item.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, pool_item)
+                pulled_to_pool += 1
+
+        print(f"Pulled {pulled_to_pool} new functions from '{name}'")
 
     elif remote_type in ('git-ssh', 'git-https', 'git-file'):
-        # Git remote - clone/fetch then copy objects
+        # Git remote - fetch into local git dir then copy to pool
         parsed = git_url_parse(url)
-        cache_path = git_cache_path(name)
 
-        print(f"Syncing Git repository to {cache_path}...")
-        if not git_clone_or_fetch(parsed['git_url'], cache_path):
-            print("Error: Failed to sync Git repository", file=sys.stderr)
+        # Initialize git dir if needed
+        git_dir = commit_init_git_repo()
+
+        # Check if remote exists in git config, add if not
+        result = git_run(['remote', 'get-url', name], cwd=str(git_dir))
+        if result.returncode != 0:
+            result = git_run(['remote', 'add', name, parsed['git_url']], cwd=str(git_dir))
+            if result.returncode != 0:
+                print(f"Error: Failed to add git remote: {result.stderr}", file=sys.stderr)
+                sys.exit(1)
+            print(f"Added git remote '{name}'")
+
+        # Fetch from remote
+        print(f"Fetching from {parsed['git_url']}...")
+        result = git_run(['fetch', name], cwd=str(git_dir))
+        if result.returncode != 0:
+            print(f"Error: git fetch failed: {result.stderr}", file=sys.stderr)
             sys.exit(1)
 
-        # Copy functions from cached repository to local pool
-        local_pool = storage_get_pool_directory()
-        local_objects = local_pool
-        remote_objects = cache_path
+        # Merge remote changes (try main, then master)
+        result = git_run(['merge', f'{name}/main', '--no-edit'], cwd=str(git_dir))
+        if result.returncode != 0:
+            result = git_run(['merge', f'{name}/master', '--no-edit'], cwd=str(git_dir))
+            if result.returncode != 0:
+                # May fail if no common history, which is fine for initial pull
+                pass
 
-        if not remote_objects.exists():
-            print(f"Warning: No objects directory in remote repository")
-            print("Pulled 0 new functions from '{name}'")
-            return
-
-        # Copy all objects
+        # Copy new functions from git dir to pool
+        pool_dir.mkdir(parents=True, exist_ok=True)
         pulled_count = 0
-        for item in remote_objects.rglob('*.json'):
-            rel_path = item.relative_to(remote_objects)
-            local_item = local_objects / rel_path
 
-            if not local_item.exists():
-                local_item.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, local_item)
+        for item in git_dir.rglob('*.json'):
+            rel_path = item.relative_to(git_dir)
+            pool_item = pool_dir / rel_path
+
+            if not pool_item.exists():
+                pool_item.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, pool_item)
                 pulled_count += 1
 
         print(f"Pulled {pulled_count} new functions from '{name}'")
 
     else:
-        # HTTP/HTTPS remote (not Git)
-        print(f"Error: Remote type '{remote_type}' not yet implemented", file=sys.stderr)
+        print(f"Error: Remote type '{remote_type}' not supported", file=sys.stderr)
         sys.exit(1)
 
 
 def command_remote_push(name: str):
     """
-    Publish functions to a remote repository.
+    Push committed functions to a remote repository.
+
+    Uses $BB_DIRECTORY/git/ as the source of truth. Only functions that have
+    been committed with 'bb commit' will be pushed.
 
     Args:
         name: Remote name to push to
     """
-    import shutil
-
     config = storage_read_config()
 
     if name not in config['remotes']:
@@ -1460,30 +1482,29 @@ def command_remote_push(name: str):
     url = remote['url']
     remote_type = remote.get('type', git_detect_remote_type(url))
 
+    # Get local git directory
+    git_dir = storage_get_git_directory()
+
+    if not git_dir.exists() or not (git_dir / '.git').exists():
+        print("Error: No committed functions. Use 'bb commit HASH' first.", file=sys.stderr)
+        sys.exit(1)
+
     print(f"Pushing to remote '{name}': {url}")
     print()
 
     if remote_type == 'file':
-        # Local file system remote (direct copy)
+        # Local file system remote (direct copy from git dir)
+        import shutil
         remote_path = Path(url[7:])  # Remove file:// prefix
 
         # Create remote directory if it doesn't exist
         remote_path.mkdir(parents=True, exist_ok=True)
 
-        # Copy functions from local pool to remote
-        local_pool = storage_get_pool_directory()
-        local_objects = local_pool
-        remote_objects = remote_path
-
-        if not local_objects.exists():
-            print("Error: Local objects directory not found", file=sys.stderr)
-            sys.exit(1)
-
-        # Copy all objects
+        # Copy functions from git directory to remote
         pushed_count = 0
-        for item in local_objects.rglob('*.json'):
-            rel_path = item.relative_to(local_objects)
-            remote_item = remote_objects / rel_path
+        for item in git_dir.rglob('*.json'):
+            rel_path = item.relative_to(git_dir)
+            remote_item = remote_path / rel_path
 
             if not remote_item.exists():
                 remote_item.parent.mkdir(parents=True, exist_ok=True)
@@ -1493,52 +1514,33 @@ def command_remote_push(name: str):
         print(f"Pushed {pushed_count} new functions to '{name}'")
 
     elif remote_type in ('git-ssh', 'git-https', 'git-file'):
-        # Git remote - sync repo, copy objects, commit and push
+        # Git remote - add remote to local git dir and push
         parsed = git_url_parse(url)
-        cache_path = git_cache_path(name)
 
-        # First, ensure we have the latest from remote
-        print(f"Syncing Git repository from {parsed['git_url']}...")
-        if not git_clone_or_fetch(parsed['git_url'], cache_path):
-            print("Error: Failed to sync Git repository", file=sys.stderr)
-            sys.exit(1)
+        # Check if remote exists in git config, add if not
+        result = git_run(['remote', 'get-url', name], cwd=str(git_dir))
+        if result.returncode != 0:
+            # Remote doesn't exist, add it
+            result = git_run(['remote', 'add', name, parsed['git_url']], cwd=str(git_dir))
+            if result.returncode != 0:
+                print(f"Error: Failed to add git remote: {result.stderr}", file=sys.stderr)
+                sys.exit(1)
+            print(f"Added git remote '{name}'")
 
-        # Copy functions from local pool to cached repository
-        local_pool = storage_get_pool_directory()
-        local_objects = local_pool
-        remote_objects = cache_path
+        # Push to remote
+        print(f"Pushing to {parsed['git_url']}...")
+        result = git_run(['push', name, 'HEAD:main'], cwd=str(git_dir))
+        if result.returncode != 0:
+            # Try master if main fails
+            result = git_run(['push', name, 'HEAD:master'], cwd=str(git_dir))
+            if result.returncode != 0:
+                print(f"Error: git push failed: {result.stderr}", file=sys.stderr)
+                sys.exit(1)
 
-        if not local_objects.exists():
-            print("Error: Local objects directory not found", file=sys.stderr)
-            sys.exit(1)
-
-        # Copy all new objects to cache
-        pushed_count = 0
-        for item in local_objects.rglob('*.json'):
-            rel_path = item.relative_to(local_objects)
-            remote_item = remote_objects / rel_path
-
-            if not remote_item.exists():
-                remote_item.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, remote_item)
-                pushed_count += 1
-
-        if pushed_count == 0:
-            print("No new functions to push")
-            return
-
-        # Commit and push changes
-        print(f"Committing {pushed_count} new functions...")
-        commit_msg = f"Add {pushed_count} function(s) from bb push"
-        if not git_commit_and_push(cache_path, commit_msg):
-            print("Error: Failed to commit and push changes", file=sys.stderr)
-            sys.exit(1)
-
-        print(f"Pushed {pushed_count} new functions to '{name}'")
+        print(f"Pushed to '{name}'")
 
     else:
-        # HTTP/HTTPS remote (not Git)
-        print(f"Error: Remote type '{remote_type}' not yet implemented", file=sys.stderr)
+        print(f"Error: Remote type '{remote_type}' not supported", file=sys.stderr)
         sys.exit(1)
 
 
