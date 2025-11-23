@@ -316,28 +316,28 @@ def test_storage_get_git_directory():
             del os.environ['BB_DIRECTORY']
 
 
-def test_commit_init_git_repo_creates_directory(tmp_path, monkeypatch):
-    """Test that commit_init_git_repo creates git directory"""
+def test_git_init_commit_repo_creates_directory(tmp_path, monkeypatch):
+    """Test that git_init_commit_repo creates git directory"""
     git_dir = tmp_path / 'git'
 
     monkeypatch.setattr(bb, 'storage_get_git_directory', lambda: git_dir)
 
-    result = bb.commit_init_git_repo()
+    result = bb.git_init_commit_repo()
 
     assert result == git_dir
     assert git_dir.exists()
     assert (git_dir / '.git').exists()
 
 
-def test_commit_init_git_repo_idempotent(tmp_path, monkeypatch):
-    """Test that commit_init_git_repo is idempotent"""
+def test_git_init_commit_repo_idempotent(tmp_path, monkeypatch):
+    """Test that git_init_commit_repo is idempotent"""
     git_dir = tmp_path / 'git'
 
     monkeypatch.setattr(bb, 'storage_get_git_directory', lambda: git_dir)
 
     # Call twice
-    bb.commit_init_git_repo()
-    result = bb.commit_init_git_repo()
+    bb.git_init_commit_repo()
+    result = bb.git_init_commit_repo()
 
     assert result == git_dir
     assert (git_dir / '.git').exists()

@@ -310,7 +310,9 @@ Key features:
 
 **Rationale**: This convention groups related operations alphabetically and makes the primary subject clear at a glance, which is particularly useful in a function-centric architecture where functions are the primary unit of composition.
 
-**Avoid type_name proliferation**: Too many distinct type_names hurts readability and discoverability. Prefer consolidating related concepts under a common prefix. Target type_names: `code_`, `command_`, `compile_`, `git_`, `storage_`, `hash_`.
+**Avoid type_name proliferation**: Too many distinct type_names hurts readability and discoverability. Prefer consolidating related concepts under a common prefix. Target type_names: `code_`, `command_`, `compile_`, `git_`, `helper_`, `storage_`, `hash_`.
+
+**Special type_name `helper_`**: Use `helper_` prefix for utility functions that don't fit other categories (e.g., UI interactions, generic operations). Example: `helper_open_editor_for_message()`.
 
 ### Testing Conventions
 

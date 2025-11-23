@@ -1125,7 +1125,7 @@ def git_commit_and_push(local_path: Path, message: str) -> bool:
 # Commit Functions
 # =============================================================================
 
-def commit_init_git_repo() -> Path:
+def git_init_commit_repo() -> Path:
     """
     Initialize the git repository for committing if it doesn't exist.
 
@@ -1162,7 +1162,7 @@ def commit_init_git_repo() -> Path:
     return git_dir
 
 
-def commit_open_editor_for_message() -> str:
+def helper_open_editor_for_message() -> str:
     """
     Open the user's editor to write a commit message.
 
@@ -1239,7 +1239,7 @@ def command_commit(hash_value: str, comment: str = None):
     print(f"Found {len(all_hashes)} function(s) to commit")
 
     # Initialize git repo
-    git_dir = commit_init_git_repo()
+    git_dir = git_init_commit_repo()
     pool_dir = storage_get_pool_directory()
 
     # Copy all functions with their mappings
@@ -1268,7 +1268,7 @@ def command_commit(hash_value: str, comment: str = None):
     if comment:
         message = comment
     else:
-        message = commit_open_editor_for_message()
+        message = helper_open_editor_for_message()
 
     # Commit
     result = git_run(['commit', '-m', message], cwd=str(git_dir))
@@ -1418,7 +1418,7 @@ def command_remote_pull(name: str):
         parsed = git_url_parse(url)
 
         # Initialize git dir if needed
-        git_dir = commit_init_git_repo()
+        git_dir = git_init_commit_repo()
 
         # Check if remote exists in git config, add if not
         result = git_run(['remote', 'get-url', name], cwd=str(git_dir))
