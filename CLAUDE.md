@@ -320,16 +320,29 @@ Key features:
 - **Test structure**: All tests MUST be functions, not classes
 - **Test naming**: Use descriptive names like `test_<component>_<behavior>` (e.g., `test_ast_normalizer_visit_name_with_mapping`)
 - **Test file**: `test_bb.py` contains 50+ test functions
-- **Normalized code strings**: All normalized code strings in tests MUST use the `normalize_code_for_test()` helper function. This ensures the code format matches `ast.unparse()` output (with proper line breaks and indentation).
+- **Normalized code strings**: All `normalized_code` values in tests MUST use the `normalize_code_for_test()` helper function. This ensures the code format matches `ast.unparse()` output (with proper line breaks and indentation). This applies to:
+  - Direct assignments like `normalized_code = ...`
+  - JSON fixture data like `object.json` files created in tests
+  - Any string comparison involving normalized code
 
 **Example of normalize_code_for_test usage**:
 ```python
+from tests.conftest import normalize_code_for_test
+
 # Wrong - this format never exists in practice:
 normalized_code = "def _bb_v_0(): return 42"
 
 # Correct - use the helper function:
 normalized_code = normalize_code_for_test("def _bb_v_0(): return 42")
 # Returns: "def _bb_v_0():\n    return 42"
+
+# When creating test fixture files (object.json):
+(func_dir / "object.json").write_text(json.dumps({
+    "schema_version": 1,
+    "hash": func_hash,
+    "normalized_code": normalize_code_for_test("def _bb_v_0(): pass"),
+    "metadata": {"created": "2025-01-01T00:00:00Z", "author": "test"}
+}))
 ```
 
 ### Important Invariants

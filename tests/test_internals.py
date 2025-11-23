@@ -873,7 +873,7 @@ def test_schema_detect_version_v1(mock_bb_dir):
     v1_data = {
         'schema_version': 1,
         'hash': test_hash,
-        'normalized_code': 'def _bb_v_0(): pass',
+        'normalized_code': normalize_code_for_test('def _bb_v_0(): pass'),
         'metadata': {}
     }
 

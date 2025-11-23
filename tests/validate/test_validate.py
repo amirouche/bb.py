@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import normalize_code_for_test
+
 
 def cli_run(args: list, env: dict = None) -> subprocess.CompletedProcess:
     """Run bb.py CLI command."""
@@ -116,7 +118,7 @@ def test_validate_wrong_schema_version_fails(tmp_path):
     (func_dir / 'object.json').write_text(json.dumps({
         'schema_version': 99,
         'hash': fake_hash,
-        'normalized_code': 'def _bb_v_0(): pass',
+        'normalized_code': normalize_code_for_test('def _bb_v_0(): pass'),
         'metadata': {}
     }))
 
@@ -140,7 +142,7 @@ def test_validate_no_language_mapping_fails(tmp_path):
     (func_dir / 'object.json').write_text(json.dumps({
         'schema_version': 1,
         'hash': fake_hash,
-        'normalized_code': 'def _bb_v_0(): pass',
+        'normalized_code': normalize_code_for_test('def _bb_v_0(): pass'),
         'metadata': {'created': '2025-01-01', 'name': 'test', 'email': 'test@example.com'}
     }))
 

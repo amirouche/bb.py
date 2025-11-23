@@ -4,9 +4,12 @@ Tests for remote functionality.
 Unit tests for low-level git operations (URL parsing, type detection).
 Integration tests for CLI commands (remote add/list/remove/pull/push).
 """
+import json
+
 import pytest
 
 import bb
+from tests.conftest import normalize_code_for_test
 
 
 # =============================================================================
@@ -173,7 +176,12 @@ def test_remote_pull_file(cli_runner, tmp_path):
     func_hash = "ab" + "0" * 62  # 64 chars total
     func_dir = remote_objects / ("0" * 62)  # Directory is remaining 62 chars after prefix
     func_dir.mkdir()
-    (func_dir / "object.json").write_text(f'{{"schema_version": 1, "hash": "{func_hash}", "normalized_code": "def _bb_v_0(): pass", "metadata": {{"created": "2025-01-01T00:00:00Z", "author": "test"}}}}')
+    (func_dir / "object.json").write_text(json.dumps({
+        "schema_version": 1,
+        "hash": func_hash,
+        "normalized_code": normalize_code_for_test("def _bb_v_0(): pass"),
+        "metadata": {"created": "2025-01-01T00:00:00Z", "author": "test"}
+    }))
 
     # Add remote and pull
     cli_runner.run(['remote', 'add', 'source', f'file://{remote_pool}'])
