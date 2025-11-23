@@ -132,8 +132,8 @@ def analyze(data):
     assert 'def analyze' in result.stdout
 
 
-def test_workflow_function_with_mobius_import(cli_runner, tmp_path):
-    """Test adding function that imports from mobius pool"""
+def test_workflow_function_with_bb_import(cli_runner, tmp_path):
+    """Test adding function that imports from bb pool"""
     # First, add a helper function
     helper_file = tmp_path / "helper.py"
     helper_file.write_text('''def helper(x):
@@ -145,7 +145,7 @@ def test_workflow_function_with_mobius_import(cli_runner, tmp_path):
 
     # Now add a function that uses the helper
     main_file = tmp_path / "main.py"
-    main_file.write_text(f'''from mobius.pool import object_{helper_hash} as helper
+    main_file.write_text(f'''from bb.pool import object_{helper_hash} as helper
 
 def process(value):
     """Process a value using helper"""
@@ -158,7 +158,7 @@ def process(value):
     result = cli_runner.run(['show', f'{main_hash}@eng'])
 
     assert result.returncode == 0
-    assert 'from mobius.pool import' in result.stdout
+    assert 'from bb.pool import' in result.stdout
     assert 'as helper' in result.stdout
     assert 'def process' in result.stdout
 

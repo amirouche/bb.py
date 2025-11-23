@@ -1,5 +1,5 @@
 """
-Tests for 'mobius.py translate' command.
+Tests for 'bb.py translate' command.
 
 Grey-box integration tests for adding translations to functions.
 Note: translate is interactive, so some tests use stdin injection.
@@ -14,8 +14,8 @@ import pytest
 
 
 def cli_run(args: list, env: dict = None, input_text: str = None) -> subprocess.CompletedProcess:
-    """Run mobius.py CLI command with optional stdin input."""
-    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'mobius.py')] + args
+    """Run bb.py CLI command with optional stdin input."""
+    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'bb.py')] + args
 
     run_env = os.environ.copy()
     if env:
@@ -32,8 +32,8 @@ def cli_run(args: list, env: dict = None, input_text: str = None) -> subprocess.
 
 def test_translate_missing_source_language_fails(tmp_path):
     """Test that translate fails without source language suffix"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Add a function first
     test_file = tmp_path / "func.py"
@@ -51,8 +51,8 @@ def test_translate_missing_source_language_fails(tmp_path):
 
 def test_translate_invalid_source_language_fails(tmp_path):
     """Test that translate fails with too short source language code"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     fake_hash = '0' * 64
 
@@ -65,8 +65,8 @@ def test_translate_invalid_source_language_fails(tmp_path):
 
 def test_translate_invalid_target_language_fails(tmp_path):
     """Test that translate fails with too short target language code"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     test_file = tmp_path / "func.py"
@@ -83,8 +83,8 @@ def test_translate_invalid_target_language_fails(tmp_path):
 
 def test_translate_invalid_hash_fails(tmp_path):
     """Test that translate fails with invalid hash format"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     result = cli_run(['translate', 'not-valid@eng', 'fra'], env=env)
 
@@ -94,9 +94,9 @@ def test_translate_invalid_hash_fails(tmp_path):
 
 def test_translate_nonexistent_function_fails(tmp_path):
     """Test that translate fails for nonexistent function"""
-    mobius_dir = tmp_path / '.mobius'
-    (mobius_dir / 'pool').mkdir(parents=True)
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    (bb_dir / 'pool').mkdir(parents=True)
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     fake_hash = 'f' * 64
 
@@ -108,8 +108,8 @@ def test_translate_nonexistent_function_fails(tmp_path):
 
 def test_translate_shows_source_function(tmp_path):
     """Test that translate displays the source function"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     test_file = tmp_path / "func.py"
@@ -132,8 +132,8 @@ def test_translate_shows_source_function(tmp_path):
 
 def test_translate_creates_mapping(tmp_path):
     """Test that translate creates a new language mapping"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     test_file = tmp_path / "func.py"
@@ -145,7 +145,7 @@ def test_translate_creates_mapping(tmp_path):
     func_hash = add_result.stdout.split('Hash:')[1].strip().split()[0]
 
     # Test: Provide translations for both names
-    # _mobius_v_0 = greet, _mobius_v_1 = name
+    # _bb_v_0 = greet, _bb_v_1 = name
     input_text = "saluer\nnom\nDire bonjour\n\n"  # empty comment
     result = cli_run(['translate', f'{func_hash}@eng', 'fra'], env=env, input_text=input_text)
 
@@ -154,14 +154,14 @@ def test_translate_creates_mapping(tmp_path):
     assert 'Translation saved' in result.stdout
 
     # Verify mapping was created
-    func_dir = mobius_dir / 'pool' / func_hash[:2] / func_hash[2:]
+    func_dir = bb_dir / 'pool' / func_hash[:2] / func_hash[2:]
     assert (func_dir / 'fra').exists()
 
 
 def test_translate_prompts_for_all_names(tmp_path):
     """Test that translate prompts for all variable names"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Function with multiple variables
     test_file = tmp_path / "func.py"

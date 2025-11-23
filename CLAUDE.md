@@ -1,8 +1,8 @@
-# CLAUDE.md - AI Assistant Guide for Mobius
+# CLAUDE.md - AI Assistant Guide for Beyond Babel
 
 ## Project Overview
 
-**Mobius** is a function pool manager for Python that enables multilingual function sharing through AST normalization and content-addressed storage. It allows the same logical function written in different human languages (with different variable names, docstrings, etc.) to share the same hash and be stored together.
+**Beyond Babel** is a function pool manager for Python that enables multilingual function sharing through AST normalization and content-addressed storage. It allows the same logical function written in different human languages (with different variable names, docstrings, etc.) to share the same hash and be stored together.
 
 ### Core Concept
 
@@ -18,25 +18,25 @@ Functions with identical logic but different naming (e.g., English vs French var
 1. **AST-based normalization**: Source code is parsed into an AST, normalized, then unparsed
 2. **Hash on logic, not names**: Docstrings excluded from hash computation to enable multilingual support
 3. **Bidirectional mapping**: Original names preserved for reconstruction in target language
-4. **Content-addressed storage**: Functions stored by hash in `$HOME/.local/mobius/pool/xx/yy.../object.json` (configurable via `MOBIUS_DIRECTORY` environment variable)
-5. **Single-file architecture**: All code resides in `mobius.py` - no modularization into separate packages. This keeps the tool simple, self-contained, and easy to distribute as a single script.
-6. **Object prefix for valid identifiers**: Mobius imports use `object_` prefix (e.g., `from mobius.pool import object_abc123 as func`) to ensure valid Python identifiers since SHA256 hashes can start with digits (0-9)
+4. **Content-addressed storage**: Functions stored by hash in `$HOME/.local/bb/pool/xx/yy.../object.json` (configurable via `BB_DIRECTORY` environment variable)
+5. **Single-file architecture**: All code resides in `bb.py` - no modularization into separate packages. This keeps the tool simple, self-contained, and easy to distribute as a single script.
+6. **Object prefix for valid identifiers**: BB imports use `object_` prefix (e.g., `from bb.pool import object_abc123 as func`) to ensure valid Python identifiers since SHA256 hashes can start with digits (0-9)
 
 ### Storage Location Configuration
 
-The mobius function pool location is controlled by the `MOBIUS_DIRECTORY` environment variable:
+The bb function pool location is controlled by the `BB_DIRECTORY` environment variable:
 
-- **Default**: `$HOME/.local/mobius/` (follows XDG Base Directory specification)
-- **Custom location**: Set `MOBIUS_DIRECTORY=/path/to/pool` to override
+- **Default**: `$HOME/.local/bb/` (follows XDG Base Directory specification)
+- **Custom location**: Set `BB_DIRECTORY=/path/to/pool` to override
 
 **Examples**:
 ```bash
 # Use default location
-python3 mobius.py add example.py@eng
+python3 bb.py add example.py@eng
 
 # Use custom location
-export MOBIUS_DIRECTORY=/shared/pool
-python3 mobius.py add example.py@eng
+export BB_DIRECTORY=/shared/pool
+python3 bb.py add example.py@eng
 ```
 
 ### Data Flow
@@ -48,11 +48,11 @@ Parse to AST
     ↓
 Extract docstring (language-specific)
     ↓
-Normalize AST (rename vars, sort imports, rewrite mobius imports)
+Normalize AST (rename vars, sort imports, rewrite bb imports)
     ↓
 Compute hash (on code WITHOUT docstring)
     ↓
-Store in $HOME/.local/mobius/pool/ (or $MOBIUS_DIRECTORY/pool/) with:
+Store in $HOME/.local/bb/pool/ (or $BB_DIRECTORY/pool/) with:
     - normalized_code (with docstring for display)
     - per-language mappings (name_mappings, alias_mappings, docstrings)
 ```
@@ -62,15 +62,15 @@ Store in $HOME/.local/mobius/pool/ (or $MOBIUS_DIRECTORY/pool/) with:
 ### Project Structure
 
 ```
-mobius.py/
-├── mobius.py                      # Main CLI tool
+bb.py/
+├── bb.py                      # Main CLI tool
 ├── examples/                      # Example functions directory
 │   ├── README.md                  # Examples documentation
 │   ├── example_simple.py          # English example
 │   ├── example_simple_french.py   # French example (same logic)
 │   ├── example_simple_spanish.py  # Spanish example (same logic)
 │   ├── example_with_import.py     # Example with stdlib imports
-│   └── example_with_mobius.py     # Example calling other pool functions
+│   └── example_with_bb.py     # Example calling other pool functions
 ├── strategies/                    # Design documents
 ├── tests/                         # Test suite
 └── .gitignore                     # Ignores __pycache__, etc.
@@ -79,7 +79,7 @@ mobius.py/
 ### Function Pool Structure (v1)
 
 ```
-$HOME/.local/mobius/pool/          # Default location (or $MOBIUS_DIRECTORY/pool/)
+$HOME/.local/bb/pool/          # Default location (or $BB_DIRECTORY/pool/)
 └── ab/                            # First 2 chars of function hash
     └── c123def456.../             # Function directory (remaining hash chars)
         ├── object.json            # Core function data
@@ -111,27 +111,27 @@ $HOME/.local/mobius/pool/          # Default location (or $MOBIUS_DIRECTORY/pool
 - Sorts imports lexicographically
 - Extracts function definition and imports
 - Extracts docstring separately
-- Rewrites `from mobius.pool import X as Y` → `from mobius.pool import X` (removes alias)
-- Creates name mappings (`original → _mobius_v_X`)
+- Rewrites `from bb.pool import X as Y` → `from bb.pool import X` (removes alias)
+- Creates name mappings (`original → _bb_v_X`)
 - Returns: normalized code (with/without docstring), docstring, mappings
 
-#### `mapping_create_name(function_def, imports, mobius_aliases)` (lines 133-180)
+#### `mapping_create_name(function_def, imports, bb_aliases)` (lines 133-180)
 **Generates bidirectional name mappings**
-- Function name always gets `_mobius_v_0`
-- Variables/args get sequential indices: `_mobius_v_1`, `_mobius_v_2`, ...
-- **Excluded from renaming**: Python builtins, imported names, mobius aliases
+- Function name always gets `_bb_v_0`
+- Variables/args get sequential indices: `_bb_v_1`, `_bb_v_2`, ...
+- **Excluded from renaming**: Python builtins, imported names, bb aliases
 - Returns: `(forward_mapping, reverse_mapping)`
 
-#### `imports_rewrite_mobius(imports)` (lines 183-213)
-**Transforms mobius imports for normalization**
-- Rewrites: `from mobius.pool import HASH as alias` → `from mobius.pool import HASH` (removes alias)
+#### `imports_rewrite_bb(imports)` (lines 183-213)
+**Transforms bb imports for normalization**
+- Rewrites: `from bb.pool import HASH as alias` → `from bb.pool import HASH` (removes alias)
 - Tracks alias mappings for later denormalization
-- Necessary because normalized code uses `HASH._mobius_v_0(...)` instead of `alias(...)`
+- Necessary because normalized code uses `HASH._bb_v_0(...)` instead of `alias(...)`
 
-#### `calls_replace_mobius(tree, alias_mapping, name_mapping)` (lines 216-235)
+#### `calls_replace_bb(tree, alias_mapping, name_mapping)` (lines 216-235)
 **Replaces aliased function calls with normalized form**
-- Transforms: `alias(...)` → `HASH._mobius_v_0(...)`
-- Uses alias_mapping to determine which names are mobius functions
+- Transforms: `alias(...)` → `HASH._bb_v_0(...)`
+- Uses alias_mapping to determine which names are bb functions
 
 #### `hash_compute(code)` (lines 321-335)
 **Generates SHA256 hash**
@@ -160,14 +160,14 @@ $HOME/.local/mobius/pool/          # Default location (or $MOBIUS_DIRECTORY/pool
 
 #### `function_save_v1(hash_value, normalized_code, metadata)` (lines 495-532)
 **Stores function in v1 format** (Schema v1)
-- Creates function directory: `$MOBIUS_DIRECTORY/pool/XX/YYYYYY.../`
+- Creates function directory: `$BB_DIRECTORY/pool/XX/YYYYYY.../`
 - Writes `object.json` with schema_version=1, metadata
 - Does NOT store language-specific data (stored separately in mapping files)
 - Clean separation: code in object.json, language variants in mapping.json files
 
 #### `mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment='')` (lines 534-585)
 **Stores language mapping in v1 format** (Schema v1)
-- Creates mapping directory: `$MOBIUS_DIRECTORY/pool/XX/Y.../lang/ZZ/W.../`
+- Creates mapping directory: `$BB_DIRECTORY/pool/XX/Y.../lang/ZZ/W.../`
 - Writes `mapping.json` with docstring, name_mapping, alias_mapping, comment
 - Content-addressed by mapping hash (enables deduplication)
 - Identical mappings across functions share same file
@@ -182,20 +182,20 @@ $HOME/.local/mobius/pool/          # Default location (or $MOBIUS_DIRECTORY/pool
 
 #### `function_load_v1(hash_value)` (lines 2072-2100)
 **Loads function from pool using schema v1**
-- Reads object.json: `$MOBIUS_DIRECTORY/pool/XX/YYYYYY.../object.json`
+- Reads object.json: `$BB_DIRECTORY/pool/XX/YYYYYY.../object.json`
 - Returns: Dictionary with schema_version, hash, normalized_code, metadata
 - Does NOT load language-specific data (use mapping functions for that)
 
 #### `mappings_list_v1(func_hash, lang)` (lines 851-909)
 **Lists all mapping variants for a language** (Schema v1)
-- Scans language directory: `$MOBIUS_DIRECTORY/pool/XX/Y.../lang/`
+- Scans language directory: `$BB_DIRECTORY/pool/XX/Y.../lang/`
 - Returns: List of (mapping_hash, comment) tuples
 - Used to discover available mapping variants
 - Returns empty list if language doesn't exist
 
 #### `mapping_load_v1(func_hash, lang, mapping_hash)` (lines 912-950)
 **Loads specific language mapping** (Schema v1)
-- Reads mapping.json: `$MOBIUS_DIRECTORY/pool/XX/Y.../lang/ZZ/W.../mapping.json`
+- Reads mapping.json: `$BB_DIRECTORY/pool/XX/Y.../lang/ZZ/W.../mapping.json`
 - Returns: Tuple of (docstring, name_mapping, alias_mapping, comment)
 - Content-addressed storage enables deduplication
 
@@ -214,13 +214,13 @@ $HOME/.local/mobius/pool/          # Default location (or $MOBIUS_DIRECTORY/pool
 - Explicit mapping hash: Directly outputs specified mapping
 - Uses function_load() + code_denormalize() to reconstruct original code
 - **This is the recommended command** for exploring and viewing functions
-- **Note**: CLI command `mobius.py show HASH@lang[@mapping_hash]`
+- **Note**: CLI command `bb.py show HASH@lang[@mapping_hash]`
 
 #### `code_denormalize(normalized_code, name_mapping, alias_mapping)` (lines 497-679)
 **Reconstructs original-looking code**
-- Reverses variable renaming: `_mobius_v_X → original_name`
-- Rewrites imports: `from mobius.pool import X` → `from mobius.pool import X as alias` (restores alias)
-- Transforms calls: `HASH._mobius_v_0(...)` → `alias(...)`
+- Reverses variable renaming: `_bb_v_X → original_name`
+- Rewrites imports: `from bb.pool import X` → `from bb.pool import X as alias` (restores alias)
+- Transforms calls: `HASH._bb_v_0(...)` → `alias(...)`
 
 ### Storage Schema
 
@@ -228,7 +228,7 @@ See [STORE.md](STORE.md) for the complete storage specification.
 
 **Directory Structure:**
 ```
-$MOBIUS_DIRECTORY/pool/            # Default: $HOME/.local/mobius/pool/
+$BB_DIRECTORY/pool/            # Default: $HOME/.local/bb/pool/
   ab/                              # First 2 chars of function hash
     c123def456.../                 # Function directory (remaining hash chars)
       object.json                  # Core function data
@@ -247,7 +247,7 @@ $MOBIUS_DIRECTORY/pool/            # Default: $HOME/.local/mobius/pool/
 {
   "schema_version": 1,
   "hash": "abc123...",
-  "normalized_code": "def _mobius_v_0(...):\n    ...",
+  "normalized_code": "def _bb_v_0(...):\n    ...",
   "metadata": {
     "created": "2025-11-21T10:00:00Z",
     "author": "username"
@@ -259,7 +259,7 @@ $MOBIUS_DIRECTORY/pool/            # Default: $HOME/.local/mobius/pool/
 ```json
 {
   "docstring": "Calculate the average...",
-  "name_mapping": {"_mobius_v_0": "calculate_average", "_mobius_v_1": "numbers"},
+  "name_mapping": {"_bb_v_0": "calculate_average", "_bb_v_1": "numbers"},
   "alias_mapping": {"abc123": "helper"},
   "comment": "Formal mathematical terminology"
 }
@@ -287,11 +287,11 @@ Key features:
 - **Classes**: PascalCase (`ASTNormalizer`)
 - **Functions**: snake_case following `type_name_verb_complement` pattern (`mapping_create_name`, `ast_normalize`, `function_save`)
 - **Constants**: UPPER_SNAKE_CASE (`PYTHON_BUILTINS`)
-- **Normalized names**: `_mobius_v_N` (N = 0, 1, 2, ...)
+- **Normalized names**: `_bb_v_N` (N = 0, 1, 2, ...)
 
 #### Preferred Function Naming Pattern
 
-**Note**: This is a project-specific convention that differs from traditional PEP 8 `verb_noun` patterns. Mobius emphasizes a structured naming convention that puts the type being operated on first:
+**Note**: This is a project-specific convention that differs from traditional PEP 8 `verb_noun` patterns. Beyond Babel emphasizes a structured naming convention that puts the type being operated on first:
 
 **Pattern**: `type_name_verb_complement`
 
@@ -317,22 +317,22 @@ Key features:
 - **Test framework**: pytest
 - **Test structure**: All tests MUST be functions, not classes
 - **Test naming**: Use descriptive names like `test_<component>_<behavior>` (e.g., `test_ast_normalizer_visit_name_with_mapping`)
-- **Test file**: `test_mobius.py` contains 50+ test functions
+- **Test file**: `test_bb.py` contains 50+ test functions
 - **Normalized code strings**: All normalized code strings in tests MUST use the `normalize_code_for_test()` helper function. This ensures the code format matches `ast.unparse()` output (with proper line breaks and indentation).
 
 **Example of normalize_code_for_test usage**:
 ```python
 # Wrong - this format never exists in practice:
-normalized_code = "def _mobius_v_0(): return 42"
+normalized_code = "def _bb_v_0(): return 42"
 
 # Correct - use the helper function:
-normalized_code = normalize_code_for_test("def _mobius_v_0(): return 42")
-# Returns: "def _mobius_v_0():\n    return 42"
+normalized_code = normalize_code_for_test("def _bb_v_0(): return 42")
+# Returns: "def _bb_v_0():\n    return 42"
 ```
 
 ### Important Invariants
 
-1. **Function name always `_mobius_v_0`**: First entry in name mapping
+1. **Function name always `_bb_v_0`**: First entry in name mapping
 2. **Built-ins never renamed**: `len`, `sum`, `print`, etc. preserved
 3. **Imported names never renamed**: `math`, `Counter`, etc. preserved
 4. **Imports sorted**: Lexicographically by module name
@@ -344,9 +344,9 @@ normalized_code = normalize_code_for_test("def _mobius_v_0(): return 42")
 
 ### Philosophy: Grey-Box Integration First
 
-Mobius follows a **grey-box integration testing** approach as the primary testing strategy. Most tests exercise the CLI commands end-to-end while having knowledge of the internal storage format for assertions.
+Beyond Babel follows a **grey-box integration testing** approach as the primary testing strategy. Most tests exercise the CLI commands end-to-end while having knowledge of the internal storage format for assertions.
 
-**Testing pyramid for Mobius**:
+**Testing pyramid for Beyond Babel**:
 1. **Integration tests (grey-box)** - Primary focus, organized by CLI command
 2. **Unit tests** - Only for complex algorithms (AST normalization, hash computation, schema validation)
 
@@ -358,9 +358,9 @@ tests/
 ├── integration/
 │   └── test_workflows.py    # End-to-end workflows combining multiple commands
 ├── add/
-│   └── test_add.py          # Tests for 'mobius.py add' command
+│   └── test_add.py          # Tests for 'bb.py add' command
 ├── show/
-│   └── test_show.py         # Tests for 'mobius.py show' command
+│   └── test_show.py         # Tests for 'bb.py show' command
 ├── test_internals.py        # Unit tests for complex algorithms
 └── test_storage.py          # Storage schema validation tests
 ```
@@ -397,7 +397,7 @@ Unit tests are reserved for low-level components where grey-box testing would be
 - **Name mapping** (`mapping_create_name`, `mapping_compute_hash`)
 - **Hash computation** (`hash_compute` with determinism guarantees)
 - **Schema detection** (`schema_detect_version`)
-- **Import handling** (`imports_rewrite_mobius`, `calls_replace_mobius`)
+- **Import handling** (`imports_rewrite_bb`, `calls_replace_bb`)
 
 These tests live in `tests/test_internals.py`.
 
@@ -414,7 +414,7 @@ pytest tests/integration/ tests/add/ tests/show/
 pytest tests/test_internals.py tests/test_storage.py
 
 # Run with coverage
-pytest --cov=mobius --cov-report=html
+pytest --cov=bb --cov-report=html
 
 # Run tests matching pattern
 pytest -k "add"
@@ -430,22 +430,22 @@ pytest -k "add"
 
 ```bash
 # Add examples to pool
-python3 mobius.py add examples/example_simple.py@eng
-python3 mobius.py add examples/example_simple_french.py@fra
-python3 mobius.py add examples/example_simple_spanish.py@spa
+python3 bb.py add examples/example_simple.py@eng
+python3 bb.py add examples/example_simple_french.py@fra
+python3 bb.py add examples/example_simple_spanish.py@spa
 
 # Verify they share the same hash
-find ~/.local/mobius/pool -name "object.json"  # or $MOBIUS_DIRECTORY/pool/
+find ~/.local/bb/pool -name "object.json"  # or $BB_DIRECTORY/pool/
 
 # Show in different language
-python3 mobius.py show HASH@eng
-python3 mobius.py show HASH@fra
+python3 bb.py show HASH@eng
+python3 bb.py show HASH@fra
 ```
 
 ### Verification Checklist
 
 - [ ] Imports are sorted lexicographically
-- [ ] Function renamed to `_mobius_v_0`
+- [ ] Function renamed to `_bb_v_0`
 - [ ] Variables renamed sequentially
 - [ ] Built-ins NOT renamed (`sum`, `len`, `print`)
 - [ ] Imports NOT renamed (`math`, `Counter`)
@@ -464,7 +464,7 @@ python3 mobius.py show HASH@fra
 
 Based on recent commits:
 - Use imperative mood: "Add", "Extract", "Fix"
-- Be specific: "Add 'mobius show HASH@lang' command"
+- Be specific: "Add 'bb show HASH@lang' command"
 - Reference context: "Extract docstrings from hash computation for multilingual support"
 
 ### Ignored Files
@@ -472,7 +472,7 @@ Based on recent commits:
 - `__pycache__/`, `*.pyc`: Python bytecode
 - `.venv/`, `.env`: Virtual environments and secrets
 
-**Note:** The function pool is now stored in `$HOME/.local/mobius/` by default (configurable via `MOBIUS_DIRECTORY`), so it's no longer in the project directory and doesn't need to be in `.gitignore`.
+**Note:** The function pool is now stored in `$HOME/.local/bb/` by default (configurable via `BB_DIRECTORY`), so it's no longer in the project directory and doesn't need to be in `.gitignore`.
 
 ## Chore
 
@@ -494,7 +494,7 @@ Understanding how imports are processed is critical to the normalization system.
 - **Before storage**: Sorted lexicographically, **no renaming**
 - **In storage**: Identical to original (e.g., `import math`)
 - **From storage**: No transformation
-- **Usage**: Names like `math`, `Counter`, `np` are **never renamed** to `_mobius_v_X`
+- **Usage**: Names like `math`, `Counter`, `np` are **never renamed** to `_bb_v_X`
 
 **Example:**
 ```python
@@ -503,45 +503,45 @@ from collections import Counter
 import math
 ```
 
-#### 2. Mobius Imports (Pool Functions)
-**Examples**: `from mobius.pool import object_abc123def as helper`
+#### 2. BB Imports (Pool Functions)
+**Examples**: `from bb.pool import object_abc123def as helper`
 
-**Important**: Mobius imports must use the `object_` prefix followed by the hash. This ensures valid Python identifiers since SHA256 hashes can start with digits (0-9), which would otherwise be invalid identifiers.
+**Important**: BB imports must use the `object_` prefix followed by the hash. This ensures valid Python identifiers since SHA256 hashes can start with digits (0-9), which would otherwise be invalid identifiers.
 
 **Processing**:
 
 **Before storage (normalization)**:
 ```python
-from mobius.pool import object_abc123def as helper
+from bb.pool import object_abc123def as helper
 ```
 ↓ becomes ↓
 ```python
-from mobius.pool import object_abc123def
+from bb.pool import object_abc123def
 ```
 - Alias removed: `as helper` is dropped
 - Alias tracked in `alias_mapping`: `{"abc123def": "helper"}` (actual hash without prefix)
-- Function calls transformed: `helper(x)` → `object_abc123def._mobius_v_0(x)`
+- Function calls transformed: `helper(x)` → `object_abc123def._bb_v_0(x)`
 
 **From storage (denormalization)**:
 ```python
-from mobius.pool import object_abc123def
+from bb.pool import object_abc123def
 ```
 ↓ becomes ↓
 ```python
-from mobius.pool import object_abc123def as helper
+from bb.pool import object_abc123def as helper
 ```
 - Language-specific alias restored: `as helper` (from `alias_mapping[lang]`)
-- Function calls transformed back: `object_abc123def._mobius_v_0(x)` → `helper(x)`
+- Function calls transformed back: `object_abc123def._bb_v_0(x)` → `helper(x)`
 
 ### Why This Design?
 
 - **Standard imports** are universal (same across all languages)
-- **Mobius imports** have language-specific aliases:
-  - English: `from mobius.pool import object_abc123 as helper`
-  - French: `from mobius.pool import object_abc123 as assistant`
-  - Spanish: `from mobius.pool import object_abc123 as ayudante`
+- **BB imports** have language-specific aliases:
+  - English: `from bb.pool import object_abc123 as helper`
+  - French: `from bb.pool import object_abc123 as assistant`
+  - Spanish: `from bb.pool import object_abc123 as ayudante`
 
-All normalize to: `from mobius.pool import object_abc123`, ensuring identical hashes.
+All normalize to: `from bb.pool import object_abc123`, ensuring identical hashes.
 
 The `object_` prefix is required because SHA256 hashes can start with digits (0-9), which would make them invalid Python identifiers.
 
@@ -554,9 +554,9 @@ The `object_` prefix is required because SHA256 hashes can start with digits (0-
 2. Sort imports lexicographically
 3. Extract function definition
 4. Extract docstring from function
-5. Rewrite mobius imports (remove aliases)
-6. Create name mapping (excluding builtins, imports, mobius aliases)
-7. Replace mobius calls (alias → HASH._mobius_v_0)
+5. Rewrite bb imports (remove aliases)
+6. Create name mapping (excluding builtins, imports, bb aliases)
+7. Replace bb calls (alias → HASH._bb_v_0)
 8. Apply name normalization
 9. Clear AST location info
 10. Unparse to normalized code
@@ -575,7 +575,7 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
 
 ### Public-Facing Hash Specification
 
-**Public hashes** in Mobius refer to content-addressed identifiers that follow strict deterministic serialization rules to ensure global consistency.
+**Public hashes in Beyond Babel refer to content-addressed identifiers that follow strict deterministic serialization rules to ensure global consistency.
 
 #### Hash Computation Rules
 
@@ -600,7 +600,7 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
 ```python
 # Canonical form for hashing (intermediate representation)
 # Hash is computed on normalized code WITHOUT docstring
-canonical_code = "def _mobius_v_0(...):\n    ..."
+canonical_code = "def _bb_v_0(...):\n    ..."
 
 # Compute hash from code
 hash_value = hashlib.sha256(canonical_code.encode('utf-8')).hexdigest()
@@ -609,7 +609,7 @@ hash_value = hashlib.sha256(canonical_code.encode('utf-8')).hexdigest()
 stored = {
     "schema_version": 1,
     "hash": hash_value,
-    "normalized_code": "def _mobius_v_0(...):\n    \"\"\"Docstring...\"\"\"\n    ...",
+    "normalized_code": "def _bb_v_0(...):\n    \"\"\"Docstring...\"\"\"\n    ...",
     "metadata": {...}
 }
 # Hash of stored JSON ≠ hash_value (hash is of code only)
@@ -628,7 +628,7 @@ stored = {
 3. **Don't rename built-ins**: `PYTHON_BUILTINS` set must remain untouched
 4. **Don't assume Python 3.8**: Code uses `ast.unparse()` (requires Python 3.9+)
 5. **Don't break import sorting**: Lexicographic order is part of normalization
-6. **Don't create duplicate mappings**: `_mobius_v_0` is ALWAYS the function name
+6. **Don't create duplicate mappings**: `_bb_v_0` is ALWAYS the function name
 
 ## Extension Points
 
@@ -642,7 +642,7 @@ stored = {
 ### Future Considerations
 
 - **Type checking**: Consider adding mypy type checking
-- **Testing framework**: Project uses pytest for automated testing (see `test_mobius.py`)
+- **Testing framework**: Project uses pytest for automated testing (see `test_bb.py`)
 - **Documentation generation**: Extract docstrings to generate docs
 - **Package distribution**: Consider setuptools/pyproject.toml for PyPI
 
@@ -650,10 +650,10 @@ stored = {
 
 When referencing code locations, use this format:
 
-- `mobius.py:272` - ast_normalize function
-- `mobius.py:133` - mapping_create_name function
-- `mobius.py:20` - ASTNormalizer class
-- `mobius.py:321` - hash_compute function
+- `bb.py:272` - ast_normalize function
+- `bb.py:133` - mapping_create_name function
+- `bb.py:20` - ASTNormalizer class
+- `bb.py:321` - hash_compute function
 
 ## Performance Considerations
 
@@ -680,7 +680,7 @@ When referencing code locations, use this format:
 
 ## Debugging Tips
 
-1. **Inspect JSON**: `cat ~/.local/mobius/pool/XX/YYY.../object.json | python3 -m json.tool`
+1. **Inspect JSON**: `cat ~/.local/bb/pool/XX/YYY.../object.json | python3 -m json.tool`
 2. **Check AST**: Use `ast.dump()` to inspect tree structure
 3. **Compare hashes**: Same logic should produce same hash
 4. **Verify mappings**: Check name_mappings in JSON for correctness
@@ -695,7 +695,7 @@ Regular maintenance tasks for AI assistants working on this codebase:
 
 ## Summary
 
-Mobius is a carefully designed system for multilingual function sharing through AST normalization. The key insight is separating logic (hashed) from presentation (language-specific names/docstrings). When modifying the code:
+Beyond Babel is a carefully designed system for multilingual function sharing through AST normalization. The key insight is separating logic (hashed) from presentation (language-specific names/docstrings). When modifying the code:
 
 - Preserve the invariants listed above
 - Test with multiple languages

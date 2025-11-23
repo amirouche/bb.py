@@ -1,5 +1,5 @@
 """
-Integration tests for '@check' decorator and 'mobius.py check' command.
+Integration tests for '@check' decorator and 'bb.py check' command.
 
 Grey-box style:
 - Setup: Create test files with @check decorators
@@ -23,8 +23,8 @@ def test_add_function_with_check_decorator(cli_runner, tmp_path):
 
     # Setup: Create a test file with @check decorator
     test_file = tmp_path / "test_add.py"
-    test_file.write_text(f'''from mobius import check
-from mobius.pool import object_{target_hash} as add_numbers
+    test_file.write_text(f'''from bb import check
+from bb.pool import object_{target_hash} as add_numbers
 
 @check(object_{target_hash})
 def test_add():
@@ -75,9 +75,9 @@ def test_add_function_with_multiple_check_decorators(cli_runner, tmp_path):
 
     # Setup: Create a test file with multiple @check decorators
     test_file = tmp_path / "test_math.py"
-    test_file.write_text(f'''from mobius import check
-from mobius.pool import object_{target1_hash} as add
-from mobius.pool import object_{target2_hash} as subtract
+    test_file.write_text(f'''from bb import check
+from bb.pool import object_{target1_hash} as add
+from bb.pool import object_{target2_hash} as subtract
 
 @check(object_{target1_hash})
 @check(object_{target2_hash})
@@ -122,8 +122,8 @@ def test_check_command_finds_tests(cli_runner, tmp_path):
 
     # Setup: Create a test file with @check decorator
     test_file = tmp_path / "test_multiply.py"
-    test_file.write_text(f'''from mobius import check
-from mobius.pool import object_{target_hash} as multiply
+    test_file.write_text(f'''from bb import check
+from bb.pool import object_{target_hash} as multiply
 
 @check(object_{target_hash})
 def test_multiply():
@@ -140,7 +140,7 @@ def test_multiply():
     # Assert: Check that test function is found
     assert check_result.returncode == 0
     assert test_hash in check_result.stdout
-    assert 'mobius.py run' in check_result.stdout
+    assert 'bb.py run' in check_result.stdout
 
 
 def test_check_command_no_tests_found(cli_runner, tmp_path):
@@ -167,8 +167,8 @@ def test_add_with_check_missing_target_fails(cli_runner, tmp_path):
     # Setup: Create a test file with @check pointing to non-existent function
     fake_hash = 'a' * 64  # Non-existent hash
     test_file = tmp_path / "test_bad.py"
-    test_file.write_text(f'''from mobius import check
-from mobius.pool import object_{fake_hash} as fake_func
+    test_file.write_text(f'''from bb import check
+from bb.pool import object_{fake_hash} as fake_func
 
 @check(object_{fake_hash})
 def test_fake():

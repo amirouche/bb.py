@@ -8,7 +8,7 @@ import ast
 
 import pytest
 
-import mobius
+import bb
 from tests.conftest import normalize_code_for_test
 
 
@@ -84,7 +84,7 @@ def test_normalize_simple_async_function():
 '''
     tree = ast.parse(code)
 
-    func_def, imports = mobius.code_extract_definition(tree)
+    func_def, imports = bb.code_extract_definition(tree)
 
     assert isinstance(func_def, ast.AsyncFunctionDef)
     assert func_def.name == "fetch_data"
@@ -98,11 +98,11 @@ def test_normalize_async_function_with_parameters():
     return result
 '''
     tree = ast.parse(code)
-    func_def, imports = mobius.code_extract_definition(tree)
+    func_def, imports = bb.code_extract_definition(tree)
 
-    name_mapping, reverse_mapping = mobius.code_create_name_mapping(func_def, imports, {})
+    name_mapping, reverse_mapping = bb.code_create_name_mapping(func_def, imports, {})
 
-    assert name_mapping["process_item"] == "_mobius_v_0"
+    assert name_mapping["process_item"] == "_bb_v_0"
     assert "item" in name_mapping
     assert "timeout" in name_mapping
     assert "result" in name_mapping
@@ -118,11 +118,11 @@ def test_normalize_async_function_with_await_expressions():
     return result
 '''
     tree = ast.parse(code)
-    func_def, imports = mobius.code_extract_definition(tree)
+    func_def, imports = bb.code_extract_definition(tree)
 
-    name_mapping, reverse_mapping = mobius.code_create_name_mapping(func_def, imports, {})
+    name_mapping, reverse_mapping = bb.code_create_name_mapping(func_def, imports, {})
 
-    assert "_mobius_v_0" in reverse_mapping
+    assert "_bb_v_0" in reverse_mapping
     assert "url" in name_mapping
     assert "data" in name_mapping
     assert "connection" in name_mapping
@@ -146,11 +146,11 @@ def test_async_function_hash_determinism():
     tree_eng = ast.parse(code_eng)
     tree_fra = ast.parse(code_fra)
 
-    _, normalized_eng_no_doc, _, _, _ = mobius.code_normalize(tree_eng, "eng")
-    _, normalized_fra_no_doc, _, _, _ = mobius.code_normalize(tree_fra, "fra")
+    _, normalized_eng_no_doc, _, _, _ = bb.code_normalize(tree_eng, "eng")
+    _, normalized_fra_no_doc, _, _, _ = bb.code_normalize(tree_fra, "fra")
 
-    hash_eng = mobius.hash_compute(normalized_eng_no_doc)
-    hash_fra = mobius.hash_compute(normalized_fra_no_doc)
+    hash_eng = bb.hash_compute(normalized_eng_no_doc)
+    hash_fra = bb.hash_compute(normalized_fra_no_doc)
 
     assert hash_eng == hash_fra
 
@@ -163,10 +163,10 @@ def test_async_function_preserves_async_keyword():
 '''
     tree = ast.parse(code)
 
-    normalized_with_doc, normalized_without_doc, _, _, _ = mobius.code_normalize(tree, "eng")
+    normalized_with_doc, normalized_without_doc, _, _, _ = bb.code_normalize(tree, "eng")
 
-    assert "async def _mobius_v_0" in normalized_with_doc
-    assert "async def _mobius_v_0" in normalized_without_doc
+    assert "async def _bb_v_0" in normalized_with_doc
+    assert "async def _bb_v_0" in normalized_without_doc
 
 
 def test_ast_normalizer_visit_async_function_def():
@@ -176,13 +176,13 @@ def test_ast_normalizer_visit_async_function_def():
 '''
     tree = ast.parse(code)
 
-    name_mapping = {"original_name": "_mobius_v_0"}
-    normalizer = mobius.ASTNormalizer(name_mapping)
+    name_mapping = {"original_name": "_bb_v_0"}
+    normalizer = bb.ASTNormalizer(name_mapping)
     transformed = normalizer.visit(tree)
 
     func_def = transformed.body[0]
     assert isinstance(func_def, ast.AsyncFunctionDef)
-    assert func_def.name == "_mobius_v_0"
+    assert func_def.name == "_bb_v_0"
 
 
 def test_names_collect_includes_async_function():
@@ -193,7 +193,7 @@ def test_names_collect_includes_async_function():
 '''
     tree = ast.parse(code)
 
-    names = mobius.code_collect_names(tree)
+    names = bb.code_collect_names(tree)
 
     assert "async_func" in names
     assert "param" in names

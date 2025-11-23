@@ -1,5 +1,5 @@
 """
-Tests for 'mobius.py refactor' command.
+Tests for 'bb.py refactor' command.
 
 Grey-box integration tests for hash replacement in functions.
 """
@@ -12,8 +12,8 @@ import pytest
 
 
 def cli_run(args: list, env: dict = None) -> subprocess.CompletedProcess:
-    """Run mobius.py CLI command."""
-    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'mobius.py')] + args
+    """Run bb.py CLI command."""
+    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'bb.py')] + args
 
     run_env = os.environ.copy()
     if env:
@@ -29,8 +29,8 @@ def cli_run(args: list, env: dict = None) -> subprocess.CompletedProcess:
 
 def test_refactor_invalid_what_hash_fails(tmp_path):
     """Test that refactor fails with invalid what hash"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     fake_from = 'a' * 64
     fake_to = 'b' * 64
@@ -43,8 +43,8 @@ def test_refactor_invalid_what_hash_fails(tmp_path):
 
 def test_refactor_invalid_from_hash_fails(tmp_path):
     """Test that refactor fails with invalid from hash"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     fake_what = 'a' * 64
     fake_to = 'b' * 64
@@ -56,8 +56,8 @@ def test_refactor_invalid_from_hash_fails(tmp_path):
 
 def test_refactor_invalid_to_hash_fails(tmp_path):
     """Test that refactor fails with invalid to hash"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     fake_what = 'a' * 64
     fake_from = 'b' * 64
@@ -69,9 +69,9 @@ def test_refactor_invalid_to_hash_fails(tmp_path):
 
 def test_refactor_nonexistent_what_function_fails(tmp_path):
     """Test that refactor fails when what function doesn't exist"""
-    mobius_dir = tmp_path / '.mobius'
-    (mobius_dir / 'pool').mkdir(parents=True)
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    (bb_dir / 'pool').mkdir(parents=True)
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     fake_what = 'a' * 64
     fake_from = 'b' * 64
@@ -84,8 +84,8 @@ def test_refactor_nonexistent_what_function_fails(tmp_path):
 
 def test_refactor_nonexistent_to_function_fails(tmp_path):
     """Test that refactor fails when to function doesn't exist"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Add a function (what)
     test_file = tmp_path / "func.py"

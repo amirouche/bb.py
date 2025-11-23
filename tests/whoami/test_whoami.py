@@ -1,5 +1,5 @@
 """
-Tests for 'mobius.py whoami' command.
+Tests for 'bb.py whoami' command.
 
 Grey-box integration tests for user configuration management.
 """
@@ -13,8 +13,8 @@ import pytest
 
 
 def cli_run(args: list, env: dict = None, cwd: str = None) -> subprocess.CompletedProcess:
-    """Run mobius.py CLI command."""
-    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'mobius.py')] + args
+    """Run bb.py CLI command."""
+    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'bb.py')] + args
 
     run_env = os.environ.copy()
     if env:
@@ -31,8 +31,8 @@ def cli_run(args: list, env: dict = None, cwd: str = None) -> subprocess.Complet
 
 def test_whoami_get_name_empty_without_init(tmp_path):
     """Test getting name returns empty when config doesn't exist."""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     result = cli_run(['whoami', 'name'], env=env)
 
@@ -42,8 +42,8 @@ def test_whoami_get_name_empty_without_init(tmp_path):
 
 def test_whoami_set_and_get_name(tmp_path):
     """Test setting and getting name."""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Initialize first
     cli_run(['init'], env=env)
@@ -61,8 +61,8 @@ def test_whoami_set_and_get_name(tmp_path):
 
 def test_whoami_set_and_get_email(tmp_path):
     """Test setting and getting email."""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     cli_run(['init'], env=env)
 
@@ -79,8 +79,8 @@ def test_whoami_set_and_get_email(tmp_path):
 
 def test_whoami_set_and_get_public_key(tmp_path):
     """Test setting and getting public key."""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     cli_run(['init'], env=env)
 
@@ -97,8 +97,8 @@ def test_whoami_set_and_get_public_key(tmp_path):
 
 def test_whoami_set_and_get_languages(tmp_path):
     """Test setting and getting languages (multiple values)."""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     cli_run(['init'], env=env)
 
@@ -115,8 +115,8 @@ def test_whoami_set_and_get_languages(tmp_path):
 
 def test_whoami_languages_replace_not_append(tmp_path):
     """Test that setting languages replaces previous values."""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     cli_run(['init'], env=env)
 
@@ -134,8 +134,8 @@ def test_whoami_languages_replace_not_append(tmp_path):
 
 def test_whoami_invalid_subcommand(tmp_path):
     """Test that invalid subcommand fails with argparse error."""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     result = cli_run(['whoami', 'invalid'], env=env)
 
@@ -145,15 +145,15 @@ def test_whoami_invalid_subcommand(tmp_path):
 
 def test_whoami_persists_to_config_file(tmp_path):
     """Test that whoami changes are persisted to config.json."""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     cli_run(['init'], env=env)
     cli_run(['whoami', 'name', 'persisteduser'], env=env)
     cli_run(['whoami', 'email', 'persisted@example.com'], env=env)
 
     # Read config directly
-    config = json.loads((mobius_dir / 'config.json').read_text())
+    config = json.loads((bb_dir / 'config.json').read_text())
 
     assert config['user']['name'] == 'persisteduser'
     assert config['user']['email'] == 'persisted@example.com'
@@ -161,10 +161,10 @@ def test_whoami_persists_to_config_file(tmp_path):
 
 def test_whoami_corrupted_config_fails_gracefully(tmp_path):
     """Test that corrupted config file shows helpful error."""
-    mobius_dir = tmp_path / '.mobius'
-    mobius_dir.mkdir(parents=True)
-    (mobius_dir / 'config.json').write_text('corrupted json')
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    bb_dir.mkdir(parents=True)
+    (bb_dir / 'config.json').write_text('corrupted json')
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     result = cli_run(['whoami', 'name'], env=env)
 
@@ -175,8 +175,8 @@ def test_whoami_corrupted_config_fails_gracefully(tmp_path):
 
 def test_whoami_get_empty_languages(tmp_path):
     """Test getting languages when none are set."""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Don't init - default config has empty languages list
     result = cli_run(['whoami', 'language'], env=env)
@@ -187,8 +187,8 @@ def test_whoami_get_empty_languages(tmp_path):
 
 def test_whoami_single_language(tmp_path):
     """Test setting a single language."""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     cli_run(['init'], env=env)
     result = cli_run(['whoami', 'language', 'fra'], env=env)

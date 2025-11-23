@@ -1,6 +1,6 @@
-# Contributing to Mobius
+# Contributing to Beyond Babel
 
-Thank you for your interest in contributing to Mobius! This project welcomes all kinds of contributions, and we're excited to have you here.
+Thank you for your interest in contributing to Beyond Babel! This project welcomes all kinds of contributions, and we're excited to have you here.
 
 ## Philosophy: Vibe Coding Encouraged
 
@@ -11,7 +11,7 @@ This project embraces **vibe coding** - a creative, exploratory approach to deve
 - Follow your instincts when designing features
 - Share incomplete ideas - they often spark the best discussions
 
-For a comprehensive understanding of the project architecture, design decisions, and implementation details, please read **[CLAUDE.md](CLAUDE.md)**. This document is your guide to understanding how Mobius works under the hood.
+For a comprehensive understanding of the project architecture, design decisions, and implementation details, please read **[CLAUDE.md](CLAUDE.md)**. This document is your guide to understanding how Beyond Babel works under the hood.
 
 ## All Contributions Are Welcome
 
@@ -29,13 +29,13 @@ While code contributions are wonderful, they're not the only way to help! Valuab
 
 ### Examples Directory
 
-The `examples/` directory contains sample functions demonstrating Mobius's capabilities:
+The `examples/` directory contains sample functions demonstrating Beyond Babel's capabilities:
 
 - `example_simple.py` - Basic function (English)
 - `example_simple_french.py` - Same logic in French
 - `example_simple_spanish.py` - Same logic in Spanish
 - `example_with_import.py` - Function with standard library imports
-- `example_with_mobius.py` - Function calling other pool functions
+- `example_with_bb.py` - Function calling other pool functions
 
 These examples are great for:
 - Understanding how multilingual functions work
@@ -49,32 +49,32 @@ Try adding your own examples in different human languages!
 
 ```bash
 # Add an example function
-python3 mobius.py add examples/example_simple.py@eng
+python3 bb.py add examples/example_simple.py@eng
 
-# Verify it was stored (default location: $HOME/.local/mobius)
-find $HOME/.local/mobius/pool -name "object.json"
+# Verify it was stored (default location: $HOME/.local/bb)
+find $HOME/.local/bb/pool -name "object.json"
 
 # Clean up
-rm -rf $HOME/.local/mobius
+rm -rf $HOME/.local/bb
 ```
 
 ## Roadmap: Creative Coding for User Reach
 
-Mobius aims to become a valuable tool for the **creative coding community**, enabling artists and designers to share algorithms across language barriers. Our vision includes:
+Beyond Babel aims to become a valuable tool for the **creative coding community**, enabling artists and designers to share algorithms across language barriers. Our vision includes:
 
 - **p5.js integration**: Bridge Python functions with p5.js sketches for web-based creative coding
-- **Processing compatibility**: Enable Python Mode for Processing to use Mobius functions
+- **Processing compatibility**: Enable Python Mode for Processing to use BB functions
 - **Creative coding testbed**: Build a gallery of generative art, visual algorithms, and interactive demos
 - **Educational outreach**: Provide multilingual examples for teaching computational creativity
 - **Community building**: Foster collaboration between creative coders from different linguistic backgrounds
 
-By targeting creative coding communities (p5.js, Processing, openFrameworks, etc.), we can demonstrate Mobius's value while reaching artists, educators, and students worldwide. If you're interested in creative coding, consider contributing examples that showcase visual algorithms, generative patterns, or interactive systems!
+By targeting creative coding communities (p5.js, Processing, openFrameworks, etc.), we can demonstrate Beyond Babel's value while reaching artists, educators, and students worldwide. If you're interested in creative coding, consider contributing examples that showcase visual algorithms, generative patterns, or interactive systems!
 
 ---
 
 # Testing Guide
 
-This section includes comprehensive information about testing Mobius.
+This section includes comprehensive information about testing Beyond Babel.
 
 ## Installation
 
@@ -107,7 +107,7 @@ pytest -v
 ### Run with coverage report:
 
 ```bash
-pytest --cov=mobius --cov-report=html
+pytest --cov=bb --cov-report=html
 ```
 
 ### Run specific test by name pattern:
@@ -119,14 +119,14 @@ pytest -k "ast_normalizer"
 ### Run specific test:
 
 ```bash
-pytest test_mobius.py::test_ast_normalizer_visit_name_with_mapping
+pytest test_bb.py::test_ast_normalizer_visit_name_with_mapping
 ```
 
 ## Common Issues
 
 ### Import Errors
 
-If you get import errors, make sure mobius.py is in the Python path:
+If you get import errors, make sure bb.py is in the Python path:
 
 ```bash
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
@@ -140,7 +140,7 @@ Tests use temporary directories for isolation. If tests fail with path issues, e
 ### Git Ignores
 
 The following directories/files should be in .gitignore:
-- `.mobius/` - Local function pool (if used for testing; default is $HOME/.local/mobius)
+- `.bb/` - Local function pool (if used for testing; default is $HOME/.local/bb)
 - `__pycache__/` - Python bytecode
 - `.pytest_cache/` - Pytest cache
 - `htmlcov/` - Coverage reports
@@ -150,7 +150,7 @@ The following directories/files should be in .gitignore:
 
 The full test suite should complete in under 10 seconds on modern hardware. If tests are slow:
 
-1. Check for large mobius pools in $HOME/.local/mobius or local .mobius directories
+1. Check for large bb pools in $HOME/.local/bb or local .bb directories
 2. Ensure tmp_path fixtures are being used correctly
 3. Consider using pytest-xdist for parallel execution:
    ```bash
@@ -191,4 +191,4 @@ If you have questions or need help:
 - Check CLAUDE.md for technical details
 - Reach out to the maintainers
 
-Thank you for contributing to Mobius!
+Thank you for contributing to Beyond Babel!

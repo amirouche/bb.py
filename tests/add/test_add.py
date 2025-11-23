@@ -1,5 +1,5 @@
 """
-Integration tests for 'mobius.py add' command.
+Integration tests for 'bb.py add' command.
 
 Grey-box style:
 - Setup: Create test files
@@ -80,8 +80,8 @@ def test_add_function_stores_normalized_code(cli_runner, tmp_path):
     with open(object_json, 'r') as f:
         data = json.load(f)
 
-    # Function should be renamed to _mobius_v_0
-    assert '_mobius_v_0' in data['normalized_code']
+    # Function should be renamed to _bb_v_0
+    assert '_bb_v_0' in data['normalized_code']
     # Original function name should NOT appear
     assert 'my_function' not in data['normalized_code']
 
@@ -301,12 +301,12 @@ def test_add_hash_stability(cli_runner, tmp_path):
     assert len(hash1) == 64
 
 
-def test_add_missing_mobius_import_fails(cli_runner, tmp_path):
-    """Test that add fails when mobius imports don't exist in pool"""
-    # Setup: Create function that imports a non-existent mobius function
+def test_add_missing_bb_import_fails(cli_runner, tmp_path):
+    """Test that add fails when bb imports don't exist in pool"""
+    # Setup: Create function that imports a non-existent bb function
     fake_hash = 'a' * 64
     test_file = tmp_path / "with_missing_dep.py"
-    test_file.write_text(f'''from mobius.pool import object_{fake_hash} as helper
+    test_file.write_text(f'''from bb.pool import object_{fake_hash} as helper
 
 def use_helper(x):
     """Use helper function"""
@@ -322,8 +322,8 @@ def use_helper(x):
     assert 'helper' in result.stderr
 
 
-def test_add_with_existing_mobius_import_succeeds(cli_runner, tmp_path):
-    """Test that add succeeds when mobius imports exist in pool"""
+def test_add_with_existing_bb_import_succeeds(cli_runner, tmp_path):
+    """Test that add succeeds when bb imports exist in pool"""
     # Setup: First add a helper function
     helper_file = tmp_path / "helper.py"
     helper_file.write_text('''def helper(x):
@@ -334,7 +334,7 @@ def test_add_with_existing_mobius_import_succeeds(cli_runner, tmp_path):
 
     # Create function that imports the helper
     test_file = tmp_path / "use_helper.py"
-    test_file.write_text(f'''from mobius.pool import object_{helper_hash} as helper
+    test_file.write_text(f'''from bb.pool import object_{helper_hash} as helper
 
 def use_helper(x):
     """Use helper function"""
@@ -352,7 +352,7 @@ def use_helper(x):
 def test_add_hash_determinism_with_example_files(cli_runner):
     """Test hash determinism using the real example files (grey-box CLI test).
 
-    This verifies the core Mobius principle via CLI: same logic = same hash,
+    This verifies the core BB principle via CLI: same logic = same hash,
     regardless of variable names or human language. Uses the example files:
     - examples/example_simple.py (English)
     - examples/example_simple_french.py (French)
@@ -400,7 +400,7 @@ def test_add_hash_determinism_with_example_files(cli_runner):
     with open(object_json, 'r') as f:
         data = json.load(f)
 
-    # Assert 6: Normalized code uses _mobius_v_0 (not original function names)
-    assert '_mobius_v_0' in data['normalized_code']
+    # Assert 6: Normalized code uses _bb_v_0 (not original function names)
+    assert '_bb_v_0' in data['normalized_code']
     assert 'calculate_sum' not in data['normalized_code']
     assert 'calculer_somme' not in data['normalized_code']

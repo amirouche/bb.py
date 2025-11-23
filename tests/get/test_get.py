@@ -1,5 +1,5 @@
 """
-Integration tests for 'mobius.py get' command.
+Integration tests for 'bb.py get' command.
 
 Grey-box style:
 - Setup: Use 'add' command to create functions

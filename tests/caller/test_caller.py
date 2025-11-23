@@ -1,5 +1,5 @@
 """
-Tests for 'mobius.py caller' command.
+Tests for 'bb.py caller' command.
 
 Grey-box integration tests for reverse dependency discovery.
 """
@@ -12,8 +12,8 @@ import pytest
 
 
 def cli_run(args: list, env: dict = None) -> subprocess.CompletedProcess:
-    """Run mobius.py CLI command."""
-    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'mobius.py')] + args
+    """Run bb.py CLI command."""
+    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'bb.py')] + args
 
     run_env = os.environ.copy()
     if env:
@@ -29,8 +29,8 @@ def cli_run(args: list, env: dict = None) -> subprocess.CompletedProcess:
 
 def test_caller_invalid_hash_fails(tmp_path):
     """Test that caller fails with invalid hash format"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     result = cli_run(['caller', 'invalid-hash'], env=env)
 
@@ -40,9 +40,9 @@ def test_caller_invalid_hash_fails(tmp_path):
 
 def test_caller_nonexistent_function_fails(tmp_path):
     """Test that caller fails for nonexistent function"""
-    mobius_dir = tmp_path / '.mobius'
-    (mobius_dir / 'pool').mkdir(parents=True)
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    (bb_dir / 'pool').mkdir(parents=True)
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     fake_hash = 'f' * 64
     result = cli_run(['caller', fake_hash], env=env)
@@ -53,8 +53,8 @@ def test_caller_nonexistent_function_fails(tmp_path):
 
 def test_caller_no_callers_succeeds(tmp_path):
     """Test that caller succeeds with no callers found"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Add a function
     test_file = tmp_path / "func.py"
@@ -71,8 +71,8 @@ def test_caller_no_callers_succeeds(tmp_path):
 
 def test_caller_empty_pool_fails(tmp_path):
     """Test that caller handles empty pool"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     fake_hash = 'a' * 64
     result = cli_run(['caller', fake_hash], env=env)

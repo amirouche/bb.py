@@ -207,9 +207,9 @@ marimo/_lsp/
 __marimo__/
 
 # Ouverture
-.mobius/
+.bb/
 
-# Mobius compile artifacts
-.mobius_build_*/
+# BB compile artifacts
+.bb_build_*/
 main.py
 pyoxidizer.bzl

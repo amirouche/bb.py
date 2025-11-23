@@ -1,5 +1,5 @@
 """
-Tests for 'mobius.py search' command.
+Tests for 'bb.py search' command.
 
 Grey-box integration tests for function search.
 """
@@ -12,8 +12,8 @@ import pytest
 
 
 def cli_run(args: list, env: dict = None) -> subprocess.CompletedProcess:
-    """Run mobius.py CLI command."""
-    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'mobius.py')] + args
+    """Run bb.py CLI command."""
+    cmd = [sys.executable, str(Path(__file__).parent.parent.parent / 'bb.py')] + args
 
     run_env = os.environ.copy()
     if env:
@@ -29,8 +29,8 @@ def cli_run(args: list, env: dict = None) -> subprocess.CompletedProcess:
 
 def test_search_no_query_fails(tmp_path):
     """Test that search fails without query"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     result = cli_run(['search'], env=env)
 
@@ -39,8 +39,8 @@ def test_search_no_query_fails(tmp_path):
 
 def test_search_empty_pool(tmp_path):
     """Test that search handles empty pool gracefully"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     result = cli_run(['search', 'foo'], env=env)
 
@@ -50,8 +50,8 @@ def test_search_empty_pool(tmp_path):
 
 def test_search_finds_by_function_name(tmp_path):
     """Test that search finds function by docstring content (name in docstring)"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Include search term in docstring since names are normalized
     test_file = tmp_path / "func.py"
@@ -72,8 +72,8 @@ def test_search_finds_by_function_name(tmp_path):
 
 def test_search_finds_by_docstring(tmp_path):
     """Test that search finds function by docstring content"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     test_file = tmp_path / "func.py"
@@ -94,8 +94,8 @@ def test_search_finds_by_docstring(tmp_path):
 
 def test_search_case_insensitive(tmp_path):
     """Test that search is case insensitive"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Put searchable term in docstring
     test_file = tmp_path / "func.py"
@@ -115,8 +115,8 @@ def test_search_case_insensitive(tmp_path):
 
 def test_search_no_matches(tmp_path):
     """Test that search handles no matches gracefully"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Add a function
     test_file = tmp_path / "func.py"
@@ -133,8 +133,8 @@ def test_search_no_matches(tmp_path):
 
 def test_search_shows_view_command(tmp_path):
     """Test that search results include view command"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup: Put searchable term in docstring
     test_file = tmp_path / "func.py"
@@ -150,13 +150,13 @@ def test_search_shows_view_command(tmp_path):
 
     # Assert
     assert result.returncode == 0
-    assert f'mobius.py show {func_hash}@eng' in result.stdout
+    assert f'bb.py show {func_hash}@eng' in result.stdout
 
 
 def test_search_multiple_terms(tmp_path):
     """Test that search works with multiple terms"""
-    mobius_dir = tmp_path / '.mobius'
-    env = {'MOBIUS_DIRECTORY': str(mobius_dir)}
+    bb_dir = tmp_path / '.bb'
+    env = {'BB_DIRECTORY': str(bb_dir)}
 
     # Setup
     test_file = tmp_path / "func.py"

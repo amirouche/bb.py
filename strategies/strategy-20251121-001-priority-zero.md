@@ -39,10 +39,10 @@ async def fetch_data(url):
     return response.json()
 
 # Normalized form
-async def _mobius_v_0(_mobius_v_1):
+async def _bb_v_0(_bb_v_1):
     """Fetch data from URL"""
-    _mobius_v_2 = await http_get(_mobius_v_1)
-    return _mobius_v_2.json()
+    _bb_v_2 = await http_get(_bb_v_1)
+    return _bb_v_2.json()
 ```
 
 ### Implementation Phases
@@ -92,21 +92,21 @@ async def _mobius_v_0(_mobius_v_1):
 
 - `file://` remotes implemented (local/network paths)
 - No Git repository support
-- Remote configuration stored in `$MOBIUS_DIRECTORY/config.json`
+- Remote configuration stored in `$BB_DIRECTORY/config.json`
 
 ### Target State
 
 ```bash
 # Git SSH remote
-mobius.py remote add origin git@github.com:user/functions.git
-mobius.py remote pull origin
-mobius.py remote push origin
+bb.py remote add origin git@github.com:user/functions.git
+bb.py remote pull origin
+bb.py remote push origin
 
 # Git HTTPS remote
-mobius.py remote add upstream git+https://github.com/org/pool.git
+bb.py remote add upstream git+https://github.com/org/pool.git
 
 # Local Git remote
-mobius.py remote add local git+file:///path/to/repo
+bb.py remote add local git+file:///path/to/repo
 ```
 
 ### Storage Structure in Git Repository
@@ -175,7 +175,7 @@ repository/
    - Return list of pulled function hashes
 
 2. `git_cache_path(remote_name) -> Path`
-   - Return: `$MOBIUS_DIRECTORY/cache/git/{remote_name}/`
+   - Return: `$BB_DIRECTORY/cache/git/{remote_name}/`
 
 **Workflow**:
 ```
@@ -217,7 +217,7 @@ copy files to cache → git add → git commit → git push
 - Uses user's existing SSH keys via ssh-agent
 - Uses git credential helpers (configured via `git config`)
 - Supports all auth methods git supports (tokens, OAuth, etc.)
-- Requires zero custom configuration in mobius
+- Requires zero custom configuration in bb
 
 **Authentication methods** (all handled by system git):
 1. **SSH keys**: System SSH agent automatically used
@@ -265,7 +265,7 @@ copy files to cache → git add → git commit → git push
 
 ### Current State
 
-- All tests in `test_mobius.py` (105+ tests)
+- All tests in `test_bb.py` (105+ tests)
 - Tests organized by internal function, not by CLI command
 - Makes it hard to find tests for specific user-facing features
 
@@ -309,7 +309,7 @@ tests/
 **Tasks**:
 1. Create `tests/` directory with subdirectories
 2. Create `tests/conftest.py` with shared fixtures:
-   - `temp_mobius_dir` - Temporary pool directory
+   - `temp_bb_dir` - Temporary pool directory
    - `sample_function` - Sample function fixture
    - `normalize_code_for_test` - Helper for normalized code
 3. Update `pytest.ini` or `pyproject.toml` for test discovery
@@ -350,7 +350,7 @@ tests/
 **Goal**: Remove old test file, update documentation
 
 **Tasks**:
-1. Delete `test_mobius.py` after verification
+1. Delete `test_bb.py` after verification
 2. Update `README_PYTEST.md` with new structure
 3. Update CI/CD configuration
 
@@ -364,7 +364,7 @@ tests/
 
 ### Current State
 
-- Functions can only be executed via `mobius.py run`
+- Functions can only be executed via `bb.py run`
 - No standalone distribution mechanism
 - Dependencies must be resolved at runtime
 
@@ -372,7 +372,7 @@ tests/
 
 ```bash
 # Generate standalone executable for current platform
-mobius.py compile abc123...@eng --output ./myapp
+bb.py compile abc123...@eng --output ./myapp
 
 # Run the executable
 ./myapp
@@ -388,7 +388,7 @@ mobius.py compile abc123...@eng --output ./myapp
 
 **New Functions**:
 1. `dependencies_resolve(func_hash) -> List[str]`
-   - Parse mobius imports from normalized code
+   - Parse bb imports from normalized code
    - Recursively resolve dependencies
    - Return topologically sorted list of hashes
 
@@ -426,7 +426,7 @@ mobius.py compile abc123...@eng --output ./myapp
 ```python
 #!/usr/bin/env python3
 import sys
-from mobius.runtime import execute_function
+from bb.runtime import execute_function
 
 if __name__ == "__main__":
     result = execute_function("FUNC_HASH", "LANG", sys.argv[1:])
@@ -478,7 +478,7 @@ Week 5:   Compilation (6 days)
 
 3. **Git Remotes third**: Core infrastructure for sharing functions across teams/projects
 
-4. **Compilation fourth**: Enables distribution of mobius functions as standalone tools
+4. **Compilation fourth**: Enables distribution of bb functions as standalone tools
 
 ---
 
@@ -581,7 +581,7 @@ Before starting each feature:
 
 ## Conclusion
 
-Priority 0 represents the next major milestone for Mobius, transforming it from a local tool to a distributed function sharing platform. The recommended implementation order prioritizes:
+Priority 0 represents the next major milestone for Beyond Babel, transforming it from a local tool to a distributed function sharing platform. The recommended implementation order prioritizes:
 
 1. **Foundation** (Test Reorganization, Async) - Enable confident development
 2. **Distribution** (Git Remotes, Compilation) - Enable sharing and deployment
