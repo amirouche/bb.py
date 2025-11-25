@@ -1,6 +1,6 @@
-# Contributing to Beyond Babel
+# Contributing to Beyond Babelia
 
-Thank you for your interest in contributing to Beyond Babel! This project welcomes all kinds of contributions, and we're excited to have you here.
+Thank you for your interest in contributing to Beyond Babelia! This project welcomes all kinds of contributions, and we're excited to have you here.
 
 ## Philosophy: Vibe Coding Encouraged
 
@@ -11,7 +11,7 @@ This project embraces **vibe coding** - a creative, exploratory approach to deve
 - Follow your instincts when designing features
 - Share incomplete ideas - they often spark the best discussions
 
-For a comprehensive understanding of the project architecture, design decisions, and implementation details, please read **[CLAUDE.md](CLAUDE.md)**. This document is your guide to understanding how Beyond Babel works under the hood.
+For a comprehensive understanding of the project architecture, design decisions, and implementation details, please read **[CLAUDE.md](CLAUDE.md)**. This document is your guide to understanding how Beyond Babelia works under the hood.
 
 ## All Contributions Are Welcome
 
@@ -29,7 +29,7 @@ While code contributions are wonderful, they're not the only way to help! Valuab
 
 ### Examples Directory
 
-The `examples/` directory contains sample functions demonstrating Beyond Babel's capabilities:
+The `examples/` directory contains sample functions demonstrating Beyond Babelia's capabilities:
 
 - `example_simple.py` - Basic function (English)
 - `example_simple_french.py` - Same logic in French
@@ -60,7 +60,7 @@ rm -rf $HOME/.local/bb
 
 ## Roadmap: Creative Coding for User Reach
 
-Beyond Babel aims to become a valuable tool for the **creative coding community**, enabling artists and designers to share algorithms across language barriers. Our vision includes:
+Beyond Babelia aims to become a valuable tool for the **creative coding community**, enabling artists and designers to share algorithms across language barriers. Our vision includes:
 
 - **p5.js integration**: Bridge Python functions with p5.js sketches for web-based creative coding
 - **Processing compatibility**: Enable Python Mode for Processing to use BB functions
@@ -68,13 +68,13 @@ Beyond Babel aims to become a valuable tool for the **creative coding community*
 - **Educational outreach**: Provide multilingual examples for teaching computational creativity
 - **Community building**: Foster collaboration between creative coders from different linguistic backgrounds
 
-By targeting creative coding communities (p5.js, Processing, openFrameworks, etc.), we can demonstrate Beyond Babel's value while reaching artists, educators, and students worldwide. If you're interested in creative coding, consider contributing examples that showcase visual algorithms, generative patterns, or interactive systems!
+By targeting creative coding communities (p5.js, Processing, openFrameworks, etc.), we can demonstrate Beyond Babelia's value while reaching artists, educators, and students worldwide. If you're interested in creative coding, consider contributing examples that showcase visual algorithms, generative patterns, or interactive systems!
 
 ---
 
 # Testing Guide
 
-This section includes comprehensive information about testing Beyond Babel.
+This section includes comprehensive information about testing Beyond Babelia.
 
 ## Installation
 
@@ -191,4 +191,4 @@ If you have questions or need help:
 - Check CLAUDE.md for technical details
 - Reach out to the maintainers
 
-Thank you for contributing to Beyond Babel!
+Thank you for contributing to Beyond Babelia!

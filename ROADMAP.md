@@ -1,6 +1,6 @@
 # ROADMAP
 
-This document tracks the development roadmap for Beyond Babel.
+This document tracks the development roadmap for Beyond Babelia.
 
 Context sources:
 - `LIMITS.md` - Current capabilities and known limitations
@@ -15,8 +15,8 @@ Context sources:
 - **asyncify**: Tool for on-the-fly rewriting of synchronous Python code to async/await style
 - **todo-flask**: Reference todo application built with Flask demonstrating bb integration
 - **ing0**: Bubblewrap wrapper to run bb.py across Linux distributions and assist with cross-compiling
-- **chez-scheme-port**: Port Beyond Babel to Chez Scheme
-- **beyond-babel**: Rename bb.py to beyond-babel with CLI and module called bb.py across Linux
+- **chez-scheme-port**: Port Beyond Babelia to Chez Scheme
+- **beyond-babelia**: Rename bb.py to beyond-babelia with CLI and module called bb.py across Linux
 
 ## Priority 1: Remote HTTP/HTTPS Support
 
@@ -111,7 +111,7 @@ Context sources:
 
 Transcript testing uses markdown files to define CLI test scenarios declaratively.
 
-**Why it works for Beyond Babel**:
+**Why it works for Beyond Babelia**:
 - CLI commands produce deterministic, predictable output
 - Tests follow a consistent setup → command → assert pattern
 - Non-programmers can contribute test cases

@@ -1,4 +1,4 @@
-# Beyond Babel Usage
+# Beyond Babelia Usage
 
 Multilingual function pool: same logic, different languages → same hash.
 

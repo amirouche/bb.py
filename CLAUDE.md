@@ -1,8 +1,10 @@
-# CLAUDE.md - AI Assistant Guide for Beyond Babel
+# CLAUDE.md - AI Assistant Guide for Beyond Babelia
 
 ## Project Overview
 
-**Beyond Babel** is a function pool manager for Python that enables multilingual function sharing through AST normalization and content-addressed storage. It allows the same logical function written in different human languages (with different variable names, docstrings, etc.) to share the same hash and be stored together.
+**Beyond Babelia** is a function pool manager for Python that enables multilingual function sharing through AST normalization and content-addressed storage. It allows the same logical function written in different human languages (with different variable names, docstrings, etc.) to share the same hash and be stored together.
+
+Beyond Babelia builds on the vision of [Babelia](https://sr.ht/~amirouche/Babelia/), a universal knowledge base project.
 
 ### Core Concept
 
@@ -291,7 +293,7 @@ Key features:
 
 #### Preferred Function Naming Pattern
 
-**Note**: This is a project-specific convention that differs from traditional PEP 8 `verb_noun` patterns. Beyond Babel emphasizes a structured naming convention that puts the type being operated on first:
+**Note**: This is a project-specific convention that differs from traditional PEP 8 `verb_noun` patterns. Beyond Babelia emphasizes a structured naming convention that puts the type being operated on first:
 
 **Pattern**: `type_name_verb_complement`
 
@@ -359,9 +361,9 @@ normalized_code = normalize_code_for_test("def _bb_v_0(): return 42")
 
 ### Philosophy: Grey-Box Integration First
 
-Beyond Babel follows a **grey-box integration testing** approach as the primary testing strategy. Most tests exercise the CLI commands end-to-end while having knowledge of the internal storage format for assertions.
+Beyond Babelia follows a **grey-box integration testing** approach as the primary testing strategy. Most tests exercise the CLI commands end-to-end while having knowledge of the internal storage format for assertions.
 
-**Testing pyramid for Beyond Babel**:
+**Testing pyramid for Beyond Babelia**:
 1. **Integration tests (grey-box)** - Primary focus, organized by CLI command
 2. **Unit tests** - Only for complex algorithms (AST normalization, hash computation, schema validation)
 
@@ -590,7 +592,7 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
 
 ### Public-Facing Hash Specification
 
-**Public hashes in Beyond Babel refer to content-addressed identifiers that follow strict deterministic serialization rules to ensure global consistency.
+**Public hashes in Beyond Babelia refer to content-addressed identifiers that follow strict deterministic serialization rules to ensure global consistency.
 
 #### Hash Computation Rules
 
@@ -710,7 +712,7 @@ Regular maintenance tasks for AI assistants working on this codebase:
 
 ## Summary
 
-Beyond Babel is a carefully designed system for multilingual function sharing through AST normalization. The key insight is separating logic (hashed) from presentation (language-specific names/docstrings). When modifying the code:
+Beyond Babelia is a carefully designed system for multilingual function sharing through AST normalization. The key insight is separating logic (hashed) from presentation (language-specific names/docstrings). When modifying the code:
 
 - Preserve the invariants listed above
 - Test with multiple languages

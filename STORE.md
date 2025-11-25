@@ -1,10 +1,10 @@
-# Beyond Babel Storage Specification (v1)
+# Beyond Babelia Storage Specification (v1)
 
-This document describes the storage format for Beyond Babel function pools.
+This document describes the storage format for Beyond Babelia function pools.
 
 ## Overview
 
-Beyond Babel uses a content-addressed filesystem storage where:
+Beyond Babelia uses a content-addressed filesystem storage where:
 - **Functions** are stored by their SHA256 hash
 - **Mappings** (language-specific names/docstrings) are stored separately, also content-addressed
 - **Deduplication** happens automatically - identical content shares storage

@@ -1,6 +1,6 @@
 # Transcripts
 
-This directory contains workflow transcripts documenting common usage patterns for Beyond Babel.
+This directory contains workflow transcripts documenting common usage patterns for Beyond Babelia.
 
 ## Directory Structure
 
