@@ -5,7 +5,7 @@ Tests order-preserving encoding of Python values to bytes and back.
 """
 import pytest
 
-from bb import bytes_write, bytes_read
+from bb import bytes_write, bytes_read, bytes_next
 
 
 # ============================================================================
@@ -181,3 +181,73 @@ def test_bytes_write_empty_bytes():
     decoded = bytes_read(encoded)
 
     assert decoded == original
+
+
+# ============================================================================
+# Tests for bytes_next
+# ============================================================================
+
+def test_bytes_next_simple():
+    """Test bytes_next with simple increment"""
+    assert bytes_next(b'abc') == b'abd'
+    assert bytes_next(b'hello') == b'hellp'
+
+
+def test_bytes_next_empty():
+    """Test bytes_next with empty bytes"""
+    assert bytes_next(b'') == b'\x00'
+
+
+def test_bytes_next_with_0xff():
+    """Test bytes_next when last byte is 0xFF"""
+    # Should skip 0xFF and increment previous byte
+    assert bytes_next(b'ab\xff') == b'ac'
+    assert bytes_next(b'test\xff') == b'tesu'
+
+
+def test_bytes_next_multiple_0xff():
+    """Test bytes_next with multiple trailing 0xFF bytes"""
+    assert bytes_next(b'a\xff\xff') == b'b'
+    assert bytes_next(b'hello\xff\xff\xff') == b'hellp'
+
+
+def test_bytes_next_all_0xff():
+    """Test bytes_next when all bytes are 0xFF"""
+    assert bytes_next(b'\xff') is None
+    assert bytes_next(b'\xff\xff') is None
+    assert bytes_next(b'\xff\xff\xff\xff') is None
+
+
+def test_bytes_next_prefix_scan():
+    """Test bytes_next for prefix scans"""
+    # All keys starting with b'user:' would be in range [b'user:', bytes_next(b'user:'))
+    prefix = b'user:'
+    next_key = bytes_next(prefix)
+
+    assert next_key == b'user;'
+    assert prefix < next_key
+
+
+def test_bytes_next_ordering():
+    """Test that bytes_next maintains ordering property"""
+    test_cases = [b'a', b'abc', b'test', b'hello']
+
+    for data in test_cases:
+        next_data = bytes_next(data)
+        if next_data is not None:
+            # next_data should be greater than data
+            assert next_data > data
+            # Everything starting with data should be less than next_data
+            assert data + b'\x00' < next_data
+
+
+def test_bytes_next_boundary_cases():
+    """Test bytes_next with boundary values"""
+    # Single byte increment
+    assert bytes_next(b'\x00') == b'\x01'
+    assert bytes_next(b'\x01') == b'\x02'
+    assert bytes_next(b'\xfe') == b'\xff'
+
+    # Mixed cases
+    assert bytes_next(b'\x00\xff') == b'\x01'
+    assert bytes_next(b'\xfe\xff') == b'\xff'

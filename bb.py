@@ -176,6 +176,39 @@ def bytes_read(data: bytes) -> Tuple:
     return tuple(result)
 
 
+def bytes_next(data: bytes) -> Optional[bytes]:
+    """Compute next byte sequence for exclusive upper bound in range queries.
+
+    Given a byte sequence, returns the smallest byte sequence that is greater
+    than all byte sequences starting with the input. This is useful for prefix
+    scans: query from `prefix` to `bytes_next(prefix)` to get all keys with
+    that prefix.
+
+    Args:
+        data: Input byte sequence
+
+    Returns:
+        Next byte sequence, or None if no successor exists (all bytes are 0xFF)
+
+    Examples:
+        bytes_next(b'abc') == b'abd'  # increment last byte
+        bytes_next(b'ab\\xff') == b'ac'  # skip 0xFF, increment previous byte
+        bytes_next(b'\\xff\\xff') is None  # no successor possible
+        bytes_next(b'') == b'\\x00'  # smallest non-empty sequence
+    """
+    if not data:
+        return b'\x00'
+
+    # Find rightmost byte that's not 0xFF
+    for i in range(len(data) - 1, -1, -1):
+        if data[i] != 0xFF:
+            # Increment this byte and truncate everything after
+            return data[:i] + bytes([data[i] + 1])
+
+    # All bytes are 0xFF, no successor exists
+    return None
+
+
 ### SQLITE3 ORDERED KEY-VALUE STORE ###
 
 def db_open(path: str) -> sqlite3.Connection:
@@ -613,7 +646,10 @@ def nstore_query(db: sqlite3.Connection, nstore: NStore, pattern: Tuple, *patter
             # Build prefix for range query
             prefix_items = nstore_pattern_to_prefix(bound_pattern, index)
             key_start = bytes_write(nstore.prefix + (subspace,) + prefix_items)
-            key_end = key_start[:-1] + bytes([key_start[-1] + 1]) if key_start else b'\xFF'
+            key_end = bytes_next(key_start)
+            if key_end is None:
+                # All bytes are 0xFF, use next longer sequence
+                key_end = key_start + b'\x00'
 
             # Range scan
             results = db_query(db, key_start, key_end)
