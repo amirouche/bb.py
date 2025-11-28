@@ -13,6 +13,8 @@ import subprocess
 import sys
 import sqlite3
 import struct
+import time
+import uuid
 from collections import namedtuple
 from contextlib import contextmanager
 from pathlib import Path
@@ -43,6 +45,7 @@ _ENCODE_INT_NEG = 0x06
 _ENCODE_FLOAT = 0x07
 _ENCODE_TRUE = 0x08
 _ENCODE_FALSE = 0x09
+_ENCODE_UUID = 0x0A
 
 
 def bytes_write_one(value: Any, nested: bool = False) -> bytes:
@@ -78,6 +81,10 @@ def bytes_write_one(value: Any, nested: bool = False) -> bytes:
         else:
             bits = bytes([bits[0] ^ 0x80]) + bits[1:]
         return bytes([_ENCODE_FLOAT]) + bits
+    elif isinstance(value, uuid.UUID):
+        # UUIDs are stored as 16 bytes (128 bits)
+        # UUID.bytes maintains lexicographic ordering for ULIDs
+        return bytes([_ENCODE_UUID]) + value.bytes
     elif isinstance(value, (tuple, list)):
         return bytes([_ENCODE_NESTED]) + b''.join(bytes_write_one(v, True) for v in value) + bytes([0x00])
     else:
@@ -129,6 +136,9 @@ def bytes_read_one(data: bytes, pos: int = 0) -> Tuple[Any, int]:
         return (True, pos + 1)
     elif code == _ENCODE_FALSE:
         return (False, pos + 1)
+    elif code == _ENCODE_UUID:
+        # UUIDs are stored as 16 bytes (128 bits)
+        return (uuid.UUID(bytes=data[pos + 1:pos + 17]), pos + 17)
     elif code == _ENCODE_NESTED:
         result = []
         pos += 1
@@ -207,6 +217,48 @@ def bytes_next(data: bytes) -> Optional[bytes]:
 
     # All bytes are 0xFF, no successor exists
     return None
+
+
+def ulid() -> uuid.UUID:
+    """Generate a ULID (Universally Unique Lexicographically Sortable Identifier).
+
+    ULIDs are 128-bit identifiers compatible with UUIDs but designed for better
+    database locality and natural sorting by creation time.
+
+    Structure:
+        - 48 bits: Unix timestamp in milliseconds (big-endian)
+        - 80 bits: cryptographically random data
+
+    Returns:
+        uuid.UUID object containing the ULID
+
+    Reference:
+        https://github.com/ulid/spec
+
+    Example:
+        >>> id1 = ulid()
+        >>> time.sleep(0.001)
+        >>> id2 = ulid()
+        >>> id1 < id2  # ULIDs are lexicographically sortable
+        True
+    """
+    # Get current timestamp in milliseconds (48 bits)
+    timestamp_ms = int(time.time() * 1000)
+
+    # Ensure timestamp fits in 48 bits (max value: 281474976710655)
+    timestamp_ms = timestamp_ms & 0xFFFFFFFFFFFF
+
+    # Pack timestamp as 6 bytes (48 bits) in big-endian format
+    timestamp_bytes = timestamp_ms.to_bytes(6, byteorder='big')
+
+    # Generate 10 bytes (80 bits) of random data
+    random_bytes = os.urandom(10)
+
+    # Combine timestamp (6 bytes) + random (10 bytes) = 16 bytes (128 bits)
+    ulid_bytes = timestamp_bytes + random_bytes
+
+    # Convert to UUID
+    return uuid.UUID(bytes=ulid_bytes)
 
 
 ### SQLITE3 ORDERED KEY-VALUE STORE ###
