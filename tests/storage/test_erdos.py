@@ -4,6 +4,11 @@ Tests for erdos_indices computation.
 Tests the Erdős indices algorithm for generating minimal permutation sets
 that cover all possible query patterns.
 
+Mathematical Foundation:
+    Based on Dilworth's theorem: covering the boolean lattice by the minimal number
+    of maximal chains. The minimal number equals the cardinality of the maximal
+    antichain in the boolean lattice, which is the central binomial coefficient C(n, n//2).
+
 IMPORTANT: The length of erdos_indices(n) always equals the central binomial
 coefficient C(n, n//2), which is the number of ways to choose n//2 items from n.
 """

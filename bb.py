@@ -373,7 +373,8 @@ def db_query(conn: sqlite3.Connection, key: bytes, other: bytes, offset: int = 0
 
 ### ERDOS INDICES COMPUTATION ###
 # Compute minimal permutation indices for n-tuple store querying
-# Based on Erdős-Ko-Rado theorem and combinatorial optimization
+# Based on Dilworth's theorem: covering boolean lattice by minimal number of maximal chains
+# The result has cardinality equal to the central binomial coefficient C(n, n//2)
 
 
 def erdos_indices_verify_coverage(indices: List[List[int]], n: int) -> bool:
@@ -409,15 +410,24 @@ def erdos_indices(n: int) -> List[List[int]]:
     This algorithm determines which permuted indices to maintain in the database
     to enable efficient single-hop queries for any query pattern.
 
+    Mathematical Foundation:
+        Based on covering the boolean lattice by the minimal number of maximal chains.
+        By Dilworth's theorem, this minimal number equals the cardinality of the maximal
+        antichain in the boolean lattice, which is the central binomial coefficient C(n, n//2).
+
+        Reference: https://math.stackexchange.com/questions/3146568/
+
     Args:
         n: Number of elements in tuples
 
     Returns:
-        Minimal set of index permutations in lexicographic order
+        Exactly C(n, n//2) index permutations in lexicographic order
 
     Example:
-        >>> erdos_indices(3)
+        >>> erdos_indices(3)  # C(3, 1) = 3 indices
         [[0, 1, 2], [1, 2, 0], [2, 0, 1]]
+        >>> erdos_indices(4)  # C(4, 2) = 6 indices
+        [[0, 1, 2, 3], [1, 2, 3, 0], [2, 0, 3, 1], [3, 0, 1, 2], [3, 1, 2, 0], [3, 2, 0, 1]]
     """
     tab = list(range(n))
     cx = list(itertools.combinations(tab, n // 2))
