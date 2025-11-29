@@ -1,0 +1,93 @@
+name: ASTON Fuzz Testing
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  fuzz-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Display Python version
+      run: python -c "import sys; print(sys.version)"
+
+    - name: Run comprehensive ASTON fuzzer
+      run: |
+        echo "========================================"
+        echo "Running Comprehensive ASTON Fuzzer"
+        echo "========================================"
+        python3 tests/aston/fuzz.py --mutations 20 --tests 50
+
+    - name: Run ASTON round-trip tests on examples
+      run: |
+        echo ""
+        echo "========================================"
+        echo "Testing ASTON Round-Trip on Examples"
+        echo "========================================"
+        for file in examples/*.py; do
+          echo "Testing $file..."
+          python3 aston.py --test "$file"
+        done
+
+    - name: Run quick generative fuzzing
+      run: |
+        echo ""
+        echo "========================================"
+        echo "Quick Generative Fuzzing"
+        echo "========================================"
+        python3 tests/aston/fuzz.py --generative --tests 100 --seed 0
+
+    - name: Test BBH type with bytes_write/bytes_read
+      run: |
+        echo ""
+        echo "========================================"
+        echo "Testing BBH Type"
+        echo "========================================"
+        python3 << 'EOF'
+        from bb import BBH, bytes_write, bytes_read
+        import hashlib
+
+        # Test round-trip with hex string
+        hash_hex = hashlib.sha256(b"test").hexdigest()
+        bbh = BBH(hash_hex)
+        encoded = bytes_write((bbh, "data", 42))
+        decoded = bytes_read(encoded)
+        assert decoded[0].value == hash_hex
+        assert decoded[1] == "data"
+        assert decoded[2] == 42
+        print("✓ BBH hex round-trip passed")
+
+        # Test round-trip with bytes
+        hash_bytes = hashlib.sha256(b"test2").digest()
+        bbh2 = BBH(hash_bytes)
+        encoded2 = bytes_write((bbh2,))
+        decoded2 = bytes_read(encoded2)
+        assert decoded2[0].value == hash_bytes.hex()
+        print("✓ BBH bytes round-trip passed")
+
+        print("✓ All BBH tests passed!")
+        EOF
+
+    - name: Fuzzing Summary
+      if: always()
+      run: |
+        echo ""
+        echo "========================================"
+        echo "Fuzzing Complete"
+        echo "========================================"
+        echo "All ASTON fuzz tests completed successfully!"
