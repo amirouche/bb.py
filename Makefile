@@ -1,30 +1,21 @@
 .PHONY: help check check-with-coverage check-fuzz clean
 
 # Default target - show help
-help:
+help: ## Show this help message with all available targets
 	@echo "Beyond Babel - Makefile targets"
 	@echo "================================"
 	@echo ""
-	@echo "Available targets:"
-	@echo "  make help                 - Show this help message"
-	@echo "  make check                - Run pytest tests"
-	@echo "  make check-with-coverage  - Run pytest with coverage reporting"
-	@echo "  make check-fuzz           - Run comprehensive fuzz tests"
-	@echo "  make clean                - Clean up generated files"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "Examples:"
-	@echo "  make check                     # Quick pytest validation"
-	@echo "  make check-fuzz                # Full fuzz suite (~2-3 min)"
-	@echo "  make check-with-coverage       # Generate coverage report"
 
-check:
+check: ## Run pytest tests
 	@echo "========================================"
 	@echo "Running Tests with pytest"
 	@echo "========================================"
 	@echo ""
 	@pytest -v tests/
 
-check-with-coverage:
+check-with-coverage: ## Run pytest with coverage reporting (generates htmlcov/)
 	@echo "========================================"
 	@echo "Running Tests with Coverage"
 	@echo "========================================"
@@ -37,7 +28,7 @@ check-with-coverage:
 	@echo ""
 	@echo "✓ HTML coverage report generated in htmlcov/index.html"
 
-check-fuzz:
+check-fuzz: ## Run comprehensive fuzz tests (corpus, mutation, generative)
 	@echo "========================================"
 	@echo "Running Comprehensive Fuzz Tests"
 	@echo "========================================"
@@ -59,7 +50,7 @@ check-fuzz:
 	@echo ""
 	@echo "✓ All fuzz tests passed!"
 
-clean:
+clean: ## Clean up generated files (htmlcov/, .coverage, __pycache__)
 	@echo "Cleaning up generated files..."
 	@rm -rf htmlcov/
 	@rm -f .coverage
