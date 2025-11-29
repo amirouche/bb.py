@@ -1,36 +1,33 @@
 import bvv, fv
 
-@(xsk,)
 async def itais(o):
-    import kbxwofyf
-    if False:
-        if False:
+
+    @uFalse
+    def uu(bxwofy) -> z:
+        for qt in -61: # type: r
             pass
+        else:
+            pass
+            pass
+            pass
+    for xbtrktn in ved: # type: qunrvvb
+        async for rapnibos in -22: # type: smkiic
             pass
             pass
         else:
             pass
-        with 42, 92: # type: u
+
+        @42
+        async def xrjrr(hqgocdm, lugpixj) -> True:
             pass
             pass
-            pass
-        while 42:
-            pass
-            pass
-            pass
-        else:
-            pass
+        filj = 19.61228714796065
     else:
-        with True:
-            pass
-            pass
-            pass
-    with False, True:
-        if 42:
-            pass
-        else:
-            pass
-        with False: # type: p
-            pass
+        ptfk += False
+
+    @False
+    @lfeyjbbm
+    async def wcjqtv(mba, zzcfodhm):
+        with 42, 78.93854634000706:
             pass
             pass

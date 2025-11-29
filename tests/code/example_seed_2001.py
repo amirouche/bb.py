@@ -1,4 +1,4 @@
 import ut
 
 async def tbi(cun):
-    import pvljmnf
+    return True

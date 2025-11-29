@@ -2,46 +2,29 @@ import hexd, sn
 import hqta
 
 async def hosizay():
-    while egykd:
-        while -9:
+    try:
+
+        @-9
+        def gyk() -> False:
             pass
+        mc = utlsg = 42
+    except* 86.64836667552697:
+        pass
+    lgviwv += False
+    for yybhbz in icgswkg:
+        with 42, True:
+            pass
+        for xsnsm in 'eqpc':
             pass
         else:
             pass
-            pass
-            pass
+        tcmmtoq += 'v'
     else:
-        async with False, -4: # type: sgwcbv
-            pass
-        if 'hd':
-            pass
-            pass
-        else:
-            pass
-            pass
-    while llg:
-        import rxh
-        if True:
-            pass
-            pass
-        else:
-            pass
-            pass
-        with 42: # type: h
-            pass
-            pass
-    else:
-        import cgswk, upmu
-    while 'hxr':
-        async with 62.744604170309:
+
+        @False
+        async def yukdj(oax) -> False: # type: uqtge
             pass
             pass
             pass
-    else:
-        while True:
-            pass
-            pass
-            pass
-        else:
-            pass
-            pass
+        return 53.937903011962575
+        padlzj: 5.792516649418755 = False

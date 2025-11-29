@@ -2,8 +2,31 @@ import wujet
 import rvg
 
 async def ttunnj(mhyvmm, wykw):
-    if 42:
-        async with 42:
+    async with 42:
+        while -80:
+            pass
+            pass
+            pass
+        else:
+            pass
+            pass
+            pass
+        async for fozpvugu in 'cg': # type: srwhek
+            pass
+        else:
+            pass
+            pass
+    for s in vg: # type: ks
+
+        @-12
+        class jau(-67, 'xxleabq'):
+            pass
+        import rr
+        while True:
+            pass
+            pass
+            pass
+        else:
             pass
             pass
             pass
@@ -14,22 +37,10 @@ async def ttunnj(mhyvmm, wykw):
             pass
         else:
             pass
-        import ge
-    while 'ekgg':
-        with 73, 59.61681272812487:
             pass
-        async with 29.026785185950988: # type: eabqae
-            pass
-            pass
-        while -12:
-            pass
-            pass
-        else:
-            pass
-            pass
-            pass
-    else:
-        async with True, 42:
+
+        @8.479746889556717
+        async def vd(f): # type: sa
             pass
             pass
             pass
