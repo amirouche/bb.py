@@ -7,45 +7,34 @@ help:
 	@echo ""
 	@echo "Available targets:"
 	@echo "  make help                 - Show this help message"
-	@echo "  make check                - Run basic ASTON round-trip tests"
-	@echo "  make check-with-coverage  - Run tests with coverage reporting"
+	@echo "  make check                - Run pytest tests"
+	@echo "  make check-with-coverage  - Run pytest with coverage reporting"
 	@echo "  make check-fuzz           - Run comprehensive fuzz tests"
 	@echo "  make clean                - Clean up generated files"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make check                     # Quick validation"
+	@echo "  make check                     # Quick pytest validation"
 	@echo "  make check-fuzz                # Full fuzz suite (~2-3 min)"
 	@echo "  make check-with-coverage       # Generate coverage report"
 
 check:
 	@echo "========================================"
-	@echo "Running ASTON Round-Trip Tests"
+	@echo "Running Tests with pytest"
 	@echo "========================================"
 	@echo ""
-	@echo "Testing example files..."
-	@for file in examples/*.py; do \
-		echo "  Testing $$file..."; \
-		python3 aston.py --test "$$file" || exit 1; \
-	done
-	@echo ""
-	@echo "✓ All basic tests passed!"
+	@pytest -v tests/
 
 check-with-coverage:
 	@echo "========================================"
 	@echo "Running Tests with Coverage"
 	@echo "========================================"
 	@echo ""
-	@echo "Installing coverage.py if needed..."
-	@pip3 install coverage --quiet 2>/dev/null || true
+	@echo "Installing coverage.py and pytest-cov if needed..."
+	@pip3 install coverage pytest-cov --quiet 2>/dev/null || true
 	@echo ""
-	@echo "Running tests with coverage..."
-	@coverage run --source=bb,aston tests/aston/fuzz.py --mutations 10 --tests 20
+	@echo "Running pytest with coverage..."
+	@pytest --cov=bb --cov=aston --cov-report=term --cov-report=html tests/
 	@echo ""
-	@echo "Coverage report:"
-	@coverage report
-	@echo ""
-	@echo "Generating HTML coverage report..."
-	@coverage html
 	@echo "✓ HTML coverage report generated in htmlcov/index.html"
 
 check-fuzz:
