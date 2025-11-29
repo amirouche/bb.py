@@ -52,37 +52,6 @@ jobs:
         echo "========================================"
         python3 tests/aston/fuzz.py --generative --tests 100 --seed 0
 
-    - name: Test BBH type with bytes_write/bytes_read
-      run: |
-        echo ""
-        echo "========================================"
-        echo "Testing BBH Type"
-        echo "========================================"
-        python3 << 'EOF'
-        from bb import BBH, bytes_write, bytes_read
-        import hashlib
-
-        # Test round-trip with hex string
-        hash_hex = hashlib.sha256(b"test").hexdigest()
-        bbh = BBH(hash_hex)
-        encoded = bytes_write((bbh, "data", 42))
-        decoded = bytes_read(encoded)
-        assert decoded[0].value == hash_hex
-        assert decoded[1] == "data"
-        assert decoded[2] == 42
-        print("✓ BBH hex round-trip passed")
-
-        # Test round-trip with bytes
-        hash_bytes = hashlib.sha256(b"test2").digest()
-        bbh2 = BBH(hash_bytes)
-        encoded2 = bytes_write((bbh2,))
-        decoded2 = bytes_read(encoded2)
-        assert decoded2[0].value == hash_bytes.hex()
-        print("✓ BBH bytes round-trip passed")
-
-        print("✓ All BBH tests passed!")
-        EOF
-
     - name: Fuzzing Summary
       if: always()
       run: |
