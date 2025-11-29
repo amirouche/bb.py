@@ -4994,6 +4994,57 @@ def command_compile(hash_with_lang: str, python_mode: bool = False, debug_mode: 
     print("Compilation complete!")
 
 
+def command_aston(filepath: str, test_mode: bool = False):
+    """
+    Convert Python source file to ASTON representation.
+
+    Args:
+        filepath: Path to Python source file
+        test_mode: If True, run round-trip test instead of outputting tuples
+    """
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            source = f.read()
+    except FileNotFoundError:
+        print(f"Error: File not found: {filepath}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error reading file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        print(f"Syntax error in {filepath}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if test_mode:
+        # Test round-trip: expected == aston_read(aston_write(expected))
+        _, tuples = aston_write(tree)
+        reconstructed = aston_read(tuples)
+
+        # Compare using ast.dump
+        original_dump = ast.dump(tree)
+        reconstructed_dump = ast.dump(reconstructed)
+
+        if original_dump == reconstructed_dump:
+            print("✓ Round-trip test PASSED", file=sys.stderr)
+            sys.exit(0)
+        else:
+            print("✗ Round-trip test FAILED", file=sys.stderr)
+            print("\nOriginal AST:", file=sys.stderr)
+            print(original_dump[:500], file=sys.stderr)
+            print("\n...\n", file=sys.stderr)
+            print("Reconstructed AST:", file=sys.stderr)
+            print(reconstructed_dump[:500], file=sys.stderr)
+            sys.exit(1)
+    else:
+        # Normal mode - output tuples as JSON lines
+        _, tuples = aston_write(tree)
+        for tup in tuples:
+            print(json.dumps(tup, ensure_ascii=False))
+
+
 def main():
     parser = argparse.ArgumentParser(description='bb - Function pool manager')
     subparsers = parser.add_subparsers(dest='command', help='Commands')
@@ -5103,6 +5154,11 @@ def main():
     commit_parser.add_argument('hash', help='Function hash to commit')
     commit_parser.add_argument('--comment', '-c', help='Commit message (opens editor if not provided)')
 
+    # Aston command
+    aston_parser = subparsers.add_parser('aston', help='Convert Python file to ASTON representation')
+    aston_parser.add_argument('file', help='Path to Python source file')
+    aston_parser.add_argument('--test', action='store_true', help='Run round-trip test instead of outputting tuples')
+
     args = parser.parse_args()
 
     if args.command == 'init':
@@ -5182,6 +5238,8 @@ def main():
         command_compile(args.hash, python_mode=args.python, debug_mode=args.debug)
     elif args.command == 'commit':
         command_commit(args.hash, comment=args.comment)
+    elif args.command == 'aston':
+        command_aston(args.file, test_mode=args.test)
     else:
         parser.print_help()
 
