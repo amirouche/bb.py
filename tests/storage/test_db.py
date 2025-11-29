@@ -5,7 +5,7 @@ Tests SQLite3-based ordered key-value store operations.
 """
 import pytest
 
-from bb import db_open, db_get, db_set, db_delete, db_query, db_transaction
+from bb import db_open, db_get, db_set, db_delete, db_query, db_transaction, db_bytes, db_count
 
 
 # ============================================================================
@@ -394,3 +394,234 @@ def test_db_transaction_returns_db():
 
     with db_transaction(db) as conn:
         assert conn is db
+
+
+# ============================================================================
+# Tests for db_bytes
+# ============================================================================
+
+def test_db_bytes_basic():
+    """Test basic bytes calculation"""
+    db = db_open(':memory:')
+
+    # Insert keys and values with known sizes
+    db_set(db, b'aa', b'value1')  # key: 2, value: 6 = 8
+    db_set(db, b'ab', b'value2')  # key: 2, value: 6 = 8
+    db_set(db, b'ac', b'val')     # key: 2, value: 3 = 5
+
+    # Query all keys [aa, ad)
+    total = db_bytes(db, b'aa', b'ad')
+
+    assert total == 21  # 8 + 8 + 5
+
+
+def test_db_bytes_forward_scan():
+    """Test bytes calculation with forward range scan"""
+    db = db_open(':memory:')
+
+    db_set(db, b'a', b'1')
+    db_set(db, b'b', b'22')
+    db_set(db, b'c', b'333')
+    db_set(db, b'd', b'4444')
+
+    # Query [b, d) - should get b and c
+    total = db_bytes(db, b'b', b'd')
+
+    # b: 1 + 2 = 3, c: 1 + 3 = 4, total = 7
+    assert total == 7
+
+
+def test_db_bytes_reverse_scan():
+    """Test bytes calculation with reverse range scan"""
+    db = db_open(':memory:')
+
+    db_set(db, b'a', b'1')
+    db_set(db, b'b', b'22')
+    db_set(db, b'c', b'333')
+    db_set(db, b'd', b'4444')
+
+    # Query reverse [d, b) - should get c and b in descending order
+    total = db_bytes(db, b'd', b'b')
+
+    # Same range [b, d) = b + c = 7
+    assert total == 7
+
+
+def test_db_bytes_empty_result():
+    """Test bytes calculation with no matching keys"""
+    db = db_open(':memory:')
+
+    db_set(db, b'a', b'value_a')
+    db_set(db, b'z', b'value_z')
+
+    # Query [m, n) - no keys in this range
+    total = db_bytes(db, b'm', b'n')
+
+    assert total == 0
+
+
+def test_db_bytes_with_offset():
+    """Test bytes calculation with offset"""
+    db = db_open(':memory:')
+
+    db_set(db, b'a', b'11')   # key: 1, value: 2 = 3
+    db_set(db, b'b', b'222')  # key: 1, value: 3 = 4
+    db_set(db, b'c', b'3333') # key: 1, value: 4 = 5
+    db_set(db, b'd', b'44444')# key: 1, value: 5 = 6
+
+    # Query with offset=2, limit required for offset
+    total = db_bytes(db, b'a', b'e', offset=2, limit=10)
+
+    # Skip a and b, get c and d: 5 + 6 = 11
+    assert total == 11
+
+
+def test_db_bytes_with_limit():
+    """Test bytes calculation with limit"""
+    db = db_open(':memory:')
+
+    db_set(db, b'a', b'11')   # key: 1, value: 2 = 3
+    db_set(db, b'b', b'222')  # key: 1, value: 3 = 4
+    db_set(db, b'c', b'3333') # key: 1, value: 4 = 5
+    db_set(db, b'd', b'44444')# key: 1, value: 5 = 6
+
+    # Query with limit=2
+    total = db_bytes(db, b'a', b'e', limit=2)
+
+    # Get only a and b: 3 + 4 = 7
+    assert total == 7
+
+
+def test_db_bytes_with_offset_and_limit():
+    """Test bytes calculation with offset and limit"""
+    db = db_open(':memory:')
+
+    db_set(db, b'a', b'11')   # key: 1, value: 2 = 3
+    db_set(db, b'b', b'222')  # key: 1, value: 3 = 4
+    db_set(db, b'c', b'3333') # key: 1, value: 4 = 5
+    db_set(db, b'd', b'44444')# key: 1, value: 5 = 6
+
+    # Query with offset=1, limit=2
+    total = db_bytes(db, b'a', b'e', offset=1, limit=2)
+
+    # Skip a, get b and c: 4 + 5 = 9
+    assert total == 9
+
+
+# ============================================================================
+# Tests for db_count
+# ============================================================================
+
+def test_db_count_basic():
+    """Test basic count"""
+    db = db_open(':memory:')
+
+    db_set(db, b'aa', b'value1')
+    db_set(db, b'ab', b'value2')
+    db_set(db, b'ac', b'value3')
+
+    # Count all keys [aa, ad)
+    count = db_count(db, b'aa', b'ad')
+
+    assert count == 3
+
+
+def test_db_count_forward_scan():
+    """Test count with forward range scan"""
+    db = db_open(':memory:')
+
+    db_set(db, b'a', b'value_a')
+    db_set(db, b'b', b'value_b')
+    db_set(db, b'c', b'value_c')
+    db_set(db, b'd', b'value_d')
+
+    # Count [b, d) - should get b and c
+    count = db_count(db, b'b', b'd')
+
+    assert count == 2
+
+
+def test_db_count_reverse_scan():
+    """Test count with reverse range scan"""
+    db = db_open(':memory:')
+
+    db_set(db, b'a', b'value_a')
+    db_set(db, b'b', b'value_b')
+    db_set(db, b'c', b'value_c')
+    db_set(db, b'd', b'value_d')
+
+    # Count reverse [d, b) - should get b and c
+    count = db_count(db, b'd', b'b')
+
+    assert count == 2
+
+
+def test_db_count_empty_result():
+    """Test count with no matching keys"""
+    db = db_open(':memory:')
+
+    db_set(db, b'a', b'value_a')
+    db_set(db, b'z', b'value_z')
+
+    # Count [m, n) - no keys in this range
+    count = db_count(db, b'm', b'n')
+
+    assert count == 0
+
+
+def test_db_count_with_offset():
+    """Test count with offset"""
+    db = db_open(':memory:')
+
+    db_set(db, b'a', b'value_a')
+    db_set(db, b'b', b'value_b')
+    db_set(db, b'c', b'value_c')
+    db_set(db, b'd', b'value_d')
+
+    # Count with offset=2, limit required
+    count = db_count(db, b'a', b'e', offset=2, limit=10)
+
+    # Skip a and b, count c and d
+    assert count == 2
+
+
+def test_db_count_with_limit():
+    """Test count with limit"""
+    db = db_open(':memory:')
+
+    db_set(db, b'a', b'value_a')
+    db_set(db, b'b', b'value_b')
+    db_set(db, b'c', b'value_c')
+    db_set(db, b'd', b'value_d')
+
+    # Count with limit=2
+    count = db_count(db, b'a', b'e', limit=2)
+
+    assert count == 2
+
+
+def test_db_count_with_offset_and_limit():
+    """Test count with offset and limit"""
+    db = db_open(':memory:')
+
+    db_set(db, b'a', b'value_a')
+    db_set(db, b'b', b'value_b')
+    db_set(db, b'c', b'value_c')
+    db_set(db, b'd', b'value_d')
+
+    # Count with offset=1, limit=2
+    count = db_count(db, b'a', b'e', offset=1, limit=2)
+
+    # Skip a, count b and c
+    assert count == 2
+
+
+def test_db_count_single_key():
+    """Test count with single matching key"""
+    db = db_open(':memory:')
+
+    db_set(db, b'key', b'value')
+
+    count = db_count(db, b'key', b'key\x00')
+
+    assert count == 1

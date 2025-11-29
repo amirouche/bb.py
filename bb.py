@@ -394,6 +394,82 @@ def db_query(conn: sqlite3.Connection, key: bytes, other: bytes, offset: int = 0
     return [(row[0], row[1]) for row in cursor]
 
 
+def db_bytes(conn: sqlite3.Connection, key: bytes, other: bytes, offset: int = 0, limit: Optional[int] = None) -> int:
+    """Sum the length of bytes in keys and values between key and other.
+
+    Args:
+        conn: SQLite connection
+        key: Start key (inclusive if forward, exclusive if reverse)
+        other: End key (exclusive if forward, inclusive if reverse)
+        offset: Number of results to skip
+        limit: Maximum results to consider
+
+    Returns:
+        Total bytes (key lengths + value lengths)
+
+    Behavior:
+        - If key <= other: forward scan [key, other) in ascending order
+        - If key > other: reverse scan [other, key) in descending order
+    """
+    if key <= other:
+        # Forward scan: key <= k < other
+        base_query = 'SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key ASC'
+        params: List[Any] = [key, other]
+    else:
+        # Reverse scan: other <= k < key, descending order
+        base_query = 'SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key DESC'
+        params = [other, key]
+
+    if limit is not None:
+        base_query += ' LIMIT ? OFFSET ?'
+        params.extend([limit, offset])
+    elif offset > 0:
+        base_query += ' OFFSET ?'
+        params.append(offset)
+
+    # Wrap in SUM query
+    query = f'SELECT COALESCE(SUM(LENGTH(key) + LENGTH(value)), 0) FROM ({base_query})'
+    cursor = conn.execute(query, params)
+    return cursor.fetchone()[0]
+
+
+def db_count(conn: sqlite3.Connection, key: bytes, other: bytes, offset: int = 0, limit: Optional[int] = None) -> int:
+    """Count the number of keys between key and other.
+
+    Args:
+        conn: SQLite connection
+        key: Start key (inclusive if forward, exclusive if reverse)
+        other: End key (exclusive if forward, inclusive if reverse)
+        offset: Number of results to skip
+        limit: Maximum results to consider
+
+    Returns:
+        Number of keys in the range
+
+    Behavior:
+        - If key <= other: forward scan [key, other) in ascending order
+        - If key > other: reverse scan [other, key) in descending order
+    """
+    if key <= other:
+        # Forward scan: key <= k < other
+        base_query = 'SELECT key FROM kv WHERE key >= ? AND key < ? ORDER BY key ASC'
+        params: List[Any] = [key, other]
+    else:
+        # Reverse scan: other <= k < key, descending order
+        base_query = 'SELECT key FROM kv WHERE key >= ? AND key < ? ORDER BY key DESC'
+        params = [other, key]
+
+    if limit is not None:
+        base_query += ' LIMIT ? OFFSET ?'
+        params.extend([limit, offset])
+    elif offset > 0:
+        base_query += ' OFFSET ?'
+        params.append(offset)
+
+    # Wrap in COUNT query
+    query = f'SELECT COUNT(*) FROM ({base_query})'
+    cursor = conn.execute(query, params)
+    return cursor.fetchone()[0]
 
 
 ### ASTON (AST Object Notation) ###
