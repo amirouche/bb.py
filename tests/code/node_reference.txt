@@ -1,0 +1,337 @@
+FIELD TYPE MAPPING
+================================================================================
+
+AnnAssign:
+  annotation: expr?
+  simple: int
+  target: expr
+  value: unknown
+
+Assert:
+  msg: unknown
+  test: expr
+
+Assign:
+  targets: expr*
+  type_comment: expr?
+  value: unknown
+
+AsyncFor:
+  body: stmt*
+  iter: expr
+  orelse: stmt*
+  target: expr
+  type_comment: expr?
+
+AsyncFunctionDef:
+  args: arg*
+  body: stmt*
+  decorator_list: expr*
+  name: identifier
+  returns: expr?
+  type_comment: expr?
+
+AsyncWith:
+  body: stmt*
+  items: withitem*
+  type_comment: expr?
+
+Attribute:
+  attr: identifier
+  ctx: expr_context
+  value: unknown
+
+AugAssign:
+  op: operator
+  target: expr
+  value: unknown
+
+Await:
+  value: unknown
+
+BinOp:
+  left: expr
+  op: operator
+  right: expr
+
+BoolOp:
+  op: operator
+  values: expr*
+
+Bytes:
+  s: constant
+
+Call:
+  args: arg*
+  func: expr
+  keywords: expr*
+
+ClassDef:
+  bases: expr*
+  body: stmt*
+  decorator_list: expr*
+  keywords: expr*
+  name: identifier
+
+Compare:
+  comparators: expr*
+  left: expr
+  ops: operator*
+
+Constant:
+  kind: string?
+  value: constant
+
+Delete:
+  targets: expr*
+
+Dict:
+  keys: expr*
+  values: expr*
+
+DictComp:
+  generators: comprehension*
+  key: unknown
+  value: unknown
+
+ExceptHandler:
+  body: stmt*
+  name: identifier
+  type: expr?
+
+Expr:
+  value: unknown
+
+Expression:
+  body: stmt*
+
+For:
+  body: stmt*
+  iter: expr
+  orelse: stmt*
+  target: expr
+  type_comment: expr?
+
+FormattedValue:
+  conversion: unknown
+  format_spec: unknown
+  value: unknown
+
+FunctionDef:
+  args: arg*
+  body: stmt*
+  decorator_list: expr*
+  name: identifier
+  returns: expr?
+  type_comment: expr?
+
+FunctionType:
+  argtypes: unknown
+  returns: expr?
+
+GeneratorExp:
+  elt: unknown
+  generators: comprehension*
+
+Global:
+  names: alias*
+
+If:
+  body: stmt*
+  orelse: stmt*
+  test: expr
+
+IfExp:
+  body: stmt*
+  orelse: stmt*
+  test: expr
+
+Import:
+  names: alias*
+
+ImportFrom:
+  level: unknown
+  module: identifier
+  names: alias*
+
+Interactive:
+  body: stmt*
+
+JoinedStr:
+  values: expr*
+
+Lambda:
+  args: arg*
+  body: stmt*
+
+List:
+  ctx: expr_context
+  elts: expr*
+
+ListComp:
+  elt: unknown
+  generators: comprehension*
+
+Match:
+  cases: unknown
+  subject: unknown
+
+MatchAs:
+  name: identifier
+  pattern: unknown
+
+MatchClass:
+  cls: unknown
+  kwd_attrs: unknown
+  kwd_patterns: unknown
+  patterns: unknown
+
+MatchMapping:
+  keys: expr*
+  patterns: unknown
+  rest: unknown
+
+MatchOr:
+  patterns: unknown
+
+MatchSequence:
+  patterns: unknown
+
+MatchSingleton:
+  value: unknown
+
+MatchStar:
+  name: identifier
+
+MatchValue:
+  value: unknown
+
+Module:
+  body: stmt*
+  type_ignores: unknown
+
+Name:
+  ctx: expr_context
+  id: identifier
+
+NameConstant:
+  kind: string?
+  value: constant
+
+NamedExpr:
+  target: expr
+  value: unknown
+
+Nonlocal:
+  names: alias*
+
+Num:
+  n: constant
+
+Raise:
+  cause: expr?
+  exc: expr?
+
+Return:
+  value: unknown
+
+Set:
+  elts: expr*
+
+SetComp:
+  elt: unknown
+  generators: comprehension*
+
+Slice:
+  lower: expr
+  step: expr
+  upper: expr
+
+Starred:
+  ctx: expr_context
+  value: unknown
+
+Str:
+  s: constant
+
+Subscript:
+  ctx: expr_context
+  slice: expr
+  value: unknown
+
+Try:
+  body: stmt*
+  finalbody: stmt*
+  handlers: excepthandler*
+  orelse: stmt*
+
+TryStar:
+  body: stmt*
+  finalbody: stmt*
+  handlers: excepthandler*
+  orelse: stmt*
+
+Tuple:
+  ctx: expr_context
+  elts: expr*
+
+TypeIgnore:
+  lineno: int
+  tag: unknown
+
+UnaryOp:
+  op: operator
+  operand: unknown
+
+While:
+  body: stmt*
+  orelse: stmt*
+  test: expr
+
+With:
+  body: stmt*
+  items: withitem*
+  type_comment: expr?
+
+Yield:
+  value: unknown
+
+YieldFrom:
+  value: unknown
+
+alias:
+  asname: identifier?
+  name: identifier
+
+arg:
+  annotation: expr?
+  arg: identifier
+  type_comment: expr?
+
+arguments:
+  args: arg*
+  defaults: expr*
+  kw_defaults: expr*
+  kwarg: unknown
+  kwonlyargs: arg*
+  posonlyargs: arg*
+  vararg: unknown
+
+comprehension:
+  ifs: expr*
+  is_async: unknown
+  iter: expr
+  target: expr
+
+keyword:
+  arg: identifier
+  value: unknown
+
+match_case:
+  body: stmt*
+  guard: unknown
+  pattern: unknown
+
+withitem:
+  context_expr: unknown
+  optional_vars: unknown
