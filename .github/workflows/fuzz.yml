@@ -41,7 +41,7 @@ jobs:
         echo "========================================"
         for file in examples/*.py; do
           echo "Testing $file..."
-          python3 aston.py --test "$file"
+          python3 bb.py aston --test "$file"
         done
 
     - name: Run quick generative fuzzing

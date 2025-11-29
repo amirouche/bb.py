@@ -217,7 +217,7 @@ class CorpusFuzzStrategy(FuzzStrategy):
                         'test_id': test_id,
                         'error': result.error,
                         'filepath': saved_path,
-                        'reproduce': f"python3 aston.py --test {saved_path}",
+                        'reproduce': f"python3 bb.py aston --test {saved_path}",
                     })
 
             except Exception as e:
@@ -388,7 +388,7 @@ def main():
             print(f"\n{failure['test_id']}:")
             print(f"  Error: {failure['error'][:150]}")
             print(f"  File:  {failure['filepath']}")
-            print(f"  Test:  python3 aston.py --test {failure['filepath']}")
+            print(f"  Test:  python3 bb.py aston --test {failure['filepath']}")
             print(f"  Repro: {failure['reproduce']}")
 
     if total_failed > 0:
