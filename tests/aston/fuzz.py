@@ -11,20 +11,76 @@ All tests verify the round-trip invariant: ast == aston_read(aston_write(ast))
 """
 
 import ast
+import random
 import sys
 import traceback
 from pathlib import Path
 from typing import List, Tuple, Optional
 
-# Import ASTON
+# Import ASTON from bb.py
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from aston import aston_write, aston_read
-
-# Import mutation fuzzer utilities
-from test_aston_fuzz_mutations import mutate_code
+from bb import aston_write, aston_read
 
 # Import AST code generator
 from tests.code.code import generate as generate_ast_code
+
+
+# Mutation fuzzing constants and utilities
+IMPORT_MODULES = [
+    "os", "sys", "re", "json", "math", "random", "pathlib",
+    "collections", "itertools", "functools", "typing", "datetime",
+    "hashlib", "urllib", "abc",
+]
+
+IMPORT_ITEMS = {
+    "os": ["path", "environ", "getcwd", "listdir"],
+    "sys": ["argv", "exit", "stdout", "stderr"],
+    "collections": ["Counter", "defaultdict", "OrderedDict", "namedtuple"],
+    "typing": ["List", "Dict", "Tuple", "Optional", "Union"],
+    "pathlib": ["Path", "PurePath"],
+    "itertools": ["chain", "cycle", "repeat", "islice"],
+    "functools": ["reduce", "partial", "lru_cache"],
+    "datetime": ["datetime", "date", "time", "timedelta"],
+}
+
+
+def mutate_add_imports(code: str, rng: random.Random) -> str:
+    """Add random import statements to code."""
+    mutations = []
+    num_imports = rng.randint(1, 5)
+
+    for _ in range(num_imports):
+        mutation_type = rng.choice(["import", "from_import", "from_import_as"])
+
+        if mutation_type == "import":
+            module = rng.choice(IMPORT_MODULES)
+            mutations.append(f"import {module}")
+        elif mutation_type == "from_import":
+            module = rng.choice([m for m in IMPORT_MODULES if m in IMPORT_ITEMS])
+            items = IMPORT_ITEMS[module]
+            item = rng.choice(items)
+            mutations.append(f"from {module} import {item}")
+        elif mutation_type == "from_import_as":
+            module = rng.choice([m for m in IMPORT_MODULES if m in IMPORT_ITEMS])
+            items = IMPORT_ITEMS[module]
+            item = rng.choice(items)
+            alias = f"{item}_alias_{rng.randint(0, 999)}"
+            mutations.append(f"from {module} import {item} as {alias}")
+
+    import_block = "\n".join(mutations)
+    return f"{import_block}\n\n{code}"
+
+
+def mutate_code(code: str, seed: int) -> str:
+    """Apply deterministic mutations to code based on seed."""
+    rng = random.Random(seed)
+    mutated = mutate_add_imports(code, rng)
+
+    try:
+        ast.parse(mutated)
+        return mutated
+    except SyntaxError:
+        return code
 
 
 class FuzzResult:
