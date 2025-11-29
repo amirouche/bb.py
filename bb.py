@@ -1006,6 +1006,66 @@ def nstore_query(db: sqlite3.Connection, nstore: NStore, pattern: Tuple, *patter
     return bindings
 
 
+def nstore_count(db: sqlite3.Connection, nstore: NStore, pattern: Tuple) -> int:
+    """Count tuples matching pattern.
+
+    Args:
+        db: SQLite connection
+        nstore: NStore instance
+        pattern: Query pattern (tuple with Variable and concrete values)
+
+    Returns:
+        Number of matching tuples
+
+    Example:
+        count = nstore_count(db, store, ('user123', 'tag', Variable('tag')))
+    """
+    assert len(pattern) == nstore.n, f"Pattern length {len(pattern)} doesn't match nstore size {nstore.n}"
+
+    # Find matching index
+    index, subspace = nstore_pattern_to_index(pattern, nstore.indices)
+
+    # Build prefix for range query
+    prefix_items = nstore_pattern_to_prefix(pattern, index)
+    key_start = bytes_write(nstore.prefix + (subspace,) + prefix_items)
+    key_end = bytes_next(key_start)
+    if key_end is None:
+        # All bytes are 0xFF, use next longer sequence
+        key_end = key_start + b'\x00'
+
+    return db_count(db, key_start, key_end)
+
+
+def nstore_bytes(db: sqlite3.Connection, nstore: NStore, pattern: Tuple) -> int:
+    """Sum the length of bytes in keys and values for tuples matching pattern.
+
+    Args:
+        db: SQLite connection
+        nstore: NStore instance
+        pattern: Query pattern (tuple with Variable and concrete values)
+
+    Returns:
+        Total bytes (key lengths + value lengths)
+
+    Example:
+        total = nstore_bytes(db, store, ('user123', 'tag', Variable('tag')))
+    """
+    assert len(pattern) == nstore.n, f"Pattern length {len(pattern)} doesn't match nstore size {nstore.n}"
+
+    # Find matching index
+    index, subspace = nstore_pattern_to_index(pattern, nstore.indices)
+
+    # Build prefix for range query
+    prefix_items = nstore_pattern_to_prefix(pattern, index)
+    key_start = bytes_write(nstore.prefix + (subspace,) + prefix_items)
+    key_end = bytes_next(key_start)
+    if key_end is None:
+        # All bytes are 0xFF, use next longer sequence
+        key_end = key_start + b'\x00'
+
+    return db_bytes(db, key_start, key_end)
+
+
 @contextmanager
 def db_transaction(db: sqlite3.Connection) -> Generator[sqlite3.Connection, None, None]:
     """Context manager for database transactions.

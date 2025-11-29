@@ -12,6 +12,8 @@ from bb import (
     nstore_ask,
     nstore_delete,
     nstore_query,
+    nstore_bytes,
+    nstore_count,
     Variable
 )
 
@@ -454,3 +456,160 @@ def test_nstore_query_result_list_slicing():
 
     assert len(page1) == 5
     assert len(page2) == 5
+
+
+# ============================================================================
+# Tests for nstore_count
+# ============================================================================
+
+def test_nstore_count_single_pattern():
+    """Test count with single pattern"""
+    db = db_open(':memory:')
+    store = nstore_create((0,), 3)
+
+    nstore_add(db, store, ('user123', 'tag', 'python'))
+    nstore_add(db, store, ('user123', 'tag', 'rust'))
+    nstore_add(db, store, ('user123', 'tag', 'go'))
+
+    count = nstore_count(db, store, ('user123', 'tag', Variable('tag')))
+
+    assert count == 3
+
+
+def test_nstore_count_no_matches():
+    """Test count with no matching tuples"""
+    db = db_open(':memory:')
+    store = nstore_create((0,), 3)
+
+    nstore_add(db, store, ('user123', 'name', 'Alice'))
+
+    count = nstore_count(db, store, ('user456', 'name', Variable('name')))
+
+    assert count == 0
+
+
+def test_nstore_count_empty_store():
+    """Test count on empty store"""
+    db = db_open(':memory:')
+    store = nstore_create((0,), 3)
+
+    count = nstore_count(db, store, (Variable('a'), Variable('b'), Variable('c')))
+
+    assert count == 0
+
+
+def test_nstore_count_exact_match():
+    """Test count with exact match (no variables)"""
+    db = db_open(':memory:')
+    store = nstore_create((0,), 3)
+
+    nstore_add(db, store, ('user123', 'name', 'Alice'))
+    nstore_add(db, store, ('user456', 'name', 'Bob'))
+
+    count = nstore_count(db, store, ('user123', 'name', 'Alice'))
+
+    assert count == 1
+
+
+def test_nstore_count_multiple_variables():
+    """Test count with multiple variables"""
+    db = db_open(':memory:')
+    store = nstore_create((0,), 3)
+
+    nstore_add(db, store, ('user123', 'name', 'Alice'))
+    nstore_add(db, store, ('user456', 'name', 'Bob'))
+    nstore_add(db, store, ('user789', 'email', 'carol@example.com'))
+
+    count = nstore_count(db, store, (Variable('uid'), 'name', Variable('name')))
+
+    assert count == 2
+
+
+def test_nstore_count_with_integers():
+    """Test count with integer values"""
+    db = db_open(':memory:')
+    store = nstore_create((0,), 3)
+
+    nstore_add(db, store, ('user123', 'age', 25))
+    nstore_add(db, store, ('user456', 'age', 30))
+    nstore_add(db, store, ('user789', 'age', 35))
+
+    count = nstore_count(db, store, (Variable('uid'), 'age', Variable('age')))
+
+    assert count == 3
+
+
+def test_nstore_count_pattern_wrong_size():
+    """Test that pattern with wrong size raises error"""
+    db = db_open(':memory:')
+    store = nstore_create((0,), 3)
+
+    with pytest.raises(AssertionError, match="Pattern length .* doesn't match"):
+        nstore_count(db, store, (Variable('a'), Variable('b')))
+
+
+# ============================================================================
+# Tests for nstore_bytes
+# ============================================================================
+
+def test_nstore_bytes_single_pattern():
+    """Test bytes with single pattern"""
+    db = db_open(':memory:')
+    store = nstore_create((0,), 3)
+
+    nstore_add(db, store, ('user123', 'tag', 'python'))
+    nstore_add(db, store, ('user123', 'tag', 'rust'))
+    nstore_add(db, store, ('user123', 'tag', 'go'))
+
+    total = nstore_bytes(db, store, ('user123', 'tag', Variable('tag')))
+
+    # Should be non-zero
+    assert total > 0
+
+
+def test_nstore_bytes_no_matches():
+    """Test bytes with no matching tuples"""
+    db = db_open(':memory:')
+    store = nstore_create((0,), 3)
+
+    nstore_add(db, store, ('user123', 'name', 'Alice'))
+
+    total = nstore_bytes(db, store, ('user456', 'name', Variable('name')))
+
+    assert total == 0
+
+
+def test_nstore_bytes_empty_store():
+    """Test bytes on empty store"""
+    db = db_open(':memory:')
+    store = nstore_create((0,), 3)
+
+    total = nstore_bytes(db, store, (Variable('a'), Variable('b'), Variable('c')))
+
+    assert total == 0
+
+
+def test_nstore_bytes_increases_with_more_data():
+    """Test that bytes increases with more data"""
+    db = db_open(':memory:')
+    store = nstore_create((0,), 3)
+
+    nstore_add(db, store, ('user123', 'tag', 'python'))
+    bytes1 = nstore_bytes(db, store, ('user123', 'tag', Variable('tag')))
+
+    nstore_add(db, store, ('user123', 'tag', 'rust'))
+    bytes2 = nstore_bytes(db, store, ('user123', 'tag', Variable('tag')))
+
+    nstore_add(db, store, ('user123', 'tag', 'go'))
+    bytes3 = nstore_bytes(db, store, ('user123', 'tag', Variable('tag')))
+
+    assert bytes1 < bytes2 < bytes3
+
+
+def test_nstore_bytes_pattern_wrong_size():
+    """Test that pattern with wrong size raises error"""
+    db = db_open(':memory:')
+    store = nstore_create((0,), 3)
+
+    with pytest.raises(AssertionError, match="Pattern length .* doesn't match"):
+        nstore_bytes(db, store, (Variable('a'), Variable('b')))
