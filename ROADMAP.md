@@ -308,6 +308,8 @@ bb.py stats abc123  # usage, quality metrics
 - Add `tags` and `category` fields to metadata
 - Implement `bb.py tag` command
 - Store tags in nstore tuples
+- **Documentation storage**: Store markdown files and relate them to function hashes
+- **Hash labeling/naming**: Implement human-readable labels/aliases for hashes
 
 **Phase 2: Tag-Based Search (Weeks 3-4)** - Medium
 - Implement `bb.py search --tag TAG`
@@ -318,6 +320,7 @@ bb.py stats abc123  # usage, quality metrics
 - Parse `from bb.pool import ...` statements
 - Build dependency graph in nstore
 - Implement `bb.py deps` and `bb.py dependents`
+- **Call stack traversal**: Implement to figure out all paths to reach a function from another
 
 **Phase 4: Evolution Tracking (Weeks 7-8)** - Medium
 - Link related functions via evolution metadata
@@ -338,6 +341,11 @@ bb.py stats abc123  # usage, quality metrics
 - Embedding-based similarity search
 - Integration with vector databases
 - LLM-powered code understanding
+
+**Phase 8: Whole Program Synthesis (Future)** - Harder
+- Design schemas and architecture for whole program synthesis
+- Planning framework for composing functions from pool into complete programs
+- Code generation strategies for multi-function applications
 
 ### Open Questions
 
