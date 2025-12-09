@@ -4261,6 +4261,421 @@ def storage_validate_pool(pool_path: Path) -> tuple:
     Returns:
         Tuple of (is_valid, errors) where errors is a list of error messages
     """
+
+
+### SQLite Storage Functions ###
+
+def init_sqlite_storage():
+    """
+    Initialize SQLite database for bb storage.
+    
+    Returns:
+        Tuple of (conn, aston_nstore, deps_nstore)
+    """
+    bb_dir = storage_get_bb_directory()
+    db_path = bb_dir / 'pool.db'
+    
+    conn = db_open(str(db_path))
+    
+    # Set schema version
+    schema_key = b'schema_version'
+    schema_value = b'2'  # SQLite schema version
+    if db_get(conn, schema_key) is None:
+        db_set(conn, schema_key, schema_value)
+    
+    # Create nstore for ASTON tuples (n=5: func_hash, content_hash, key, index, value)
+    aston_nstore = nstore_create((1,), 5)
+    
+    # Create nstore for dependencies (n=2: func_hash, dep_hash)
+    deps_nstore = nstore_create((2,), 2)
+    
+    return conn, aston_nstore, deps_nstore
+
+
+def code_save_sqlite(conn, aston_nstore, hash_value, normalized_code, metadata):
+    """
+    Save function using SQLite with ASTON format.
+    
+    Args:
+        conn: SQLite connection
+        aston_nstore: NStore for ASTON tuples
+        hash_value: Function hash (64-character hex)
+        normalized_code: Normalized Python code
+        metadata: Metadata dictionary
+    """
+    # Parse and convert to AST
+    tree = ast.parse(normalized_code)
+    
+    # Convert to ASTON format
+    content_hash, aston_tuples = aston_write(tree)
+    
+    # Store ASTON tuples in nstore (add func_hash as first element)
+    with db_transaction(conn):
+        for tuple_data in aston_tuples:
+            # tuple_data is (content_hash, key, index, value)
+            # Add func_hash to make it (func_hash, content_hash, key, index, value)
+            extended_tuple = (hash_value,) + tuple_data
+            nstore_add(conn, aston_nstore, extended_tuple)
+    
+    # Store function metadata in key-value store
+    func_data = {
+        'schema_version': 2,
+        'hash': hash_value,
+        'content_hash': content_hash,
+        'metadata': metadata
+    }
+    func_json = json.dumps(func_data, ensure_ascii=False)
+    db_set(conn, hash_value.encode('utf-8'), func_json.encode('utf-8'))
+
+
+def code_load_sqlite(conn, aston_nstore, hash_value):
+    """
+    Load function from SQLite.
+    
+    Args:
+        conn: SQLite connection
+        aston_nstore: NStore for ASTON tuples
+        hash_value: Function hash (64-character hex)
+    
+    Returns:
+        Dictionary with schema_version, hash, normalized_code, metadata
+    """
+    # Load function metadata
+    func_json = db_get(conn, hash_value.encode('utf-8'))
+    if func_json is None:
+        raise ValueError(f"Function not found: {hash_value}")
+    
+    func_data = json.loads(func_json.decode('utf-8'))
+    content_hash = func_data['content_hash']
+    
+    # Load ASTON tuples from nstore by function hash
+    pattern = (hash_value, Variable('content_hash'), Variable('key'), Variable('index'), Variable('value'))
+    results = nstore_query(conn, aston_nstore, pattern)
+    
+    aston_tuples = []
+    for binding in results:
+        aston_tuples.append((
+            binding['content_hash'],
+            binding['key'],
+            binding['index'],
+            binding['value']
+        ))
+    
+    # Reconstruct AST
+    tree = aston_read(aston_tuples)
+    normalized_code = ast.unparse(tree)
+    
+    return {
+        'schema_version': func_data['schema_version'],
+        'hash': func_data['hash'],
+        'normalized_code': normalized_code,
+        'metadata': func_data['metadata']
+    }
+
+
+def mapping_save_sqlite(conn, func_hash, lang, docstring, name_mapping, alias_mapping, comment=""):
+    """
+    Save mapping using SQLite.
+    
+    Args:
+        conn: SQLite connection
+        func_hash: Function hash (64-character hex)
+        lang: Language code (e.g., "eng", "fra")
+        docstring: Function docstring
+        name_mapping: Normalized name -> original name mapping
+        alias_mapping: BB function hash -> alias mapping
+        comment: Optional comment
+    
+    Returns:
+        Mapping hash (64-character hex)
+    """
+    mapping_hash = code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment)
+    
+    mapping_data = {
+        'docstring': docstring,
+        'name_mapping': name_mapping,
+        'alias_mapping': alias_mapping,
+        'comment': comment
+    }
+    
+    # Composite key: func_hash|lang|mapping_hash
+    key = f"{func_hash}|{lang}|{mapping_hash}"
+    mapping_json = json.dumps(mapping_data, ensure_ascii=False)
+    db_set(conn, key.encode('utf-8'), mapping_json.encode('utf-8'))
+    
+    return mapping_hash
+
+
+def mapping_load_sqlite(conn, func_hash, lang, mapping_hash):
+    """
+    Load mapping from SQLite.
+    
+    Args:
+        conn: SQLite connection
+        func_hash: Function hash (64-character hex)
+        lang: Language code (e.g., "eng", "fra")
+        mapping_hash: Mapping hash (64-character hex)
+    
+    Returns:
+        Tuple of (docstring, name_mapping, alias_mapping, comment)
+    """
+    key = f"{func_hash}|{lang}|{mapping_hash}"
+    mapping_json = db_get(conn, key.encode('utf-8'))
+    if mapping_json is None:
+        raise ValueError(f"Mapping not found: {func_hash}@{lang} (mapping: {mapping_hash})")
+    
+    mapping_data = json.loads(mapping_json.decode('utf-8'))
+    return (
+        mapping_data['docstring'],
+        mapping_data['name_mapping'],
+        mapping_data['alias_mapping'],
+        mapping_data['comment']
+    )
+
+
+def list_mappings_sqlite(conn, func_hash, lang):
+    """
+    List all mappings for a function and language in SQLite.
+    
+    Args:
+        conn: SQLite connection
+        func_hash: Function hash (64-character hex)
+        lang: Language code (e.g., "eng", "fra")
+    
+    Returns:
+        List of (mapping_hash, comment) tuples
+    """
+    # Scan for all keys matching func_hash|lang|*
+    prefix = f"{func_hash}|{lang}|"
+    
+    mappings = []
+    # Use db_query to find all keys with this prefix
+    start_key = prefix.encode('utf-8')
+    end_key = (prefix + '\xff').encode('utf-8')
+    
+    results = db_query(conn, start_key, end_key)
+    for key_bytes, value_bytes in results:
+        key = key_bytes.decode('utf-8')
+        # Extract mapping_hash from key
+        parts = key.split('|')
+        if len(parts) == 3:
+            mapping_hash = parts[2]
+            mapping_json = json.loads(value_bytes.decode('utf-8'))
+            comment = mapping_json.get('comment', '')
+            mappings.append((mapping_hash, comment))
+    
+    return mappings
+
+
+def save_dependencies_sqlite(conn, deps_nstore, func_hash, dependencies):
+    """
+    Save function dependencies using nstore.
+    
+    Args:
+        conn: SQLite connection
+        deps_nstore: NStore for dependencies
+        func_hash: Function hash (64-character hex)
+        dependencies: List of dependency hashes
+    """
+    with db_transaction(conn):
+        for dep_hash in dependencies:
+            nstore_add(conn, deps_nstore, (func_hash, dep_hash))
+
+
+def load_dependencies_sqlite(conn, deps_nstore, func_hash):
+    """
+    Load function dependencies using nstore.
+    
+    Args:
+        conn: SQLite connection
+        deps_nstore: NStore for dependencies
+        func_hash: Function hash (64-character hex)
+    
+    Returns:
+        List of dependency hashes
+    """
+    pattern = (func_hash, Variable('dep'))
+    results = nstore_query(conn, deps_nstore, pattern)
+    return [binding['dep'] for binding in results]
+
+
+def code_detect_storage():
+    """
+    Detect which storage backend to use.
+    
+    Returns:
+        'sqlite' if SQLite database exists, 'file' for file-based storage
+    """
+    bb_dir = storage_get_bb_directory()
+    db_path = bb_dir / 'pool.db'
+    pool_dir = bb_dir / 'pool'
+    
+    # Check if SQLite database exists and has data
+    if db_path.exists():
+        try:
+            conn = db_open(str(db_path))
+            schema_version = db_get(conn, b'schema_version')
+            if schema_version and schema_version.decode('utf-8') == '2':
+                return 'sqlite'
+        except:
+            pass
+    
+    # Fall back to file-based
+    if pool_dir.exists():
+        return 'file'
+    
+    return 'sqlite'  # Default for new installations
+
+
+def code_load_unified(hash_value, lang=None, mapping_hash=None):
+    """
+    Unified load function that works with both backends.
+    
+    Args:
+        hash_value: Function hash (64-character hex)
+        lang: Optional language code
+        mapping_hash: Optional mapping hash
+    
+    Returns:
+        Tuple of (normalized_code, name_mapping, alias_mapping, docstring)
+    """
+    storage_type = code_detect_storage()
+    
+    if storage_type == 'sqlite':
+        bb_dir = storage_get_bb_directory()
+        db_path = bb_dir / 'pool.db'
+        conn, aston_nstore, deps_nstore = init_sqlite_storage()
+        
+        try:
+            func_data = code_load_sqlite(conn, aston_nstore, hash_value)
+            
+            if lang and mapping_hash:
+                docstring, name_mapping, alias_mapping, comment = mapping_load_sqlite(
+                    conn, hash_value, lang, mapping_hash)
+                return func_data['normalized_code'], name_mapping, alias_mapping, docstring
+            elif lang:
+                # Find first mapping for language
+                mappings = list_mappings_sqlite(conn, hash_value, lang)
+                if mappings:
+                    mapping_hash = mappings[0][0]
+                    return code_load_unified(hash_value, lang, mapping_hash)
+                else:
+                    raise ValueError(f"No mappings found for language: {lang}")
+            else:
+                return func_data['normalized_code'], {}, {}, ""
+        finally:
+            conn.close()
+    else:
+        # Use existing file-based functions
+        return code_load(hash_value, lang, mapping_hash)
+
+
+def code_save_unified(hash_value, lang, normalized_code, docstring, name_mapping, alias_mapping, comment="", parent=None, checks=None):
+    """
+    Unified save function that works with both backends.
+    
+    Args:
+        hash_value: Function hash (64-character hex)
+        lang: Language code
+        normalized_code: Normalized code
+        docstring: Function docstring
+        name_mapping: Name mapping
+        alias_mapping: Alias mapping
+        comment: Optional comment
+        parent: Optional parent hash
+        checks: Optional list of test hashes
+    """
+    storage_type = code_detect_storage()
+    
+    if storage_type == 'sqlite':
+        bb_dir = storage_get_bb_directory()
+        db_path = bb_dir / 'pool.db'
+        conn, aston_nstore, deps_nstore = init_sqlite_storage()
+        
+        try:
+            # Create metadata
+            metadata = code_create_metadata(parent=parent, checks=checks)
+            
+            # Save function
+            code_save_sqlite(conn, aston_nstore, hash_value, normalized_code, metadata)
+            
+            # Save mapping
+            mapping_save_sqlite(conn, hash_value, lang, docstring, name_mapping, alias_mapping, comment)
+            
+            # Save dependencies
+            deps = code_extract_dependencies(normalized_code)
+            save_dependencies_sqlite(conn, deps_nstore, hash_value, deps)
+            
+        finally:
+            conn.close()
+    else:
+        # Use existing file-based functions
+        code_save(hash_value, lang, normalized_code, docstring, name_mapping, alias_mapping, comment, parent, checks)
+
+
+def command_migrate():
+    """
+    Migrate from file-based to SQLite storage.
+    """
+    print("Starting migration from file-based to SQLite storage...")
+    
+    # Initialize SQLite storage
+    bb_dir = storage_get_bb_directory()
+    db_path = bb_dir / 'pool.db'
+    conn, aston_nstore, deps_nstore = init_sqlite_storage()
+    
+    # Get all functions from file-based storage
+    pool_dir = storage_get_pool_directory()
+    migrated_count = 0
+    
+    for prefix_dir in pool_dir.iterdir():
+        if not prefix_dir.is_dir() or len(prefix_dir.name) != 2:
+            continue
+        
+        for func_dir in prefix_dir.iterdir():
+            if not func_dir.is_dir():
+                continue
+            
+            func_hash = prefix_dir.name + func_dir.name
+            if len(func_hash) != 64:
+                continue
+            
+            try:
+                # Load from file
+                func_data = code_load_v1(func_hash)
+                normalized_code = func_data['normalized_code']
+                metadata = func_data['metadata']
+                
+                # Save to SQLite
+                code_save_sqlite(conn, aston_nstore, func_hash, normalized_code, metadata)
+                
+                # Migrate mappings
+                for lang_dir in func_dir.iterdir():
+                    if lang_dir.is_dir() and len(lang_dir.name) == 3:
+                        lang = lang_dir.name
+                        mappings = mappings_list_v1(func_hash, lang)
+                        
+                        for mapping_hash, _ in mappings:
+                            docstring, name_mapping, alias_mapping, comment = mapping_load_v1(
+                                func_hash, lang, mapping_hash)
+                            mapping_save_sqlite(conn, func_hash, lang, docstring, 
+                                              name_mapping, alias_mapping, comment)
+                
+                # Migrate dependencies
+                deps = code_extract_dependencies(normalized_code)
+                save_dependencies_sqlite(conn, deps_nstore, func_hash, deps)
+                
+                migrated_count += 1
+                print(f"  Migrated: {func_hash[:12]}... ({migrated_count} total)")
+                
+            except Exception as e:
+                print(f"  Error migrating {func_hash[:12]}...: {e}")
+    
+    conn.commit()
+    print(f"Migration complete. Migrated {migrated_count} functions.")
+
+
+def storage_validate_pool(pool_path: Path) -> tuple:
     errors = []
 
     if not pool_path.exists():
@@ -5295,6 +5710,9 @@ def main():
     aston_parser.add_argument('file', help='Path to Python source file')
     aston_parser.add_argument('--test', action='store_true', help='Run round-trip test instead of outputting tuples')
 
+    # Migrate command
+    migrate_parser = subparsers.add_parser('migrate', help='Migrate from file-based to SQLite storage')
+
     args = parser.parse_args()
 
     if args.command == 'init':
@@ -5376,6 +5794,8 @@ def main():
         command_commit(args.hash, comment=args.comment)
     elif args.command == 'aston':
         command_aston(args.file, test_mode=args.test)
+    elif args.command == 'migrate':
+        command_migrate()
     else:
         parser.print_help()
 
