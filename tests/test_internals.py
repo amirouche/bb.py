@@ -599,9 +599,7 @@ def calculate_sum(first, second):
 """
     tree = ast.parse(code)
 
-    code_with_doc, code_without_doc, docstring, name_mapping, alias_mapping = (
-        bb.code_normalize(tree, "eng")
-    )
+    code_with_doc, code_without_doc, docstring, name_mapping, alias_mapping = bb.code_normalize(tree, "eng")
 
     assert "_bb_v_0" in code_with_doc  # Function name normalized
     assert docstring == "Add two numbers"
@@ -639,9 +637,7 @@ def foo(x):
 """
     tree = ast.parse(code)
 
-    code_with_doc, code_without_doc, docstring, name_mapping, alias_mapping = (
-        bb.code_normalize(tree, "eng")
-    )
+    code_with_doc, code_without_doc, docstring, name_mapping, alias_mapping = bb.code_normalize(tree, "eng")
 
     # Should remove alias but keep bb.pool module name
     assert "from bb.pool import abc123" in code_with_doc
@@ -826,12 +822,8 @@ def test_mapping_compute_hash_deterministic():
     comment = "Formal terminology"
 
     # Compute hash twice - should be identical
-    hash1 = bb.code_compute_mapping_hash(
-        docstring, name_mapping, alias_mapping, comment
-    )
-    hash2 = bb.code_compute_mapping_hash(
-        docstring, name_mapping, alias_mapping, comment
-    )
+    hash1 = bb.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment)
+    hash2 = bb.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment)
 
     assert hash1 == hash2
     assert len(hash1) == 64  # SHA256 produces 64 hex characters
@@ -844,12 +836,8 @@ def test_mapping_compute_hash_different_comments():
     name_mapping = {"_bb_v_0": "calculate_average", "_bb_v_1": "numbers"}
     alias_mapping = {"abc123": "helper"}
 
-    hash1 = bb.code_compute_mapping_hash(
-        docstring, name_mapping, alias_mapping, "Formal"
-    )
-    hash2 = bb.code_compute_mapping_hash(
-        docstring, name_mapping, alias_mapping, "Informal"
-    )
+    hash1 = bb.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, "Formal")
+    hash2 = bb.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, "Informal")
 
     assert hash1 != hash2
 
@@ -1009,9 +997,5 @@ def test_hash_determinism_multilingual_same_logic():
 
     # Additional sanity checks
     assert len(english_hash) == 64, "Hash should be 64 hex characters (SHA256)"
-    assert eng_docstring != fra_docstring, (
-        "Docstrings should differ (different languages)"
-    )
-    assert eng_name_mapping != fra_name_mapping, (
-        "Name mappings should differ (different variable names)"
-    )
+    assert eng_docstring != fra_docstring, "Docstrings should differ (different languages)"
+    assert eng_name_mapping != fra_name_mapping, "Name mappings should differ (different variable names)"

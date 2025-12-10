@@ -11,10 +11,7 @@ import sys
 from pathlib import Path
 
 
-
-def cli_run(
-    args: list, env: dict = None, cwd: str = None
-) -> subprocess.CompletedProcess:
+def cli_run(args: list, env: dict = None, cwd: str = None) -> subprocess.CompletedProcess:
     """Run bb.py CLI command."""
     cmd = [sys.executable, str(Path(__file__).parent.parent.parent / "bb.py")] + args
 
@@ -81,9 +78,7 @@ def test_whoami_set_and_get_public_key(tmp_path):
     cli_run(["init"], env=env)
 
     # Set public key
-    result = cli_run(
-        ["whoami", "public-key", "https://keys.example.com/key.pub"], env=env
-    )
+    result = cli_run(["whoami", "public-key", "https://keys.example.com/key.pub"], env=env)
     assert result.returncode == 0
     assert "Set public-key: https://keys.example.com/key.pub" in result.stdout
 

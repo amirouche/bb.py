@@ -45,3 +45,6 @@ dev = [
 
 [tool.setuptools]
 py-modules = ["bb"]
+
+[tool.ruff]
+line-length = 120

@@ -39,18 +39,14 @@ def get_current_repo_info() -> Dict[str, str]:
 
 def get_current_branch() -> str:
     """Get current git branch name."""
-    result = subprocess.run(
-        ["git", "branch", "--show-current"], capture_output=True, text=True, check=True
-    )
+    result = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True, check=True)
     return result.stdout.strip()
 
 
 def find_pr_for_branch(owner: str, repo: str, branch: str) -> int:
     """Find the PR number for the current branch."""
     # List all PRs and find the one with matching headRefName
-    prs = run_gh_command(
-        ["gh", "pr", "list", "--json", "number,headRefName", "--state", "open"]
-    )
+    prs = run_gh_command(["gh", "pr", "list", "--json", "number,headRefName", "--state", "open"])
 
     # Filter PRs to find the one with matching branch
     matching_prs = [pr for pr in prs if pr.get("headRefName") == branch]
@@ -63,13 +59,9 @@ def find_pr_for_branch(owner: str, repo: str, branch: str) -> int:
     return matching_prs[0]["number"]
 
 
-def get_unresolved_review_comments(
-    owner: str, repo: str, pr_number: int
-) -> List[Dict[str, Any]]:
+def get_unresolved_review_comments(owner: str, repo: str, pr_number: int) -> List[Dict[str, Any]]:
     """Get unresolved review comments for a PR."""
-    comments = run_gh_command(
-        ["gh", "api", f"/repos/{owner}/{repo}/pulls/{pr_number}/comments", "--paginate"]
-    )
+    comments = run_gh_command(["gh", "api", f"/repos/{owner}/{repo}/pulls/{pr_number}/comments", "--paginate"])
 
     # Filter for unresolved comments only
     unresolved_comments = []
@@ -90,9 +82,7 @@ def get_unresolved_review_comments(
     return unresolved_comments
 
 
-def save_to_jsonl(
-    comments: List[Dict[str, Any]], filename: str = "review-messages.jsonl"
-) -> None:
+def save_to_jsonl(comments: List[Dict[str, Any]], filename: str = "review-messages.jsonl") -> None:
     """Save comments to JSONL file."""
     with open(filename, "w", encoding="utf-8") as f:
         for comment in comments:
@@ -104,9 +94,7 @@ def main() -> None:
     """Main function."""
     # Parse arguments
     parser = argparse.ArgumentParser(description="Fetch GitHub review comments")
-    parser.add_argument(
-        "--pr-number", type=int, help="Specific PR number to fetch comments from"
-    )
+    parser.add_argument("--pr-number", type=int, help="Specific PR number to fetch comments from")
     args = parser.parse_args()
 
     print("Fetching GitHub review comments...")

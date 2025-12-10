@@ -70,11 +70,7 @@ def bytes_write_one(value: Any, nested: bool = False) -> bytes:
     elif isinstance(value, bytes):
         return bytes([_ENCODE_BYTES]) + value.replace(b"\x00", b"\x00\xff") + b"\x00"
     elif isinstance(value, str):
-        return (
-            bytes([_ENCODE_STRING])
-            + value.encode("utf-8").replace(b"\x00", b"\x00\xff")
-            + b"\x00"
-        )
+        return bytes([_ENCODE_STRING]) + value.encode("utf-8").replace(b"\x00", b"\x00\xff") + b"\x00"
     elif value == 0:
         return bytes([_ENCODE_INT_ZERO])
     elif isinstance(value, int):
@@ -99,26 +95,16 @@ def bytes_write_one(value: Any, nested: bool = False) -> bytes:
         # value can be bytes or hex string
         if isinstance(value.value, bytes):
             if len(value.value) != 32:
-                raise ValueError(
-                    f"BBH bytes must be exactly 32 bytes, got {len(value.value)}"
-                )
+                raise ValueError(f"BBH bytes must be exactly 32 bytes, got {len(value.value)}")
             return bytes([_ENCODE_BBH]) + value.value
         elif isinstance(value.value, str):
             if len(value.value) != 64:
-                raise ValueError(
-                    f"BBH hex string must be exactly 64 characters, got {len(value.value)}"
-                )
+                raise ValueError(f"BBH hex string must be exactly 64 characters, got {len(value.value)}")
             return bytes([_ENCODE_BBH]) + bytes.fromhex(value.value)
         else:
-            raise ValueError(
-                f"BBH value must be bytes or hex string, got {type(value.value)}"
-            )
+            raise ValueError(f"BBH value must be bytes or hex string, got {type(value.value)}")
     elif isinstance(value, (tuple, list)):
-        return (
-            bytes([_ENCODE_NESTED])
-            + b"".join(bytes_write_one(v, True) for v in value)
-            + bytes([0x00])
-        )
+        return bytes([_ENCODE_NESTED]) + b"".join(bytes_write_one(v, True) for v in value) + bytes([0x00])
     else:
         raise ValueError(f"Unsupported type for encoding: {type(value)}")
 
@@ -361,9 +347,7 @@ def db_set(conn: sqlite3.Connection, key: bytes, value: bytes) -> None:
         AssertionError: If key or value exceeds size limits
     """
     assert len(key) <= 1024, f"Key size {len(key)} exceeds maximum of 1024 bytes"
-    assert len(value) <= 1048576, (
-        f"Value size {len(value)} exceeds maximum of 1048576 bytes"
-    )
+    assert len(value) <= 1048576, f"Value size {len(value)} exceeds maximum of 1048576 bytes"
     conn.execute("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", (key, value))
 
 
@@ -445,15 +429,11 @@ def db_bytes(
     """
     if key <= other:
         # Forward scan: key <= k < other
-        base_query = (
-            "SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key ASC"
-        )
+        base_query = "SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key ASC"
         params: List[Any] = [key, other]
     else:
         # Reverse scan: other <= k < key, descending order
-        base_query = (
-            "SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key DESC"
-        )
+        base_query = "SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key DESC"
         params = [other, key]
 
     if limit is not None:
@@ -621,11 +601,7 @@ def aston_read(tuples: List[Tuple]) -> ast.AST:
     # Convert array dicts to sorted lists
     for hash_val, obj in objects.items():
         for key, value in list(obj.items()):
-            if (
-                isinstance(value, dict)
-                and value
-                and all(isinstance(k, int) for k in value.keys())
-            ):
+            if isinstance(value, dict) and value and all(isinstance(k, int) for k in value.keys()):
                 # Convert {0: v0, 1: v1, ...} to [v0, v1, ...]
                 max_index = max(value.keys())
                 obj[key] = [value[i] for i in range(max_index + 1)]
@@ -774,9 +750,7 @@ def nstore_indices(n: int) -> List[List[int]]:
     out.sort()
 
     # Verify coverage
-    assert nstore_indices_verify_coverage(out, n), (
-        "Generated indices do not cover all combinations"
-    )
+    assert nstore_indices_verify_coverage(out, n), "Generated indices do not cover all combinations"
 
     return out
 
@@ -899,9 +873,7 @@ def nstore_pattern_to_combination(pattern: Tuple) -> List[int]:
     return [i for i, item in enumerate(pattern) if not isinstance(item, Variable)]
 
 
-def nstore_pattern_to_index(
-    pattern: Tuple, indices: List[List[int]]
-) -> Tuple[List[int], int]:
+def nstore_pattern_to_index(pattern: Tuple, indices: List[List[int]]) -> Tuple[List[int], int]:
     """Find the index and subspace that matches the pattern.
 
     Args:
@@ -952,16 +924,11 @@ def nstore_bind_pattern(pattern: Tuple, bindings: Dict[str, Any]) -> Tuple:
         Pattern with variables substituted
     """
     return tuple(
-        bindings[item.name]
-        if isinstance(item, Variable) and item.name in bindings
-        else item
-        for item in pattern
+        bindings[item.name] if isinstance(item, Variable) and item.name in bindings else item for item in pattern
     )
 
 
-def nstore_bind_tuple(
-    pattern: Tuple, tuple_items: Tuple, seed: Dict[str, Any]
-) -> Dict[str, Any]:
+def nstore_bind_tuple(pattern: Tuple, tuple_items: Tuple, seed: Dict[str, Any]) -> Dict[str, Any]:
     """Bind variables in pattern to values from matching tuple.
 
     Args:
@@ -979,9 +946,7 @@ def nstore_bind_tuple(
     return result
 
 
-def nstore_query(
-    db: sqlite3.Connection, nstore: NStore, pattern: Tuple, *patterns: Tuple
-) -> List[Dict[str, Any]]:
+def nstore_query(db: sqlite3.Connection, nstore: NStore, pattern: Tuple, *patterns: Tuple) -> List[Dict[str, Any]]:
     """Query tuples matching pattern and optional additional where patterns.
 
     Args:
@@ -1019,9 +984,7 @@ def nstore_query(
 
     # Process each pattern
     for pat in patterns:
-        assert len(pat) == nstore.n, (
-            f"Pattern length {len(pat)} doesn't match nstore size {nstore.n}"
-        )
+        assert len(pat) == nstore.n, f"Pattern length {len(pat)} doesn't match nstore size {nstore.n}"
 
         new_bindings = []
 
@@ -1076,9 +1039,7 @@ def nstore_count(db: sqlite3.Connection, nstore: NStore, pattern: Tuple) -> int:
     Example:
         count = nstore_count(db, store, ('user123', 'tag', Variable('tag')))
     """
-    assert len(pattern) == nstore.n, (
-        f"Pattern length {len(pattern)} doesn't match nstore size {nstore.n}"
-    )
+    assert len(pattern) == nstore.n, f"Pattern length {len(pattern)} doesn't match nstore size {nstore.n}"
 
     # Find matching index
     index, subspace = nstore_pattern_to_index(pattern, nstore.indices)
@@ -1108,9 +1069,7 @@ def nstore_bytes(db: sqlite3.Connection, nstore: NStore, pattern: Tuple) -> int:
     Example:
         total = nstore_bytes(db, store, ('user123', 'tag', Variable('tag')))
     """
-    assert len(pattern) == nstore.n, (
-        f"Pattern length {len(pattern)} doesn't match nstore size {nstore.n}"
-    )
+    assert len(pattern) == nstore.n, f"Pattern length {len(pattern)} doesn't match nstore size {nstore.n}"
 
     # Find matching index
     index, subspace = nstore_pattern_to_index(pattern, nstore.indices)
@@ -1238,9 +1197,7 @@ def code_get_import_names(tree: ast.Module) -> Set[str]:
     return imported
 
 
-def code_check_unused_imports(
-    tree: ast.Module, imported_names: Set[str], all_names: Set[str]
-) -> bool:
+def code_check_unused_imports(tree: ast.Module, imported_names: Set[str], all_names: Set[str]) -> bool:
     """Check if all imports are used"""
     for name in imported_names:
         # Check if the imported name is used anywhere besides the import statement
@@ -1452,9 +1409,7 @@ def code_rewrite_bb_imports(
     return new_imports, alias_mapping
 
 
-def code_replace_bb_calls(
-    tree: ast.AST, alias_mapping: Dict[str, str], name_mapping: Dict[str, str]
-):
+def code_replace_bb_calls(tree: ast.AST, alias_mapping: Dict[str, str], name_mapping: Dict[str, str]):
     """
     Replace calls to aliased bb functions.
     E.g., kawa(...) becomes object_c0ffeebad._bb_v_0(...)
@@ -1521,9 +1476,7 @@ def code_extract_docstring(
     return docstring if docstring else "", func_copy
 
 
-def code_normalize(
-    tree: ast.Module, lang: str
-) -> Tuple[str, str, str, Dict[str, str], Dict[str, str]]:
+def code_normalize(tree: ast.Module, lang: str) -> Tuple[str, str, str, Dict[str, str], Dict[str, str]]:
     """
     Normalize the AST according to bb rules.
     Returns (normalized_code_with_docstring, normalized_code_without_docstring, docstring, name_mapping, alias_mapping)
@@ -1544,15 +1497,11 @@ def code_normalize(
     bb_aliases = set(alias_mapping.values())
 
     # Create name mapping
-    forward_mapping, reverse_mapping = code_create_name_mapping(
-        function_def, imports, bb_aliases
-    )
+    forward_mapping, reverse_mapping = code_create_name_mapping(function_def, imports, bb_aliases)
 
     # Create two modules: one with docstring (for display) and one without (for hashing)
     module_with_docstring = ast.Module(body=imports + [function_def], type_ignores=[])
-    module_without_docstring = ast.Module(
-        body=imports + [function_without_docstring], type_ignores=[]
-    )
+    module_without_docstring = ast.Module(body=imports + [function_without_docstring], type_ignores=[])
 
     # Process both modules identically
     for module in [module_with_docstring, module_without_docstring]:
@@ -1665,9 +1614,7 @@ def code_detect_schema(func_hash: str) -> int:
     return None
 
 
-def code_create_metadata(
-    parent: str = None, checks: List[str] = None
-) -> Dict[str, any]:
+def code_create_metadata(parent: str = None, checks: List[str] = None) -> Dict[str, any]:
     """
     Create default metadata for a function.
 
@@ -1939,9 +1886,7 @@ def mapping_save_v1(
     pool_dir = storage_get_pool_directory()
 
     # Compute mapping hash
-    mapping_hash = code_compute_mapping_hash(
-        docstring, name_mapping, alias_mapping, comment
-    )
+    mapping_hash = code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment)
 
     # Create mapping directory: pool/XX/Y.../lang/ZZ/W.../
     func_dir = pool_dir / func_hash[:2] / func_hash[2:]
@@ -2003,9 +1948,7 @@ def code_save(
     mapping_save_v1(hash_value, lang, docstring, name_mapping, alias_mapping, comment)
 
 
-def code_denormalize(
-    normalized_code: str, name_mapping: Dict[str, str], alias_mapping: Dict[str, str]
-) -> str:
+def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_mapping: Dict[str, str]) -> str:
     """
     Denormalize code by applying reverse name mappings.
     name_mapping: maps normalized names (_bb_v_X) to original names
@@ -2083,11 +2026,7 @@ def code_denormalize(
                     if actual_hash in hash_to_alias:
                         # This hash should have an alias
                         # Keep object_ prefix in import name
-                        new_names.append(
-                            ast.alias(
-                                name=import_name, asname=hash_to_alias[actual_hash]
-                            )
-                        )
+                        new_names.append(ast.alias(name=import_name, asname=hash_to_alias[actual_hash]))
                     else:
                         new_names.append(alias_node)
                 node.names = new_names
@@ -2104,9 +2043,7 @@ def code_denormalize(
 # =============================================================================
 
 
-def git_run(
-    args: List[str], cwd: str = None, timeout: int = 60
-) -> subprocess.CompletedProcess:
+def git_run(args: List[str], cwd: str = None, timeout: int = 60) -> subprocess.CompletedProcess:
     """
     Execute a git command via subprocess.run().
 
@@ -2123,9 +2060,7 @@ def git_run(
         subprocess.TimeoutExpired: If command times out
     """
     cmd = ["git"] + args
-    result = subprocess.run(
-        cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout
-    )
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
     return result
 
 
@@ -2243,9 +2178,7 @@ def git_clone_or_fetch(git_url: str, local_path: Path) -> bool:
         result = git_run(["pull", "--ff-only", "origin", "main"], cwd=str(local_path))
         if result.returncode != 0:
             # Try 'master' branch if 'main' fails
-            result = git_run(
-                ["pull", "--ff-only", "origin", "master"], cwd=str(local_path)
-            )
+            result = git_run(["pull", "--ff-only", "origin", "master"], cwd=str(local_path))
             if result.returncode != 0:
                 print(f"Warning: git pull failed: {result.stderr}", file=sys.stderr)
                 return False
@@ -2621,13 +2554,9 @@ def command_remote_pull(name: str):
         # Check if remote exists in git config, add if not
         result = git_run(["remote", "get-url", name], cwd=str(git_dir))
         if result.returncode != 0:
-            result = git_run(
-                ["remote", "add", name, parsed["git_url"]], cwd=str(git_dir)
-            )
+            result = git_run(["remote", "add", name, parsed["git_url"]], cwd=str(git_dir))
             if result.returncode != 0:
-                print(
-                    f"Error: Failed to add git remote: {result.stderr}", file=sys.stderr
-                )
+                print(f"Error: Failed to add git remote: {result.stderr}", file=sys.stderr)
                 sys.exit(1)
             print(f"Added git remote '{name}'")
 
@@ -2644,9 +2573,7 @@ def command_remote_pull(name: str):
         if result.returncode == 0:
             remote_branch = f"{name}/main"
         else:
-            result = git_run(
-                ["rev-parse", "--verify", f"{name}/master"], cwd=str(git_dir)
-            )
+            result = git_run(["rev-parse", "--verify", f"{name}/master"], cwd=str(git_dir))
             if result.returncode == 0:
                 remote_branch = f"{name}/master"
 
@@ -2774,13 +2701,9 @@ def command_remote_push(name: str):
         result = git_run(["remote", "get-url", name], cwd=str(git_dir))
         if result.returncode != 0:
             # Remote doesn't exist, add it
-            result = git_run(
-                ["remote", "add", name, parsed["git_url"]], cwd=str(git_dir)
-            )
+            result = git_run(["remote", "add", name, parsed["git_url"]], cwd=str(git_dir))
             if result.returncode != 0:
-                print(
-                    f"Error: Failed to add git remote: {result.stderr}", file=sys.stderr
-                )
+                print(f"Error: Failed to add git remote: {result.stderr}", file=sys.stderr)
                 sys.exit(1)
             print(f"Added git remote '{name}'")
 
@@ -2846,9 +2769,7 @@ def command_remote_sync():
         # Ensure remote is configured
         result = git_run(["remote", "get-url", name], cwd=str(git_dir))
         if result.returncode != 0:
-            result = git_run(
-                ["remote", "add", name, parsed["git_url"]], cwd=str(git_dir)
-            )
+            result = git_run(["remote", "add", name, parsed["git_url"]], cwd=str(git_dir))
             if result.returncode != 0:
                 print(f"Warning: Failed to add remote '{name}': {result.stderr}")
                 continue
@@ -2866,9 +2787,7 @@ def command_remote_sync():
         if result.returncode == 0:
             remote_branch = f"{name}/main"
         else:
-            result = git_run(
-                ["rev-parse", "--verify", f"{name}/master"], cwd=str(git_dir)
-            )
+            result = git_run(["rev-parse", "--verify", f"{name}/master"], cwd=str(git_dir))
             if result.returncode == 0:
                 remote_branch = f"{name}/master"
 
@@ -2888,9 +2807,7 @@ def command_remote_sync():
                     # Clean up worktree
                     git_run(["worktree", "remove", str(temp_path)], cwd=str(git_dir))
                     if not is_valid:
-                        print(
-                            f"Warning: Remote '{name}' is not a valid bb pool, skipping:"
-                        )
+                        print(f"Warning: Remote '{name}' is not a valid bb pool, skipping:")
                         for err in errors[:3]:  # Show first 3 errors
                             print(f"    - {err}")
                         if len(errors) > 3:
@@ -3103,9 +3020,7 @@ def command_review(hash_value: str):
         hash_value: Function hash to review
     """
     # Validate hash format
-    if len(hash_value) != 64 or not all(
-        c in "0123456789abcdef" for c in hash_value.lower()
-    ):
+    if len(hash_value) != 64 or not all(c in "0123456789abcdef" for c in hash_value.lower()):
         print(
             f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}",
             file=sys.stderr,
@@ -3162,9 +3077,7 @@ def command_review(hash_value: str):
         loaded = False
         for lang in preferred_langs:
             try:
-                normalized_code, name_mapping, alias_mapping, docstring = code_load(
-                    current_hash, lang
-                )
+                normalized_code, name_mapping, alias_mapping, docstring = code_load(current_hash, lang)
                 func_name = name_mapping.get("_bb_v_0", "unknown")
 
                 # Show function header
@@ -3173,12 +3086,8 @@ def command_review(hash_value: str):
                 print("-" * 80)
 
                 # Denormalize and show code
-                normalized_code_with_doc = code_replace_docstring(
-                    normalized_code, docstring
-                )
-                original_code = code_denormalize(
-                    normalized_code_with_doc, name_mapping, alias_mapping
-                )
+                normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
+                original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
                 print(original_code)
                 print("-" * 80)
 
@@ -3226,9 +3135,7 @@ def command_review(hash_value: str):
                 print("✗ Function skipped.\n")
                 break
             elif response == "q":
-                print(
-                    f"\nReview paused. Progress saved ({len(reviewed)} functions reviewed)."
-                )
+                print(f"\nReview paused. Progress saved ({len(reviewed)} functions reviewed).")
                 print("Run the command again to continue from where you left off.")
                 return
             else:
@@ -3362,37 +3269,22 @@ def command_search(query: List[str]):
                         if lang_dir.is_dir() and len(lang_dir.name) == 3:
                             lang = lang_dir.name
                             try:
-                                _, name_mapping, _, docstring = code_load(
-                                    func_hash, lang
-                                )
+                                _, name_mapping, _, docstring = code_load(func_hash, lang)
                                 func_name = name_mapping.get("_bb_v_0", "unknown")
 
                                 # Search in function name, docstring, and original variable names
-                                all_original_names = " ".join(
-                                    name_mapping.values()
-                                ).lower()
+                                all_original_names = " ".join(name_mapping.values()).lower()
                                 searchable = f"{func_name} {docstring} {all_original_names}".lower()
 
                                 if any(term in searchable for term in search_terms):
                                     # Determine where match was found
                                     match_in = []
-                                    if any(
-                                        term in func_name.lower()
-                                        for term in search_terms
-                                    ):
+                                    if any(term in func_name.lower() for term in search_terms):
                                         match_in.append("name")
-                                    if any(
-                                        term in docstring.lower()
-                                        for term in search_terms
-                                    ):
+                                    if any(term in docstring.lower() for term in search_terms):
                                         match_in.append("docstring")
-                                    if any(
-                                        term in all_original_names
-                                        for term in search_terms
-                                    ):
-                                        if (
-                                            "name" not in match_in
-                                        ):  # Don't duplicate if func name matched
+                                    if any(term in all_original_names for term in search_terms):
+                                        if "name" not in match_in:  # Don't duplicate if func name matched
                                             match_in.append("variables")
 
                                     results.append(
@@ -3400,9 +3292,7 @@ def command_search(query: List[str]):
                                             "hash": func_hash,
                                             "name": func_name,
                                             "lang": lang,
-                                            "docstring": docstring[
-                                                :100
-                                            ],  # First 100 chars
+                                            "docstring": docstring[:100],  # First 100 chars
                                             "match_in": match_in,
                                         }
                                     )
@@ -3457,9 +3347,7 @@ def code_strip_bb_imports(code: str) -> str:
     return ast.unparse(tree)
 
 
-def code_load_dependencies_recursive(
-    func_hash: str, lang: str, namespace: dict, loaded: set = None
-):
+def code_load_dependencies_recursive(func_hash: str, lang: str, namespace: dict, loaded: set = None):
     """
     Recursively load a function and all its dependencies into a namespace.
 
@@ -3487,9 +3375,7 @@ def code_load_dependencies_recursive(
 
     # Load the function
     try:
-        normalized_code, name_mapping, alias_mapping, docstring = code_load(
-            func_hash, lang
-        )
+        normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, lang)
     except SystemExit:
         print(f"Error: Could not load dependency {func_hash}@{lang}", file=sys.stderr)
         sys.exit(1)
@@ -3501,9 +3387,7 @@ def code_load_dependencies_recursive(
 
     # Denormalize the code
     normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
-    original_code = code_denormalize(
-        normalized_code_with_doc, name_mapping, alias_mapping
-    )
+    original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
 
     # Strip bb imports (dependencies are already in namespace)
     executable_code = code_strip_bb_imports(original_code)
@@ -3597,9 +3481,7 @@ def command_run(hash_with_lang: str, debug: bool = False, func_args: list = None
         lang = None
 
     # Validate hash format
-    if len(hash_value) != 64 or not all(
-        c in "0123456789abcdef" for c in hash_value.lower()
-    ):
+    if len(hash_value) != 64 or not all(c in "0123456789abcdef" for c in hash_value.lower()):
         print(
             f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}",
             file=sys.stderr,
@@ -3626,9 +3508,7 @@ def command_run(hash_with_lang: str, debug: bool = False, func_args: list = None
 
     # Load function from pool
     try:
-        normalized_code, name_mapping, alias_mapping, docstring = code_load(
-            hash_value, lang
-        )
+        normalized_code, name_mapping, alias_mapping, docstring = code_load(hash_value, lang)
     except SystemExit:
         print(f"Error: Could not load function {hash_value}@{lang}", file=sys.stderr)
         sys.exit(1)
@@ -3649,9 +3529,7 @@ def command_run(hash_with_lang: str, debug: bool = False, func_args: list = None
 
     # Denormalize to original language
     normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
-    original_code = code_denormalize(
-        normalized_code_with_doc, name_mapping, alias_mapping
-    )
+    original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
 
     print(f"Running function: {func_name} ({lang})")
     print("=" * 60)
@@ -3778,9 +3656,7 @@ def command_translate(hash_with_lang: str, target_lang: str):
         sys.exit(1)
 
     # Validate hash format
-    if len(hash_value) != 64 or not all(
-        c in "0123456789abcdef" for c in hash_value.lower()
-    ):
+    if len(hash_value) != 64 or not all(c in "0123456789abcdef" for c in hash_value.lower()):
         print(
             f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}",
             file=sys.stderr,
@@ -3789,8 +3665,8 @@ def command_translate(hash_with_lang: str, target_lang: str):
 
     # Load source function
     try:
-        normalized_code, name_mapping_source, alias_mapping_source, docstring_source = (
-            code_load(hash_value, source_lang)
+        normalized_code, name_mapping_source, alias_mapping_source, docstring_source = code_load(
+            hash_value, source_lang
         )
     except SystemExit:
         print(
@@ -3803,9 +3679,7 @@ def command_translate(hash_with_lang: str, target_lang: str):
     print(f"Source function ({source_lang}):")
     print("=" * 60)
     normalized_code_with_doc = code_replace_docstring(normalized_code, docstring_source)
-    source_code = code_denormalize(
-        normalized_code_with_doc, name_mapping_source, alias_mapping_source
-    )
+    source_code = code_denormalize(normalized_code_with_doc, name_mapping_source, alias_mapping_source)
     print(source_code)
     print("=" * 60)
     print()
@@ -3836,9 +3710,7 @@ def command_translate(hash_with_lang: str, target_lang: str):
     alias_mapping_target = alias_mapping_source
 
     # Optionally add a comment
-    comment = input(
-        "Optional comment for this translation (press Enter to skip): "
-    ).strip()
+    comment = input("Optional comment for this translation (press Enter to skip): ").strip()
 
     # Save the translation
     mapping_hash = mapping_save_v1(
@@ -4112,9 +3984,7 @@ def mappings_list_v1(func_hash: str, lang: str) -> list:
     return mappings
 
 
-def mapping_load_v1(
-    func_hash: str, lang: str, mapping_hash: str
-) -> Tuple[str, Dict[str, str], Dict[str, str], str]:
+def mapping_load_v1(func_hash: str, lang: str, mapping_hash: str) -> Tuple[str, Dict[str, str], Dict[str, str], str]:
     """
     Load a specific language mapping using schema v1.
 
@@ -4157,9 +4027,7 @@ def mapping_load_v1(
     return docstring, name_mapping, alias_mapping, comment
 
 
-def code_load(
-    hash_value: str, lang: str, mapping_hash: str = None
-) -> Tuple[str, Dict[str, str], Dict[str, str], str]:
+def code_load(hash_value: str, lang: str, mapping_hash: str = None) -> Tuple[str, Dict[str, str], Dict[str, str], str]:
     """
     Load a function from the bb pool (v1 format only).
 
@@ -4204,9 +4072,7 @@ def code_load(
         selected_hash, _ = mappings_sorted[0]
 
     # Load the mapping
-    docstring, name_mapping, alias_mapping, comment = mapping_load_v1(
-        hash_value, lang, selected_hash
-    )
+    docstring, name_mapping, alias_mapping, comment = mapping_load_v1(hash_value, lang, selected_hash)
 
     return normalized_code, name_mapping, alias_mapping, docstring
 
@@ -4229,9 +4095,7 @@ def code_show(hash_with_lang_and_mapping: str):
         hash_value = hash_with_lang_and_mapping
 
         # Validate hash format
-        if len(hash_value) != 64 or not all(
-            c in "0123456789abcdef" for c in hash_value.lower()
-        ):
+        if len(hash_value) != 64 or not all(c in "0123456789abcdef" for c in hash_value.lower()):
             print(
                 f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}",
                 file=sys.stderr,
@@ -4269,9 +4133,7 @@ def code_show(hash_with_lang_and_mapping: str):
     mapping_hash = parts[2] if len(parts) > 2 else None
 
     # Validate hash format (should be 64 hex characters for SHA256)
-    if len(hash_value) != 64 or not all(
-        c in "0123456789abcdef" for c in hash_value.lower()
-    ):
+    if len(hash_value) != 64 or not all(c in "0123456789abcdef" for c in hash_value.lower()):
         print(
             f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}",
             file=sys.stderr,
@@ -4315,9 +4177,7 @@ def code_show(hash_with_lang_and_mapping: str):
         return
 
     # Load the selected mapping
-    normalized_code, name_mapping, alias_mapping, docstring = code_load(
-        hash_value, lang, mapping_hash=selected_hash
-    )
+    normalized_code, name_mapping, alias_mapping, docstring = code_load(hash_value, lang, mapping_hash=selected_hash)
 
     # Replace docstring and denormalize
     try:
@@ -4355,9 +4215,7 @@ def code_get(hash_with_lang: str):
         sys.exit(1)
 
     # Validate hash format (should be 64 hex characters for SHA256)
-    if len(hash_value) != 64 or not all(
-        c in "0123456789abcdef" for c in hash_value.lower()
-    ):
+    if len(hash_value) != 64 or not all(c in "0123456789abcdef" for c in hash_value.lower()):
         print(
             f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}",
             file=sys.stderr,
@@ -4365,9 +4223,7 @@ def code_get(hash_with_lang: str):
         sys.exit(1)
 
     # Load function data from pool
-    normalized_code, name_mapping, alias_mapping, docstring = code_load(
-        hash_value, lang
-    )
+    normalized_code, name_mapping, alias_mapping, docstring = code_load(hash_value, lang)
 
     # Replace the docstring with the language-specific one
     try:
@@ -4556,9 +4412,7 @@ def schema_validate_directory() -> tuple:
             for dep in deps:
                 if dep not in all_hashes:
                     stats["dependencies_missing"].append((func_hash, dep))
-                    errors.append(
-                        f"[{func_hash[:12]}...] Missing dependency: {dep[:12]}..."
-                    )
+                    errors.append(f"[{func_hash[:12]}...] Missing dependency: {dep[:12]}...")
         except (Exception, SystemExit):
             # Already reported in individual validation
             pass
@@ -4568,25 +4422,6 @@ def schema_validate_directory() -> tuple:
 
     is_valid = len(errors) == 0
     return is_valid, errors, stats
-
-
-def storage_validate_pool(pool_path: Path) -> tuple:
-    """
-    Validate a directory as a valid bb pool structure.
-
-    This is a parameterized version of schema_validate_directory that works
-    on any directory path, used to validate remote repositories before sync.
-
-    Handles two cases:
-    - Directory IS a pool (contains XX/YYYY.../object.json)
-    - Directory CONTAINS a 'pool' subdirectory
-
-    Args:
-        pool_path: Path to the directory to validate as a bb pool
-
-    Returns:
-        Tuple of (is_valid, errors) where errors is a list of error messages
-    """
 
 
 ### SQLite Storage Functions ###
@@ -4673,7 +4508,7 @@ def code_load_sqlite(conn, aston_nstore, hash_value):
         raise ValueError(f"Function not found: {hash_value}")
 
     func_data = json.loads(func_json.decode("utf-8"))
-    content_hash = func_data["content_hash"]
+    # content_hash = func_data["content_hash"]  # Unused variable
 
     # Load ASTON tuples from nstore by function hash
     pattern = (
@@ -4708,9 +4543,7 @@ def code_load_sqlite(conn, aston_nstore, hash_value):
     }
 
 
-def mapping_save_sqlite(
-    conn, func_hash, lang, docstring, name_mapping, alias_mapping, comment=""
-):
+def mapping_save_sqlite(conn, func_hash, lang, docstring, name_mapping, alias_mapping, comment=""):
     """
     Save mapping using SQLite.
 
@@ -4726,9 +4559,7 @@ def mapping_save_sqlite(
     Returns:
         Mapping hash (64-character hex)
     """
-    mapping_hash = code_compute_mapping_hash(
-        docstring, name_mapping, alias_mapping, comment
-    )
+    mapping_hash = code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment)
 
     mapping_data = {
         "docstring": docstring,
@@ -4761,9 +4592,7 @@ def mapping_load_sqlite(conn, func_hash, lang, mapping_hash):
     key = f"{func_hash}|{lang}|{mapping_hash}"
     mapping_json = db_get(conn, key.encode("utf-8"))
     if mapping_json is None:
-        raise ValueError(
-            f"Mapping not found: {func_hash}@{lang} (mapping: {mapping_hash})"
-        )
+        raise ValueError(f"Mapping not found: {func_hash}@{lang} (mapping: {mapping_hash})")
 
     mapping_data = json.loads(mapping_json.decode("utf-8"))
     return (
@@ -4858,7 +4687,7 @@ def code_detect_storage():
             schema_version = db_get(conn, b"schema_version")
             if schema_version and schema_version.decode("utf-8") == "2":
                 return "sqlite"
-        except:
+        except Exception:
             pass
 
     # Fall back to file-based
@@ -4883,8 +4712,8 @@ def code_load_unified(hash_value, lang=None, mapping_hash=None):
     storage_type = code_detect_storage()
 
     if storage_type == "sqlite":
-        bb_dir = storage_get_bb_directory()
-        db_path = bb_dir / "pool.db"
+        # bb_dir = storage_get_bb_directory()  # Unused variable
+        # db_path = bb_dir / "pool.db"  # Unused variable
         conn, aston_nstore, deps_nstore = init_sqlite_storage()
 
         try:
@@ -4945,8 +4774,8 @@ def code_save_unified(
     storage_type = code_detect_storage()
 
     if storage_type == "sqlite":
-        bb_dir = storage_get_bb_directory()
-        db_path = bb_dir / "pool.db"
+        # bb_dir = storage_get_bb_directory()  # Unused variable
+        # db_path = bb_dir / "pool.db"  # Unused variable
         conn, aston_nstore, deps_nstore = init_sqlite_storage()
 
         try:
@@ -4957,9 +4786,7 @@ def code_save_unified(
             code_save_sqlite(conn, aston_nstore, hash_value, normalized_code, metadata)
 
             # Save mapping
-            mapping_save_sqlite(
-                conn, hash_value, lang, docstring, name_mapping, alias_mapping, comment
-            )
+            mapping_save_sqlite(conn, hash_value, lang, docstring, name_mapping, alias_mapping, comment)
 
             # Save dependencies
             deps = code_extract_dependencies(normalized_code)
@@ -4989,8 +4816,8 @@ def command_migrate():
     print("Starting migration from file-based to SQLite storage...")
 
     # Initialize SQLite storage
-    bb_dir = storage_get_bb_directory()
-    db_path = bb_dir / "pool.db"
+    # bb_dir = storage_get_bb_directory()  # Unused variable
+    # db_path = bb_dir / "pool.db"  # Unused variable
     conn, aston_nstore, deps_nstore = init_sqlite_storage()
 
     # Get all functions from file-based storage
@@ -5016,9 +4843,7 @@ def command_migrate():
                 metadata = func_data["metadata"]
 
                 # Save to SQLite
-                code_save_sqlite(
-                    conn, aston_nstore, func_hash, normalized_code, metadata
-                )
+                code_save_sqlite(conn, aston_nstore, func_hash, normalized_code, metadata)
 
                 # Migrate mappings
                 for lang_dir in func_dir.iterdir():
@@ -5027,8 +4852,8 @@ def command_migrate():
                         mappings = mappings_list_v1(func_hash, lang)
 
                         for mapping_hash, _ in mappings:
-                            docstring, name_mapping, alias_mapping, comment = (
-                                mapping_load_v1(func_hash, lang, mapping_hash)
+                            docstring, name_mapping, alias_mapping, comment = mapping_load_v1(
+                                func_hash, lang, mapping_hash
                             )
                             mapping_save_sqlite(
                                 conn,
@@ -5086,9 +4911,7 @@ def storage_validate_pool(pool_path: Path) -> tuple:
             # Reconstruct and validate hash
             func_hash = prefix_dir.name + func_dir.name
             if len(func_hash) != 64:
-                errors.append(
-                    f"Invalid hash length in {prefix_dir.name}/{func_dir.name}"
-                )
+                errors.append(f"Invalid hash length in {prefix_dir.name}/{func_dir.name}")
                 continue
             if not all(c in "0123456789abcdef" for c in func_hash.lower()):
                 errors.append(f"Invalid hash format: {func_hash}")
@@ -5141,9 +4964,7 @@ def command_caller(hash_value: str):
         hash_value: Function hash (64-character hex) to find callers of
     """
     # Validate hash format
-    if len(hash_value) != 64 or not all(
-        c in "0123456789abcdef" for c in hash_value.lower()
-    ):
+    if len(hash_value) != 64 or not all(c in "0123456789abcdef" for c in hash_value.lower()):
         print(
             f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}",
             file=sys.stderr,
@@ -5208,9 +5029,7 @@ def command_check(hash_value: str):
         hash_value: Function hash (64-character hex) to find tests for
     """
     # Validate hash format
-    if len(hash_value) != 64 or not all(
-        c in "0123456789abcdef" for c in hash_value.lower()
-    ):
+    if len(hash_value) != 64 or not all(c in "0123456789abcdef" for c in hash_value.lower()):
         print(
             f"Error: Invalid hash format. Expected 64 hex characters. Got: {hash_value}",
             file=sys.stderr,
@@ -5372,12 +5191,8 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             _, func_without_docstring = code_extract_docstring(node)
             # Rebuild module without docstring for hashing
-            imports = [
-                n for n in new_tree.body if isinstance(n, (ast.Import, ast.ImportFrom))
-            ]
-            module_without_docstring = ast.Module(
-                body=imports + [func_without_docstring], type_ignores=[]
-            )
+            imports = [n for n in new_tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+            module_without_docstring = ast.Module(body=imports + [func_without_docstring], type_ignores=[])
             ast.fix_missing_locations(module_without_docstring)
             code_without_docstring = ast.unparse(module_without_docstring)
             break
@@ -5394,9 +5209,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str):
     for lang in languages:
         mappings = mappings_list_v1(what_hash, lang)
         for mapping_hash, comment in mappings:
-            docstring, name_mapping, alias_mapping, comment = mapping_load_v1(
-                what_hash, lang, mapping_hash
-            )
+            docstring, name_mapping, alias_mapping, comment = mapping_load_v1(what_hash, lang, mapping_hash)
 
             # Update alias_mapping: replace from_hash key with to_hash
             new_alias_mapping = {}
@@ -5406,9 +5219,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str):
                 else:
                     new_alias_mapping[dep_hash] = alias
 
-            mapping_save_v1(
-                new_hash, lang, docstring, name_mapping, new_alias_mapping, comment
-            )
+            mapping_save_v1(new_hash, lang, docstring, name_mapping, new_alias_mapping, comment)
 
     # Print the result command
     print(f"bb.py show {new_hash}")
@@ -5419,9 +5230,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str):
 # =============================================================================
 
 
-def compile_get_nuitka_command(
-    main_file: str, output_name: str, onefile: bool = True
-) -> list:
+def compile_get_nuitka_command(main_file: str, output_name: str, onefile: bool = True) -> list:
     """
     Build Nuitka command line arguments.
 
@@ -5638,9 +5447,7 @@ def code_execute(func_hash: str, lang: str, args: list):
     return runtime_dir
 
 
-def compile_generate_python(
-    func_hash: str, lang: str = None, debug_mode: bool = False
-) -> str:
+def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool = False) -> str:
     """
     Generate a single Python file that includes all dependencies.
 
@@ -5673,20 +5480,14 @@ def compile_generate_python(
             error_lines = [f"The following functions are not available in '{lang}':"]
             for dep_hash, available in missing_lang:
                 if available:
-                    error_lines.append(
-                        f"  - {dep_hash[:16]}... (available: {', '.join(available)})"
-                    )
+                    error_lines.append(f"  - {dep_hash[:16]}... (available: {', '.join(available)})")
                 else:
-                    error_lines.append(
-                        f"  - {dep_hash[:16]}... (no languages available)"
-                    )
+                    error_lines.append(f"  - {dep_hash[:16]}... (no languages available)")
             error_lines.append("")
             error_lines.append("Please add translations for these functions first:")
             for dep_hash, available in missing_lang:
                 if available:
-                    error_lines.append(
-                        f"  python3 bb.py translate {dep_hash}@{available[0]} {lang}"
-                    )
+                    error_lines.append(f"  python3 bb.py translate {dep_hash}@{available[0]} {lang}")
             raise ValueError("\n".join(error_lines))
 
     # Load all functions
@@ -5704,17 +5505,11 @@ def compile_generate_python(
             # Debug mode: denormalize to human-readable names
             mappings = mappings_list_v1(dep_hash, lang)
             mapping_hash = mappings[0][0]
-            docstring, name_mapping, alias_mapping, _ = mapping_load_v1(
-                dep_hash, lang, mapping_hash
-            )
+            docstring, name_mapping, alias_mapping, _ = mapping_load_v1(dep_hash, lang, mapping_hash)
 
             # Denormalize the code
-            normalized_code_with_doc = code_replace_docstring(
-                normalized_code, docstring
-            )
-            code = code_denormalize(
-                normalized_code_with_doc, name_mapping, alias_mapping
-            )
+            normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
+            code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
             func_name = name_mapping.get("_bb_v_0", "_bb_v_0")
         else:
             # Normal mode: use normalized code with unique function names
@@ -5798,9 +5593,7 @@ def compile_generate_python(
                 lines.append("")
 
     # Add main entry point
-    main_func = functions[
-        -1
-    ]  # The last one is the main function (root of dependency tree)
+    main_func = functions[-1]  # The last one is the main function (root of dependency tree)
     lines.append("")
     lines.append('if __name__ == "__main__":')
     lines.append("    import sys")
@@ -5825,9 +5618,7 @@ def compile_generate_python(
     return "\n".join(lines)
 
 
-def command_compile(
-    hash_with_lang: str, python_mode: bool = False, debug_mode: bool = False
-):
+def command_compile(hash_with_lang: str, python_mode: bool = False, debug_mode: bool = False):
     """
     Compile a function into a standalone executable or Python file.
 
@@ -5862,9 +5653,7 @@ def command_compile(
         sys.exit(1)
 
     # Validate hash format
-    if len(func_hash) != 64 or not all(
-        c in "0123456789abcdef" for c in func_hash.lower()
-    ):
+    if len(func_hash) != 64 or not all(c in "0123456789abcdef" for c in func_hash.lower()):
         print(
             f"Error: Invalid hash format. Expected 64 hex characters. Got: {func_hash}",
             file=sys.stderr,
@@ -5898,9 +5687,7 @@ def command_compile(
         output_path = Path("main.py")
 
         try:
-            python_code = compile_generate_python(
-                func_hash, lang, debug_mode=debug_mode
-            )
+            python_code = compile_generate_python(func_hash, lang, debug_mode=debug_mode)
             with open(output_path, "w", encoding="utf-8") as f:
                 f.write(python_code)
             print(f"Python file created: {output_path}")
@@ -5917,9 +5704,7 @@ def command_compile(
             output_name = "a.out"
 
         # Check if Nuitka is available
-        result = subprocess.run(
-            ["python3", "-m", "nuitka", "--version"], capture_output=True, text=True
-        )
+        result = subprocess.run(["python3", "-m", "nuitka", "--version"], capture_output=True, text=True)
         if result.returncode != 0:
             print("Error: Nuitka not found. Please install it first:", file=sys.stderr)
             print("  pip install nuitka", file=sys.stderr)
@@ -5936,21 +5721,15 @@ def command_compile(
         try:
             # Generate inline Python code
             print("Generating Python code...")
-            python_code = compile_generate_python(
-                func_hash, lang, debug_mode=debug_mode
-            )
+            python_code = compile_generate_python(func_hash, lang, debug_mode=debug_mode)
             main_path = build_dir / "main.py"
             with open(main_path, "w", encoding="utf-8") as f:
                 f.write(python_code)
 
             # Build with Nuitka
             print("Building executable with Nuitka...")
-            nuitka_cmd = compile_get_nuitka_command(
-                str(main_path), output_name, onefile=True
-            )
-            result = subprocess.run(
-                nuitka_cmd, cwd=str(build_dir), capture_output=True, text=True
-            )
+            nuitka_cmd = compile_get_nuitka_command(str(main_path), output_name, onefile=True)
+            result = subprocess.run(nuitka_cmd, cwd=str(build_dir), capture_output=True, text=True)
 
             if result.returncode != 0:
                 print("Error: Nuitka build failed:", file=sys.stderr)
@@ -6052,99 +5831,63 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # Init command
-    init_parser = subparsers.add_parser(
-        "init", help="Initialize bb directory and config"
-    )
+    subparsers.add_parser("init", help="Initialize bb directory and config")
 
     # Whoami command
-    whoami_parser = subparsers.add_parser(
-        "whoami", help="Get or set user configuration"
-    )
+    whoami_parser = subparsers.add_parser("whoami", help="Get or set user configuration")
     whoami_parser.add_argument(
         "subcommand",
         choices=["name", "email", "public-key", "language"],
         help="Configuration field to get/set",
     )
-    whoami_parser.add_argument(
-        "value", nargs="*", help="New value(s) to set (omit to get current value)"
-    )
+    whoami_parser.add_argument("value", nargs="*", help="New value(s) to set (omit to get current value)")
 
     # Add command
     add_parser = subparsers.add_parser("add", help="Add a function to the pool")
-    add_parser.add_argument(
-        "file", help="Path to Python file with @lang suffix (e.g., file.py@eng)"
-    )
-    add_parser.add_argument(
-        "--comment", default="", help="Optional comment explaining this mapping variant"
-    )
+    add_parser.add_argument("file", help="Path to Python file with @lang suffix (e.g., file.py@eng)")
+    add_parser.add_argument("--comment", default="", help="Optional comment explaining this mapping variant")
 
     # Get command (backward compatibility)
     get_parser = subparsers.add_parser("get", help="Get a function from the pool")
-    get_parser.add_argument(
-        "hash", help="Function hash with @lang suffix (e.g., abc123...@eng)"
-    )
+    get_parser.add_argument("hash", help="Function hash with @lang suffix (e.g., abc123...@eng)")
 
     # Show command (improved version of get with mapping selection)
-    show_parser = subparsers.add_parser(
-        "show", help="Show a function with mapping selection support"
-    )
+    show_parser = subparsers.add_parser("show", help="Show a function with mapping selection support")
     show_parser.add_argument(
         "hash",
         help="Function hash with @lang[@mapping_hash] (e.g., abc123...@eng or abc123...@eng@xyz789...)",
     )
 
     # Translate command
-    translate_parser = subparsers.add_parser(
-        "translate", help="Add translation for existing function"
-    )
-    translate_parser.add_argument(
-        "hash", help="Function hash with source language (e.g., abc123...@eng)"
-    )
-    translate_parser.add_argument(
-        "target_lang", help="Target language code (e.g., fra, spa)"
-    )
+    translate_parser = subparsers.add_parser("translate", help="Add translation for existing function")
+    translate_parser.add_argument("hash", help="Function hash with source language (e.g., abc123...@eng)")
+    translate_parser.add_argument("target_lang", help="Target language code (e.g., fra, spa)")
 
     # Run command
     run_parser = subparsers.add_parser("run", help="Execute function interactively")
-    run_parser.add_argument(
-        "hash", help="Function hash with language (e.g., abc123...@eng)"
-    )
-    run_parser.add_argument(
-        "--debug", action="store_true", help="Run with debugger (pdb)"
-    )
-    run_parser.add_argument(
-        "func_args", nargs="*", help="Arguments to pass to function (after --)"
-    )
+    run_parser.add_argument("hash", help="Function hash with language (e.g., abc123...@eng)")
+    run_parser.add_argument("--debug", action="store_true", help="Run with debugger (pdb)")
+    run_parser.add_argument("func_args", nargs="*", help="Arguments to pass to function (after --)")
 
     # Review command
-    review_parser = subparsers.add_parser(
-        "review", help="Recursively review function and dependencies"
-    )
+    review_parser = subparsers.add_parser("review", help="Recursively review function and dependencies")
     review_parser.add_argument("hash", help="Function hash to review")
 
     # Log command
-    log_parser = subparsers.add_parser("log", help="Show git-like commit log of pool")
+    subparsers.add_parser("log", help="Show git-like commit log of pool")
 
     # Search command
-    search_parser = subparsers.add_parser(
-        "search", help="Search and list functions by query"
-    )
+    search_parser = subparsers.add_parser("search", help="Search and list functions by query")
     search_parser.add_argument("query", nargs="+", help="Search terms")
 
     # Remote command
     remote_parser = subparsers.add_parser("remote", help="Manage remote repositories")
-    remote_subparsers = remote_parser.add_subparsers(
-        dest="remote_command", help="Remote subcommands"
-    )
+    remote_subparsers = remote_parser.add_subparsers(dest="remote_command", help="Remote subcommands")
 
     # Remote add
-    remote_add_parser = remote_subparsers.add_parser(
-        "add", help="Add remote repository"
-    )
+    remote_add_parser = remote_subparsers.add_parser("add", help="Add remote repository")
     remote_add_parser.add_argument("name", help="Remote name")
-    remote_add_parser.add_argument(
-        "url", help="Remote URL (http://, https://, or file://)"
-    )
+    remote_add_parser.add_argument("url", help="Remote URL (http://, https://, or file://)")
     remote_add_parser.add_argument(
         "--read-only",
         action="store_true",
@@ -6152,40 +5895,26 @@ def main():
     )
 
     # Remote remove
-    remote_remove_parser = remote_subparsers.add_parser(
-        "remove", help="Remove remote repository"
-    )
+    remote_remove_parser = remote_subparsers.add_parser("remove", help="Remove remote repository")
     remote_remove_parser.add_argument("name", help="Remote name to remove")
 
     # Remote list
-    remote_list_parser = remote_subparsers.add_parser(
-        "list", help="List configured remotes"
-    )
+    remote_subparsers.add_parser("list", help="List configured remotes")
 
     # Remote pull
-    remote_pull_parser = remote_subparsers.add_parser(
-        "pull", help="Fetch functions from remote"
-    )
+    remote_pull_parser = remote_subparsers.add_parser("pull", help="Fetch functions from remote")
     remote_pull_parser.add_argument("name", help="Remote name to pull from")
 
     # Remote push
-    remote_push_parser = remote_subparsers.add_parser(
-        "push", help="Publish functions to remote"
-    )
+    remote_push_parser = remote_subparsers.add_parser("push", help="Publish functions to remote")
     remote_push_parser.add_argument("name", help="Remote name to push to")
 
     # Remote sync
-    remote_sync_parser = remote_subparsers.add_parser(
-        "sync", help="Pull rebase then push to all remotes"
-    )
+    remote_subparsers.add_parser("sync", help="Pull rebase then push to all remotes")
 
     # Validate command
-    validate_parser = subparsers.add_parser(
-        "validate", help="Validate function or entire bb directory"
-    )
-    validate_parser.add_argument(
-        "hash", nargs="?", help="Function hash to validate (omit for whole directory)"
-    )
+    validate_parser = subparsers.add_parser("validate", help="Validate function or entire bb directory")
+    validate_parser.add_argument("hash", nargs="?", help="Function hash to validate (omit for whole directory)")
     validate_parser.add_argument(
         "--all",
         "-a",
@@ -6194,34 +5923,22 @@ def main():
     )
 
     # Caller command
-    caller_parser = subparsers.add_parser(
-        "caller", help="Find functions that depend on a given function"
-    )
+    caller_parser = subparsers.add_parser("caller", help="Find functions that depend on a given function")
     caller_parser.add_argument("hash", help="Function hash to find callers of")
 
     # Check command
-    check_parser = subparsers.add_parser(
-        "check", help="Find and run tests for a function"
-    )
+    check_parser = subparsers.add_parser("check", help="Find and run tests for a function")
     check_parser.add_argument("hash", help="Function hash to find tests for")
 
     # Refactor command
-    refactor_parser = subparsers.add_parser(
-        "refactor", help="Replace a dependency in a function"
-    )
+    refactor_parser = subparsers.add_parser("refactor", help="Replace a dependency in a function")
     refactor_parser.add_argument("what", help="Function hash to modify")
-    refactor_parser.add_argument(
-        "from_hash", metavar="from", help="Dependency hash to replace"
-    )
+    refactor_parser.add_argument("from_hash", metavar="from", help="Dependency hash to replace")
     refactor_parser.add_argument("to_hash", metavar="to", help="New dependency hash")
 
     # Compile command
-    compile_parser = subparsers.add_parser(
-        "compile", help="Compile function to standalone executable"
-    )
-    compile_parser.add_argument(
-        "hash", help="Function hash (HASH or HASH@lang). @lang required with --debug"
-    )
+    compile_parser = subparsers.add_parser("compile", help="Compile function to standalone executable")
+    compile_parser.add_argument("hash", help="Function hash (HASH or HASH@lang). @lang required with --debug")
     compile_parser.add_argument(
         "--python",
         action="store_true",
@@ -6234,18 +5951,12 @@ def main():
     )
 
     # Commit command
-    commit_parser = subparsers.add_parser(
-        "commit", help="Commit function and dependencies to git repository"
-    )
+    commit_parser = subparsers.add_parser("commit", help="Commit function and dependencies to git repository")
     commit_parser.add_argument("hash", help="Function hash to commit")
-    commit_parser.add_argument(
-        "--comment", "-c", help="Commit message (opens editor if not provided)"
-    )
+    commit_parser.add_argument("--comment", "-c", help="Commit message (opens editor if not provided)")
 
     # Aston command
-    aston_parser = subparsers.add_parser(
-        "aston", help="Convert Python file to ASTON representation"
-    )
+    aston_parser = subparsers.add_parser("aston", help="Convert Python file to ASTON representation")
     aston_parser.add_argument("file", help="Path to Python source file")
     aston_parser.add_argument(
         "--test",
@@ -6254,9 +5965,7 @@ def main():
     )
 
     # Migrate command
-    migrate_parser = subparsers.add_parser(
-        "migrate", help="Migrate from file-based to SQLite storage"
-    )
+    subparsers.add_parser("migrate", help="Migrate from file-based to SQLite storage")
 
     args = parser.parse_args()
 

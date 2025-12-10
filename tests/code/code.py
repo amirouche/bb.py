@@ -111,10 +111,7 @@ def infer_field_type(node_class: type, field_name: str) -> str:
         return "expr*"
     if field_name in ["args", "posonlyargs", "kwonlyargs"]:
         # FunctionDef/AsyncFunctionDef/Lambda.args is 'arguments', not 'arg*'
-        if (
-            node_class.__name__ in ["FunctionDef", "AsyncFunctionDef", "Lambda"]
-            and field_name == "args"
-        ):
+        if node_class.__name__ in ["FunctionDef", "AsyncFunctionDef", "Lambda"] and field_name == "args":
             return "arguments"
         return "arg*"
     if field_name in ["names"]:
@@ -332,9 +329,7 @@ class ASTGenerator:
             return None
         return ast.Name(id=identifier, ctx=ast.Store())
 
-    def generate_field_value(
-        self, field_type: str, depth: int, field_name: str = ""
-    ) -> Any:
+    def generate_field_value(self, field_type: str, depth: int, field_name: str = "") -> Any:
         """Generate a value for a specific field type."""
         if not self.consume_energy():
             return None
@@ -350,11 +345,7 @@ class ASTGenerator:
             elif field_type == "constant":
                 return self.generate_constant()
             elif field_type in ["string", "string?"]:
-                return (
-                    None
-                    if field_type == "string?" and self.rng.random() < 0.5
-                    else self.generate_identifier()
-                )
+                return None if field_type == "string?" and self.rng.random() < 0.5 else self.generate_identifier()
             elif field_type in ["expr", "stmt"]:
                 # Return simplest possible node
                 return self.generate_simple_node(field_type)
@@ -397,11 +388,7 @@ class ASTGenerator:
             # Special case for assignment/delete targets
             if field_name in ["targets"]:
                 count = self.rng.randint(1, 2)
-                return [
-                    self.generate_valid_target(depth + 1)
-                    for _ in range(count)
-                    if self.consume_energy()
-                ]
+                return [self.generate_valid_target(depth + 1) for _ in range(count) if self.consume_energy()]
             count = self.rng.randint(0, 2)
             exprs = []
             for _ in range(count):
@@ -423,18 +410,14 @@ class ASTGenerator:
             return self.generate_operator()
         elif field_type == "operator*":
             count = self.rng.randint(1, 2)
-            return [
-                self.generate_operator() for _ in range(count) if self.consume_energy()
-            ]
+            return [self.generate_operator() for _ in range(count) if self.consume_energy()]
         elif field_type == "boolop":
             return self.generate_boolop()
         elif field_type == "unaryop":
             return self.generate_unaryop()
         elif field_type == "cmpop*":
             count = self.rng.randint(1, 2)
-            return [
-                self.generate_cmpop() for _ in range(count) if self.consume_energy()
-            ]
+            return [self.generate_cmpop() for _ in range(count) if self.consume_energy()]
         elif field_type == "expr_context":
             return self.generate_expr_context()
         elif field_type == "arg*":
@@ -459,18 +442,10 @@ class ASTGenerator:
             return aliases
         elif field_type == "excepthandler*":
             count = self.rng.randint(1, 2)
-            return [
-                self.generate_excepthandler(depth + 1)
-                for _ in range(count)
-                if self.consume_energy()
-            ]
+            return [self.generate_excepthandler(depth + 1) for _ in range(count) if self.consume_energy()]
         elif field_type == "withitem*":
             count = self.rng.randint(1, 2)
-            return [
-                self.generate_withitem(depth + 1)
-                for _ in range(count)
-                if self.consume_energy()
-            ]
+            return [self.generate_withitem(depth + 1) for _ in range(count) if self.consume_energy()]
         elif field_type == "comprehension*":
             comp = self.generate_comprehension(depth + 1)
             return [comp] if comp else []
@@ -491,11 +466,7 @@ class ASTGenerator:
             return None
         if depth >= self.max_depth or not self.expr_nodes:
             const_val = self.generate_constant()
-            return (
-                ast.Constant(value=const_val)
-                if const_val is not None
-                else ast.Constant(value=42)
-            )
+            return ast.Constant(value=const_val) if const_val is not None else ast.Constant(value=42)
 
         # Small chance to generate function composition or method chaining (only at low depth)
         if depth < 2 and self.rng.random() < 0.15:  # 15% chance
@@ -690,9 +661,7 @@ class ASTGenerator:
 
     def generate_withitem(self, depth: int) -> ast.withitem:
         """Generate a with item."""
-        return ast.withitem(
-            context_expr=self.generate_expr(depth + 1), optional_vars=None
-        )
+        return ast.withitem(context_expr=self.generate_expr(depth + 1), optional_vars=None)
 
     def generate_comprehension(self, depth: int) -> Optional[ast.comprehension]:
         """Generate a comprehension."""
@@ -728,9 +697,7 @@ class ASTGenerator:
         # Generate values for all fields
         kwargs = {}
         for field_name, field_type in field_types.items():
-            kwargs[field_name] = self.generate_field_value(
-                field_type, depth, field_name
-            )
+            kwargs[field_name] = self.generate_field_value(field_type, depth, field_name)
 
         try:
             return node_class(**kwargs)
@@ -764,18 +731,14 @@ class ASTGenerator:
         # First generate handlers with types
         for i in range(num_handlers - 1):
             if self.consume_energy():
-                exc_type = (
-                    self.generate_expr(depth + 1) if self.rng.random() < 0.7 else None
-                )
+                exc_type = self.generate_expr(depth + 1) if self.rng.random() < 0.7 else None
                 handler = ast.ExceptHandler(type=exc_type, name=None, body=[ast.Pass()])
                 handlers.append(handler)
 
         # Last handler - might be bare
         if self.consume_energy():
             # 30% chance for bare except as last handler
-            exc_type = (
-                None if self.rng.random() < 0.3 else self.generate_expr(depth + 1)
-            )
+            exc_type = None if self.rng.random() < 0.3 else self.generate_expr(depth + 1)
             handler = ast.ExceptHandler(type=exc_type, name=None, body=[ast.Pass()])
             handlers.append(handler)
 
@@ -820,18 +783,14 @@ class ASTGenerator:
         # First generate handlers with types
         for i in range(num_handlers - 1):
             if self.consume_energy():
-                exc_type = (
-                    self.generate_expr(depth + 1) if self.rng.random() < 0.7 else None
-                )
+                exc_type = self.generate_expr(depth + 1) if self.rng.random() < 0.7 else None
                 handler = ast.ExceptHandler(type=exc_type, name=None, body=[ast.Pass()])
                 handlers.append(handler)
 
         # Last handler - might be bare
         if self.consume_energy():
             # 30% chance for bare except as last handler
-            exc_type = (
-                None if self.rng.random() < 0.3 else self.generate_expr(depth + 1)
-            )
+            exc_type = None if self.rng.random() < 0.3 else self.generate_expr(depth + 1)
             handler = ast.ExceptHandler(type=exc_type, name=None, body=[ast.Pass()])
             handlers.append(handler)
 
@@ -851,9 +810,7 @@ class ASTGenerator:
             if final_stmt:
                 finalbody.append(final_stmt)
 
-        return ast.TryStar(
-            body=body, handlers=handlers, orelse=orelse, finalbody=finalbody
-        )
+        return ast.TryStar(body=body, handlers=handlers, orelse=orelse, finalbody=finalbody)
 
     def generate_module(self) -> Optional[ast.Module]:
         """
@@ -1046,12 +1003,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Generate random Python AST code")
-    parser.add_argument(
-        "--seed", type=int, help="Random seed for deterministic generation"
-    )
-    parser.add_argument(
-        "--energy", type=int, help="Energy budget for generation (default: 1000)"
-    )
+    parser.add_argument("--seed", type=int, help="Random seed for deterministic generation")
+    parser.add_argument("--energy", type=int, help="Energy budget for generation (default: 1000)")
     parser.add_argument(
         "--mapping",
         action="store_true",

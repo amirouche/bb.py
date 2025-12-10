@@ -13,9 +13,7 @@ import bb
 
 
 # Helper to run CLI commands
-def cli_run(
-    args: list, env: dict = None, cwd: str = None
-) -> subprocess.CompletedProcess:
+def cli_run(args: list, env: dict = None, cwd: str = None) -> subprocess.CompletedProcess:
     """Run bb.py CLI command."""
     cmd = [sys.executable, str(Path(__file__).parent.parent.parent / "bb.py")] + args
     return subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=cwd)
@@ -145,9 +143,7 @@ def test_commit_copies_all_language_mappings(tmp_path):
     assert add_fra.returncode == 0
 
     # Commit the function
-    result = cli_run(
-        ["commit", func_hash, "--comment", "Add multilingual hello"], env=env
-    )
+    result = cli_run(["commit", func_hash, "--comment", "Add multilingual hello"], env=env)
     assert result.returncode == 0
 
     # Verify both language mappings were copied
@@ -205,9 +201,7 @@ def main():
             break
 
     # Commit the main function
-    result = cli_run(
-        ["commit", main_hash, "--comment", "Add main with dependency"], env=env
-    )
+    result = cli_run(["commit", main_hash, "--comment", "Add main with dependency"], env=env)
     assert result.returncode == 0
     assert "2 function(s)" in result.stdout  # main + helper
 

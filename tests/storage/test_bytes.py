@@ -4,7 +4,6 @@ Tests for bytes encoding/decoding functions.
 Tests order-preserving encoding of Python values to bytes and back.
 """
 
-
 from bb import bytes_write, bytes_read, bytes_next
 
 

@@ -11,10 +11,7 @@ import sys
 from pathlib import Path
 
 
-
-def cli_run(
-    args: list, env: dict = None, input_text: str = None
-) -> subprocess.CompletedProcess:
+def cli_run(args: list, env: dict = None, input_text: str = None) -> subprocess.CompletedProcess:
     """Run bb.py CLI command with optional stdin input."""
     cmd = [sys.executable, str(Path(__file__).parent.parent.parent / "bb.py")] + args
 
@@ -22,9 +19,7 @@ def cli_run(
     if env:
         run_env.update(env)
 
-    return subprocess.run(
-        cmd, capture_output=True, text=True, env=run_env, input=input_text
-    )
+    return subprocess.run(cmd, capture_output=True, text=True, env=run_env, input=input_text)
 
 
 def test_translate_missing_source_language_fails(tmp_path):
@@ -100,10 +95,7 @@ def test_translate_nonexistent_function_fails(tmp_path):
     result = cli_run(["translate", f"{fake_hash}@eng", "fra"], env=env)
 
     assert result.returncode != 0
-    assert (
-        "Could not load function" in result.stderr
-        or "not found" in result.stderr.lower()
-    )
+    assert "Could not load function" in result.stderr or "not found" in result.stderr.lower()
 
 
 def test_translate_shows_source_function(tmp_path):
@@ -123,9 +115,7 @@ def test_translate_shows_source_function(tmp_path):
     # Test: Provide interactive input (will fail on empty input but we can check output)
     # Provide translations: function name, variable name, docstring, comment
     input_text = "saluer\nnom\nDire bonjour\nFrench translation\n"
-    result = cli_run(
-        ["translate", f"{func_hash}@eng", "fra"], env=env, input_text=input_text
-    )
+    result = cli_run(["translate", f"{func_hash}@eng", "fra"], env=env, input_text=input_text)
 
     # Assert: Should show source function
     assert "Source function (eng):" in result.stdout
@@ -149,9 +139,7 @@ def test_translate_creates_mapping(tmp_path):
     # Test: Provide translations for both names
     # _bb_v_0 = greet, _bb_v_1 = name
     input_text = "saluer\nnom\nDire bonjour\n\n"  # empty comment
-    result = cli_run(
-        ["translate", f"{func_hash}@eng", "fra"], env=env, input_text=input_text
-    )
+    result = cli_run(["translate", f"{func_hash}@eng", "fra"], env=env, input_text=input_text)
 
     # Assert
     assert result.returncode == 0
@@ -180,9 +168,7 @@ def test_translate_prompts_for_all_names(tmp_path):
     # Test: Provide translations for all names
     # 4 names: function + 3 variables
     input_text = "calculer\nresultat\nvaleur\nmultiplicateur\nCalculer le resultat\nTest comment\n"
-    result = cli_run(
-        ["translate", f"{func_hash}@eng", "fra"], env=env, input_text=input_text
-    )
+    result = cli_run(["translate", f"{func_hash}@eng", "fra"], env=env, input_text=input_text)
 
     # Assert
     assert result.returncode == 0

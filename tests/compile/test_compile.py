@@ -118,9 +118,7 @@ def test_dependencies_resolve_no_deps(mock_bb_dir):
     func_hash = "nodeps01" + "0" * 56
     normalized_code = normalize_code_for_test("def _bb_v_0(): return 42")
 
-    bb.code_save(
-        func_hash, "eng", normalized_code, "No deps", {"_bb_v_0": "answer"}, {}
-    )
+    bb.code_save(func_hash, "eng", normalized_code, "No deps", {"_bb_v_0": "answer"}, {})
 
     deps = bb.code_resolve_dependencies(func_hash)
 
@@ -196,9 +194,7 @@ from bb.pool import object_{c_hash}
 def _bb_v_0():
     return object_{b_hash}._bb_v_0() + object_{c_hash}._bb_v_0()
 """)
-    bb.code_save(
-        a_hash, "eng", a_code, "A", {"_bb_v_0": "a"}, {b_hash: "b", c_hash: "c"}
-    )
+    bb.code_save(a_hash, "eng", a_code, "A", {"_bb_v_0": "a"}, {b_hash: "b", c_hash: "c"})
 
     deps = bb.code_resolve_dependencies(a_hash)
 
@@ -280,9 +276,7 @@ def test_dependencies_bundle(mock_bb_dir, tmp_path):
     """Test bundling functions to output directory"""
     func_hash = "bundle01" + "0" * 56
     normalized_code = normalize_code_for_test("def _bb_v_0(): return 99")
-    bb.code_save(
-        func_hash, "eng", normalized_code, "Bundle test", {"_bb_v_0": "test"}, {}
-    )
+    bb.code_save(func_hash, "eng", normalized_code, "Bundle test", {"_bb_v_0": "test"}, {})
 
     output_dir = tmp_path / "bundle_output"
     result = bb.code_bundle_dependencies([func_hash], output_dir)
@@ -401,9 +395,7 @@ def test_compile_python_mode_executable(cli_runner, tmp_path):
 
     # Run the compiled file
     main_py = tmp_path / "main.py"
-    run_result = subprocess.run(
-        [sys.executable, str(main_py), "21"], capture_output=True, text=True
-    )
+    run_result = subprocess.run([sys.executable, str(main_py), "21"], capture_output=True, text=True)
 
     assert run_result.returncode == 0
     assert "42" in run_result.stdout
@@ -416,9 +408,7 @@ def test_compile_generate_python(mock_bb_dir):
     """Test function"""
     return 123
 ''')
-    bb.code_save(
-        func_hash, "eng", normalized_code, "Test function", {"_bb_v_0": "test_func"}, {}
-    )
+    bb.code_save(func_hash, "eng", normalized_code, "Test function", {"_bb_v_0": "test_func"}, {})
 
     # Without debug_mode, uses normalized names
     python_code = bb.compile_generate_python(func_hash, "eng")

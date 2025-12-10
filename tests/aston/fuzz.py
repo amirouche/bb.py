@@ -97,9 +97,7 @@ def mutate_code(code: str, seed: int) -> str:
 class FuzzResult:
     """Result of a single fuzz test."""
 
-    def __init__(
-        self, success: bool, error: str = "", code: str = "", test_id: str = ""
-    ):
+    def __init__(self, success: bool, error: str = "", code: str = "", test_id: str = ""):
         self.success = success
         self.error = error
         self.code = code
@@ -180,9 +178,7 @@ class FuzzStrategy:
         print(f"{self.name} - Summary")
         print(f"{'=' * 70}")
         print(f"Total:   {total}")
-        print(
-            f"Passed:  {self.passed} ({100 * self.passed // total if total > 0 else 0}%)"
-        )
+        print(f"Passed:  {self.passed} ({100 * self.passed // total if total > 0 else 0}%)")
         if self.skipped > 0:
             print(f"Skipped: {self.skipped}")
         print(f"Failed:  {self.failed}")
@@ -293,13 +289,9 @@ class MutationFuzzStrategy(FuzzStrategy):
                     )
 
             if base_failed == 0:
-                print(
-                    f"  ✓ Base {base_idx + 1}/{len(self.base_corpus)}: {base_passed} mutations passed"
-                )
+                print(f"  ✓ Base {base_idx + 1}/{len(self.base_corpus)}: {base_passed} mutations passed")
             else:
-                print(
-                    f"  ⚠ Base {base_idx + 1}/{len(self.base_corpus)}: {base_passed} passed, {base_failed} failed"
-                )
+                print(f"  ⚠ Base {base_idx + 1}/{len(self.base_corpus)}: {base_passed} passed, {base_failed} failed")
 
 
 class GenerativeFuzzStrategy(FuzzStrategy):
@@ -358,22 +350,12 @@ def main():
     # Parse command line arguments
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Comprehensive ASTON round-trip fuzzer"
-    )
+    parser = argparse.ArgumentParser(description="Comprehensive ASTON round-trip fuzzer")
     parser.add_argument("--corpus", action="store_true", help="Run corpus fuzzing only")
-    parser.add_argument(
-        "--mutation", action="store_true", help="Run mutation fuzzing only"
-    )
-    parser.add_argument(
-        "--generative", action="store_true", help="Run generative fuzzing only"
-    )
-    parser.add_argument(
-        "--seed", type=int, default=0, help="Starting seed for generative fuzzing"
-    )
-    parser.add_argument(
-        "--mutations", type=int, default=50, help="Mutations per base (default: 50)"
-    )
+    parser.add_argument("--mutation", action="store_true", help="Run mutation fuzzing only")
+    parser.add_argument("--generative", action="store_true", help="Run generative fuzzing only")
+    parser.add_argument("--seed", type=int, default=0, help="Starting seed for generative fuzzing")
+    parser.add_argument("--mutations", type=int, default=50, help="Mutations per base (default: 50)")
     parser.add_argument(
         "--tests",
         type=int,
@@ -397,9 +379,7 @@ def main():
         strategies.append(MutationFuzzStrategy(num_mutations=args.mutations))
 
     if args.generative or not (args.corpus or args.mutation):
-        strategies.append(
-            GenerativeFuzzStrategy(num_tests=args.tests, start_seed=args.seed)
-        )
+        strategies.append(GenerativeFuzzStrategy(num_tests=args.tests, start_seed=args.seed))
 
     # Run all strategies
     for strategy in strategies:
@@ -416,9 +396,7 @@ def main():
     print("Overall Summary")
     print("=" * 70)
     print(f"Total tests:  {total}")
-    print(
-        f"Passed:       {total_passed} ({100 * total_passed // total if total > 0 else 0}%)"
-    )
+    print(f"Passed:       {total_passed} ({100 * total_passed // total if total > 0 else 0}%)")
     if total_skipped > 0:
         print(f"Skipped:      {total_skipped}")
     print(f"Failed:       {total_failed}")

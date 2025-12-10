@@ -10,7 +10,6 @@ import sys
 from pathlib import Path
 
 
-
 def cli_run(args: list, env: dict = None) -> subprocess.CompletedProcess:
     """Run bb.py CLI command."""
     cmd = [sys.executable, str(Path(__file__).parent.parent.parent / "bb.py")] + args
@@ -112,10 +111,7 @@ def test_run_nonexistent_function_fails(tmp_path):
     result = cli_run(["run", f"{fake_hash}@eng"], env=env)
 
     assert result.returncode != 0
-    assert (
-        "Could not load function" in result.stderr
-        or "not found" in result.stderr.lower()
-    )
+    assert "Could not load function" in result.stderr or "not found" in result.stderr.lower()
 
 
 def test_run_with_string_argument(tmp_path):

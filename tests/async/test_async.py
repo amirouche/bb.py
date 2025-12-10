@@ -164,9 +164,7 @@ def test_async_function_preserves_async_keyword():
 '''
     tree = ast.parse(code)
 
-    normalized_with_doc, normalized_without_doc, _, _, _ = bb.code_normalize(
-        tree, "eng"
-    )
+    normalized_with_doc, normalized_without_doc, _, _, _ = bb.code_normalize(tree, "eng")
 
     assert "async def _bb_v_0" in normalized_with_doc
     assert "async def _bb_v_0" in normalized_without_doc

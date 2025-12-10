@@ -81,9 +81,7 @@ def test_mapping_save_v1_creates_mapping_json(mock_bb_dir):
     bb.code_save_v1(func_hash, normalized_code, metadata)
 
     # Now save the mapping
-    mapping_hash = bb.mapping_save_v1(
-        func_hash, lang, docstring, name_mapping, alias_mapping, comment
-    )
+    mapping_hash = bb.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
 
     # Check that mapping.json was created
     pool_dir = mock_bb_dir / ".bb" / "pool"
@@ -120,18 +118,14 @@ def test_mapping_save_v1_returns_hash(mock_bb_dir):
     )
 
     # Save mapping
-    mapping_hash = bb.mapping_save_v1(
-        func_hash, lang, docstring, name_mapping, alias_mapping, comment
-    )
+    mapping_hash = bb.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
 
     # Verify it's a valid hash
     assert len(mapping_hash) == 64
     assert all(c in "0123456789abcdef" for c in mapping_hash)
 
     # Verify it matches computed hash
-    expected_hash = bb.code_compute_mapping_hash(
-        docstring, name_mapping, alias_mapping, comment
-    )
+    expected_hash = bb.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment)
     assert mapping_hash == expected_hash
 
 
@@ -158,12 +152,8 @@ def test_mapping_save_v1_deduplication(mock_bb_dir):
     )
 
     # Save identical mappings for both
-    mapping_hash1 = bb.mapping_save_v1(
-        func_hash1, lang, docstring, name_mapping, alias_mapping, comment
-    )
-    mapping_hash2 = bb.mapping_save_v1(
-        func_hash2, lang, docstring, name_mapping, alias_mapping, comment
-    )
+    mapping_hash1 = bb.mapping_save_v1(func_hash1, lang, docstring, name_mapping, alias_mapping, comment)
+    mapping_hash2 = bb.mapping_save_v1(func_hash2, lang, docstring, name_mapping, alias_mapping, comment)
 
     # Hashes should be identical
     assert mapping_hash1 == mapping_hash2
@@ -185,12 +175,8 @@ def test_mapping_save_v1_different_comments_different_hashes(mock_bb_dir):
     )
 
     # Save two mappings with different comments
-    hash1 = bb.mapping_save_v1(
-        func_hash, lang, docstring, name_mapping, alias_mapping, "Formal"
-    )
-    hash2 = bb.mapping_save_v1(
-        func_hash, lang, docstring, name_mapping, alias_mapping, "Informal"
-    )
+    hash1 = bb.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, "Formal")
+    hash2 = bb.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, "Informal")
 
     # Hashes should be different
     assert hash1 != hash2
@@ -199,9 +185,7 @@ def test_mapping_save_v1_different_comments_different_hashes(mock_bb_dir):
 def test_v1_write_integration_full_structure(mock_bb_dir):
     """Integration test: verify complete v1 directory structure"""
     func_hash = "test1234" + "0" * 56
-    normalized_code = normalize_code_for_test(
-        "def _bb_v_0(_bb_v_1): return _bb_v_1 * 2"
-    )
+    normalized_code = normalize_code_for_test("def _bb_v_0(_bb_v_1): return _bb_v_1 * 2")
     metadata = {
         "created": "2025-01-01T00:00:00Z",
         "name": "testuser",
@@ -256,9 +240,7 @@ def test_v1_write_integration_full_structure(mock_bb_dir):
 def test_function_load_v1_loads_object_json(mock_bb_dir):
     """Test that function_load_v1 loads object.json correctly"""
     func_hash = "test5678" + "0" * 56
-    normalized_code = normalize_code_for_test(
-        "def _bb_v_0(_bb_v_1): return _bb_v_1 * 2"
-    )
+    normalized_code = normalize_code_for_test("def _bb_v_0(_bb_v_1): return _bb_v_1 * 2")
     metadata = {
         "created": "2025-01-01T00:00:00Z",
         "name": "testuser",
@@ -368,14 +350,10 @@ def test_mapping_load_v1_loads_correctly(mock_bb_dir):
         normalize_code_for_test("def _bb_v_0(): pass"),
         bb.code_create_metadata(),
     )
-    mapping_hash = bb.mapping_save_v1(
-        func_hash, lang, docstring, name_mapping, alias_mapping, comment
-    )
+    mapping_hash = bb.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
 
     # Load the mapping
-    loaded_doc, loaded_name, loaded_alias, loaded_comment = bb.mapping_load_v1(
-        func_hash, lang, mapping_hash
-    )
+    loaded_doc, loaded_name, loaded_alias, loaded_comment = bb.mapping_load_v1(func_hash, lang, mapping_hash)
 
     # Verify data
     assert loaded_doc == docstring
@@ -388,9 +366,7 @@ def test_function_load_v1_integration(mock_bb_dir):
     """Integration test: write v1, read v1, verify correctness"""
     func_hash = "integ123" + "0" * 56
     lang = "eng"
-    normalized_code = normalize_code_for_test(
-        "def _bb_v_0(_bb_v_1): return _bb_v_1 + 1"
-    )
+    normalized_code = normalize_code_for_test("def _bb_v_0(_bb_v_1): return _bb_v_1 + 1")
     docstring = "Increment by one"
     name_mapping = {"_bb_v_0": "increment", "_bb_v_1": "value"}
     alias_mapping = {}
@@ -425,12 +401,8 @@ def test_function_load_dispatch_multiple_mappings(mock_bb_dir):
 
     # Create function with two mappings
     bb.code_save_v1(func_hash, normalized_code, bb.code_create_metadata())
-    hash1 = bb.mapping_save_v1(
-        func_hash, lang, "Doc 1", {"_bb_v_0": "func1"}, {}, "First"
-    )
-    hash2 = bb.mapping_save_v1(
-        func_hash, lang, "Doc 2", {"_bb_v_0": "func2"}, {}, "Second"
-    )
+    bb.mapping_save_v1(func_hash, lang, "Doc 1", {"_bb_v_0": "func1"}, {}, "First")
+    bb.mapping_save_v1(func_hash, lang, "Doc 2", {"_bb_v_0": "func2"}, {}, "Second")
 
     # Load without specifying mapping_hash (should return first alphabetically)
     loaded_code, loaded_name, loaded_alias, loaded_doc = bb.code_load(func_hash, lang)
@@ -449,17 +421,11 @@ def test_function_load_dispatch_explicit_mapping(mock_bb_dir):
 
     # Create function with two mappings
     bb.code_save_v1(func_hash, normalized_code, bb.code_create_metadata())
-    hash1 = bb.mapping_save_v1(
-        func_hash, lang, "Doc 1", {"_bb_v_0": "func1"}, {}, "First"
-    )
-    hash2 = bb.mapping_save_v1(
-        func_hash, lang, "Doc 2", {"_bb_v_0": "func2"}, {}, "Second"
-    )
+    bb.mapping_save_v1(func_hash, lang, "Doc 1", {"_bb_v_0": "func1"}, {}, "First")
+    mapping_hash2 = bb.mapping_save_v1(func_hash, lang, "Doc 2", {"_bb_v_0": "func2"}, {}, "Second")
 
     # Load with specific mapping_hash
-    loaded_code, loaded_name, loaded_alias, loaded_doc = bb.code_load(
-        func_hash, lang, mapping_hash=hash2
-    )
+    loaded_code, loaded_name, loaded_alias, loaded_doc = bb.code_load(func_hash, lang, mapping_hash=mapping_hash2)
 
     # Should load the second mapping
     assert loaded_code == normalized_code

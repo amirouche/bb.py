@@ -65,9 +65,7 @@ def normalize_code_for_test(code: str) -> str:
     return ast.unparse(tree)
 
 
-def cli_run(
-    args: list, env: dict = None, cwd: str = None
-) -> subprocess.CompletedProcess:
+def cli_run(args: list, env: dict = None, cwd: str = None) -> subprocess.CompletedProcess:
     """
     Run bb.py CLI command.
 

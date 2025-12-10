@@ -12,10 +12,7 @@ import sys
 from pathlib import Path
 
 
-
-def cli_run(
-    args: list, env: dict = None, input_text: str = None
-) -> subprocess.CompletedProcess:
+def cli_run(args: list, env: dict = None, input_text: str = None) -> subprocess.CompletedProcess:
     """Run bb.py CLI command with optional stdin input."""
     cmd = [sys.executable, str(Path(__file__).parent.parent.parent / "bb.py")] + args
 
@@ -23,9 +20,7 @@ def cli_run(
     if env:
         run_env.update(env)
 
-    return subprocess.run(
-        cmd, capture_output=True, text=True, env=run_env, input=input_text
-    )
+    return subprocess.run(cmd, capture_output=True, text=True, env=run_env, input=input_text)
 
 
 def test_review_invalid_hash_fails(tmp_path):
@@ -49,9 +44,7 @@ def test_review_nonexistent_function_warns(tmp_path):
     result = cli_run(["review", fake_hash], env=env)
 
     # Review continues but warns about missing function
-    assert (
-        "not found" in result.stderr.lower() or "not available" in result.stderr.lower()
-    )
+    assert "not found" in result.stderr.lower() or "not available" in result.stderr.lower()
 
 
 def test_review_displays_function_code(tmp_path):

@@ -11,10 +11,7 @@ import sys
 from pathlib import Path
 
 
-
-def cli_run(
-    args: list, env: dict = None, cwd: str = None
-) -> subprocess.CompletedProcess:
+def cli_run(args: list, env: dict = None, cwd: str = None) -> subprocess.CompletedProcess:
     """Run bb.py CLI command."""
     cmd = [sys.executable, str(Path(__file__).parent.parent.parent / "bb.py")] + args
 

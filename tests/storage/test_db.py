@@ -30,9 +30,7 @@ def test_db_open_memory():
     assert db is not None
 
     # Verify table exists
-    cursor = db.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='kv'"
-    )
+    cursor = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='kv'")
     assert cursor.fetchone() is not None
 
 
@@ -50,9 +48,7 @@ def test_db_open_creates_index():
     db = db_open(":memory:")
 
     # Verify index exists
-    cursor = db.execute(
-        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_key'"
-    )
+    cursor = db.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_key'")
     assert cursor.fetchone() is not None
 
 

@@ -30,9 +30,7 @@ def test_remote_type_detect_git_ssh():
 
 def test_remote_type_detect_git_https():
     """Test detecting git HTTPS remote type"""
-    assert (
-        bb.git_detect_remote_type("git+https://github.com/user/repo.git") == "git-https"
-    )
+    assert bb.git_detect_remote_type("git+https://github.com/user/repo.git") == "git-https"
 
 
 def test_remote_type_detect_git_file():
@@ -101,9 +99,7 @@ def test_remote_add_git_ssh(cli_runner):
 
 def test_remote_add_git_https(cli_runner):
     """Test adding a git HTTPS remote via CLI"""
-    result = cli_runner.run(
-        ["remote", "add", "upstream", "git+https://github.com/org/pool.git"]
-    )
+    result = cli_runner.run(["remote", "add", "upstream", "git+https://github.com/org/pool.git"])
 
     assert result.returncode == 0
     assert "Added remote" in result.stdout
@@ -175,17 +171,13 @@ def test_remote_pull_file(cli_runner, tmp_path):
     # Setup: Create remote pool with a function (structure: remote_pool/XX/YYYY.../object.json)
     remote_pool = tmp_path / "remote_pool"
     remote_pool.mkdir()
-    remote_objects = (
-        remote_pool / "ab"
-    )  # No 'pool' subdirectory - git dir has XX/YYYY structure
+    remote_objects = remote_pool / "ab"  # No 'pool' subdirectory - git dir has XX/YYYY structure
     remote_objects.mkdir(parents=True)
 
     # Create a minimal v1 function with all required fields
     # Hash is 64 hex chars: prefix (2) + rest (62)
     func_hash = "ab" + "0" * 62  # 64 chars total
-    func_dir = remote_objects / (
-        "0" * 62
-    )  # Directory is remaining 62 chars after prefix
+    func_dir = remote_objects / ("0" * 62)  # Directory is remaining 62 chars after prefix
     func_dir.mkdir()
     (func_dir / "object.json").write_text(
         json.dumps(
