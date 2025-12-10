@@ -1,4 +1,4 @@
-.PHONY: help check check-with-coverage check-fuzz clean
+.PHONY: help check check-with-coverage check-fuzz clean format lint cosmit
 
 # Default target - show help
 help: ## Show this help message with all available targets
@@ -50,6 +50,12 @@ check-fuzz: ## Run comprehensive fuzz tests (corpus, mutation, generative)
 	@echo ""
 	@echo "✓ All fuzz tests passed!"
 
+check-review: ## Fetch GitHub review comments for current PR
+	@echo "========================================"
+	@echo "Fetching GitHub review comments"
+	@echo "========================================"
+	@./bin/github-review-comments.py
+
 clean: ## Clean up generated files (htmlcov/, .coverage, __pycache__)
 	@echo "Cleaning up generated files..."
 	@rm -rf htmlcov/
@@ -58,3 +64,47 @@ clean: ## Clean up generated files (htmlcov/, .coverage, __pycache__)
 	@find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	@find . -type f -name "*.pyc" -delete 2>/dev/null || true
 	@echo "✓ Cleanup complete"
+
+format: ## Format code using ruff
+	@echo "========================================"
+	@echo "Formatting code with ruff"
+	@echo "========================================"
+	@echo ""
+	@ruff format .
+	@echo ""
+	@echo "✓ Code formatting complete"
+
+lint: ## Lint code using ruff (auto-fix where possible)
+	@echo "========================================"
+	@echo "Linting code with ruff"
+	@echo "========================================"
+	@echo ""
+	@ruff check --fix .
+	@echo ""
+	@echo "✓ Linting complete (auto-fixed where possible)"
+
+cosmit: ## Format, lint, and commit if changes exist
+	@echo "========================================"
+	@echo "Running cosmit: format + lint + commit"
+	@echo "========================================"
+	@echo ""
+	@echo "[1/3] Formatting code..."
+	@make format > /dev/null 2>&1
+	@echo "[2/3] Linting code..."
+	@if make lint > /dev/null 2>&1; then \
+	    echo "✓ Linting passed"; \
+	else \
+	    echo "✗ Linting failed - not committing"; \
+	    exit 1; \
+	fi
+	@echo "[3/3] Checking for changes..."
+	@if git diff --quiet; then \
+	    echo "✓ No changes to commit"; \
+	else \
+	    echo "✓ Changes detected - creating commit"; \
+	    git add .; \
+	    git commit -m "cosmit: auto-format and lint"; \
+	    echo "✓ Commit created"; \
+	fi
+	@echo ""
+	@echo "✓ Cosmit complete"

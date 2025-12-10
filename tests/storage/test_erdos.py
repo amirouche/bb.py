@@ -12,7 +12,7 @@ Mathematical Foundation:
 IMPORTANT: The length of nstore_indices(n) always equals the central binomial
 coefficient C(n, n//2), which is the number of ways to choose n//2 items from n.
 """
-import pytest
+
 import math
 
 from bb import nstore_indices
@@ -30,8 +30,9 @@ def test_nstore_indices_central_binomial_coefficient():
 
     for n, expected_count in test_cases:
         indices = nstore_indices(n)
-        assert len(indices) == expected_count, \
-            f"For n={n}, expected {expected_count} indices (C({n}, {n//2})), got {len(indices)}"
+        assert len(indices) == expected_count, (
+            f"For n={n}, expected {expected_count} indices (C({n}, {n // 2})), got {len(indices)}"
+        )
 
 
 def test_nstore_indices_n4_count():
@@ -79,7 +80,7 @@ def test_nstore_indices_n4_specific_indices():
         [2, 0, 3, 1],
         [3, 0, 1, 2],
         [3, 1, 2, 0],
-        [3, 2, 0, 1]
+        [3, 2, 0, 1],
     ]
 
     assert indices == expected

@@ -8,12 +8,11 @@ Tests for core functionality that doesn't map directly to CLI commands:
 - Hash computation
 - Schema detection and validation
 """
+
 import ast
 import json
-import os
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -27,6 +26,7 @@ from tests.conftest import normalize_code_for_test
 # ============================================================================
 # Tests for ASTNormalizer class
 # ============================================================================
+
 
 def test_ast_normalizer_visit_name_with_mapping():
     """Test that Name nodes are renamed according to mapping"""
@@ -88,6 +88,7 @@ def test_ast_normalizer_visit_functiondef_with_mapping():
 # Tests for names_collect function
 # ============================================================================
 
+
 def test_collect_names_simple_names():
     """Test collecting variable names"""
     code = "x = 1\ny = 2\nz = x + y"
@@ -121,6 +122,7 @@ def test_collect_names_empty_tree():
 # ============================================================================
 # Tests for imports_get_names function
 # ============================================================================
+
 
 def test_get_imported_names_import_statement():
     """Test extracting names from import statement"""
@@ -179,6 +181,7 @@ import numpy as np
 # Tests for imports_check_unused function
 # ============================================================================
 
+
 def test_check_unused_imports_all_imports_used():
     """Test when all imports are used"""
     code = """
@@ -212,6 +215,7 @@ def foo():
 # ============================================================================
 # Tests for imports_sort function
 # ============================================================================
+
 
 def test_sort_imports_simple_imports():
     """Test sorting import statements"""
@@ -265,6 +269,7 @@ import os
 # ============================================================================
 # Tests for function_extract_definition function
 # ============================================================================
+
 
 def test_extract_function_def_simple_function():
     """Test extracting a simple function"""
@@ -324,6 +329,7 @@ def bar():
 # ============================================================================
 # Tests for mapping_create_name function
 # ============================================================================
+
 
 def test_create_name_mapping_function_name_always_v0():
     """Test that function name always maps to _bb_v_0"""
@@ -411,6 +417,7 @@ def foo(x):
 # Tests for imports_rewrite_bb function
 # ============================================================================
 
+
 def test_rewrite_bb_imports_with_alias():
     """Test rewriting bb import with alias"""
     code = "from bb.pool import abc123 as helper"
@@ -459,6 +466,7 @@ def test_rewrite_bb_imports_non_bb_imports_unchanged():
 # Tests for calls_replace_bb function
 # ============================================================================
 
+
 def test_replace_bb_calls_aliased_call():
     """Test replacing aliased bb function calls"""
     code = """
@@ -498,6 +506,7 @@ def foo(x):
 # Tests for ast_clear_locations function
 # ============================================================================
 
+
 def test_clear_locations_all_location_info():
     """Test that all location info is cleared"""
     code = "def foo(x): return x + 1"
@@ -505,7 +514,7 @@ def test_clear_locations_all_location_info():
 
     # Verify locations exist initially
     for node in ast.walk(tree):
-        if hasattr(node, 'lineno'):
+        if hasattr(node, "lineno"):
             assert node.lineno is not None
             break
 
@@ -513,15 +522,16 @@ def test_clear_locations_all_location_info():
 
     # Verify all locations are None
     for node in ast.walk(tree):
-        if hasattr(node, 'lineno'):
+        if hasattr(node, "lineno"):
             assert node.lineno is None
-        if hasattr(node, 'col_offset'):
+        if hasattr(node, "col_offset"):
             assert node.col_offset is None
 
 
 # ============================================================================
 # Tests for docstring_extract function
 # ============================================================================
+
 
 def test_extract_docstring_existing_docstring():
     """Test extracting an existing docstring"""
@@ -578,6 +588,7 @@ def foo():
 # Tests for ast_normalize function
 # ============================================================================
 
+
 def test_normalize_ast_simple_function():
     """Test normalizing a simple function"""
     code = """
@@ -588,8 +599,7 @@ def calculate_sum(first, second):
 """
     tree = ast.parse(code)
 
-    code_with_doc, code_without_doc, docstring, name_mapping, alias_mapping = \
-        bb.code_normalize(tree, "eng")
+    code_with_doc, code_without_doc, docstring, name_mapping, alias_mapping = bb.code_normalize(tree, "eng")
 
     assert "_bb_v_0" in code_with_doc  # Function name normalized
     assert docstring == "Add two numbers"
@@ -627,8 +637,7 @@ def foo(x):
 """
     tree = ast.parse(code)
 
-    code_with_doc, code_without_doc, docstring, name_mapping, alias_mapping = \
-        bb.code_normalize(tree, "eng")
+    code_with_doc, code_without_doc, docstring, name_mapping, alias_mapping = bb.code_normalize(tree, "eng")
 
     # Should remove alias but keep bb.pool module name
     assert "from bb.pool import abc123" in code_with_doc
@@ -644,6 +653,7 @@ def foo(x):
 # ============================================================================
 # Tests for hash_compute function
 # ============================================================================
+
 
 def test_compute_hash_deterministic():
     """Test that same input produces same hash"""
@@ -662,7 +672,7 @@ def test_compute_hash_format():
     hash_value = bb.hash_compute(code)
 
     assert len(hash_value) == 64
-    assert all(c in '0123456789abcdef' for c in hash_value)
+    assert all(c in "0123456789abcdef" for c in hash_value)
 
 
 def test_compute_hash_different_code_different_hash():
@@ -682,7 +692,7 @@ def test_hash_compute_with_algorithm_parameter():
 
     # Default should be sha256
     hash_default = bb.hash_compute(code)
-    hash_sha256 = bb.hash_compute(code, algorithm='sha256')
+    hash_sha256 = bb.hash_compute(code, algorithm="sha256")
 
     assert hash_default == hash_sha256
     assert len(hash_default) == 64
@@ -692,8 +702,8 @@ def test_hash_compute_algorithm_deterministic():
     """Test that hash_compute with algorithm produces deterministic results"""
     code = "def foo(): pass"
 
-    hash1 = bb.hash_compute(code, algorithm='sha256')
-    hash2 = bb.hash_compute(code, algorithm='sha256')
+    hash1 = bb.hash_compute(code, algorithm="sha256")
+    hash2 = bb.hash_compute(code, algorithm="sha256")
 
     assert hash1 == hash2
 
@@ -701,6 +711,7 @@ def test_hash_compute_algorithm_deterministic():
 # ============================================================================
 # Tests for docstring_replace function
 # ============================================================================
+
 
 def test_replace_docstring_existing_docstring():
     """Test replacing an existing docstring"""
@@ -752,6 +763,7 @@ def foo():
 # Tests for code_denormalize function
 # ============================================================================
 
+
 def test_denormalize_code_variable_names():
     """Test denormalizing variable names"""
     normalized = """
@@ -763,7 +775,7 @@ def _bb_v_0(_bb_v_1, _bb_v_2):
         "_bb_v_0": "calculate",
         "_bb_v_1": "first",
         "_bb_v_2": "second",
-        "_bb_v_3": "result"
+        "_bb_v_3": "result",
     }
     alias_mapping = {}
 
@@ -784,13 +796,8 @@ from bb.pool import abc123
 def _bb_v_0(_bb_v_1):
     return abc123._bb_v_0(_bb_v_1)
 """
-    name_mapping = {
-        "_bb_v_0": "process",
-        "_bb_v_1": "data"
-    }
-    alias_mapping = {
-        "abc123": "helper"
-    }
+    name_mapping = {"_bb_v_0": "process", "_bb_v_1": "data"}
+    alias_mapping = {"abc123": "helper"}
 
     result = bb.code_denormalize(normalized, name_mapping, alias_mapping)
 
@@ -806,6 +813,7 @@ def _bb_v_0(_bb_v_1):
 # Tests for Schema v1 - Foundation
 # ============================================================================
 
+
 def test_mapping_compute_hash_deterministic():
     """Test that mapping_compute_hash produces deterministic hashes"""
     docstring = "Calculate the average"
@@ -819,7 +827,7 @@ def test_mapping_compute_hash_deterministic():
 
     assert hash1 == hash2
     assert len(hash1) == 64  # SHA256 produces 64 hex characters
-    assert all(c in '0123456789abcdef' for c in hash1)
+    assert all(c in "0123456789abcdef" for c in hash1)
 
 
 def test_mapping_compute_hash_different_comments():
@@ -843,7 +851,7 @@ def test_mapping_compute_hash_empty_comment():
     hash_val = bb.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, "")
 
     assert len(hash_val) == 64
-    assert all(c in '0123456789abcdef' for c in hash_val)
+    assert all(c in "0123456789abcdef" for c in hash_val)
 
 
 def test_mapping_compute_hash_canonical_json():
@@ -862,22 +870,22 @@ def test_mapping_compute_hash_canonical_json():
 
 def test_schema_detect_version_v1(mock_bb_dir):
     """Test that schema_detect_version correctly identifies v1 format"""
-    pool_dir = mock_bb_dir / '.bb' / 'pool'
+    pool_dir = mock_bb_dir / ".bb" / "pool"
     test_hash = "abcd1234" + "0" * 56
 
     # Create v1 format: pool/XX/YYYYYY.../object.json
     func_dir = pool_dir / test_hash[:2] / test_hash[2:]
     func_dir.mkdir(parents=True, exist_ok=True)
-    object_json = func_dir / 'object.json'
+    object_json = func_dir / "object.json"
 
     v1_data = {
-        'schema_version': 1,
-        'hash': test_hash,
-        'normalized_code': normalize_code_for_test('def _bb_v_0(): pass'),
-        'metadata': {}
+        "schema_version": 1,
+        "hash": test_hash,
+        "normalized_code": normalize_code_for_test("def _bb_v_0(): pass"),
+        "metadata": {},
     }
 
-    with open(object_json, 'w', encoding='utf-8') as f:
+    with open(object_json, "w", encoding="utf-8") as f:
         json.dump(v1_data, f)
 
     version = bb.code_detect_schema(test_hash)
@@ -896,46 +904,47 @@ def test_metadata_create_basic():
     """Test that metadata_create generates proper metadata structure"""
     metadata = bb.code_create_metadata()
 
-    assert 'created' in metadata
-    assert 'name' in metadata
-    assert 'email' in metadata
+    assert "created" in metadata
+    assert "name" in metadata
+    assert "email" in metadata
 
 
 def test_metadata_create_reads_from_config(mock_bb_dir):
     """Test that metadata_create reads name and email from config"""
     # Write config with name and email
     config = {
-        'user': {
-            'name': 'testuser',
-            'email': 'test@example.com',
-            'public_key': '',
-            'languages': []
+        "user": {
+            "name": "testuser",
+            "email": "test@example.com",
+            "public_key": "",
+            "languages": [],
         },
-        'remotes': {}
+        "remotes": {},
     }
-    config_path = bb.storage_get_bb_directory() / 'config.json'
+    config_path = bb.storage_get_bb_directory() / "config.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(config_path, 'w') as f:
+    with open(config_path, "w") as f:
         json.dump(config, f)
 
     metadata = bb.code_create_metadata()
-    assert metadata['name'] == 'testuser'
-    assert metadata['email'] == 'test@example.com'
+    assert metadata["name"] == "testuser"
+    assert metadata["email"] == "test@example.com"
 
 
 def test_metadata_create_timestamp_format():
     """Test that metadata_create uses ISO 8601 timestamp format"""
     metadata = bb.code_create_metadata()
-    created = metadata['created']
+    created = metadata["created"]
 
     # Should be ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
-    assert 'T' in created
+    assert "T" in created
     assert len(created) >= 19  # At minimum: 2025-01-01T00:00:00
 
 
 # ============================================================================
 # Tests for hash determinism across languages
 # ============================================================================
+
 
 def test_hash_determinism_multilingual_same_logic():
     """Test that functions with identical logic but different names produce the same hash.
@@ -945,23 +954,33 @@ def test_hash_determinism_multilingual_same_logic():
     - examples/example_simple.py (English)
     - examples/example_simple_french.py (French)
     """
-    examples_dir = Path(__file__).parent.parent / 'examples'
-    english_file = examples_dir / 'example_simple.py'
-    french_file = examples_dir / 'example_simple_french.py'
+    examples_dir = Path(__file__).parent.parent / "examples"
+    english_file = examples_dir / "example_simple.py"
+    french_file = examples_dir / "example_simple_french.py"
 
     # Read both files
-    english_code = english_file.read_text(encoding='utf-8')
-    french_code = french_file.read_text(encoding='utf-8')
+    english_code = english_file.read_text(encoding="utf-8")
+    french_code = french_file.read_text(encoding="utf-8")
 
     # Parse to AST
     english_tree = ast.parse(english_code)
     french_tree = ast.parse(french_code)
 
     # Normalize both
-    eng_with_doc, eng_without_doc, eng_docstring, eng_name_mapping, eng_alias_mapping = \
-        bb.code_normalize(english_tree, "eng")
-    fra_with_doc, fra_without_doc, fra_docstring, fra_name_mapping, fra_alias_mapping = \
-        bb.code_normalize(french_tree, "fra")
+    (
+        eng_with_doc,
+        eng_without_doc,
+        eng_docstring,
+        eng_name_mapping,
+        eng_alias_mapping,
+    ) = bb.code_normalize(english_tree, "eng")
+    (
+        fra_with_doc,
+        fra_without_doc,
+        fra_docstring,
+        fra_name_mapping,
+        fra_alias_mapping,
+    ) = bb.code_normalize(french_tree, "fra")
 
     # Compute hashes on code WITHOUT docstring (this is critical for multilingual support)
     english_hash = bb.hash_compute(eng_without_doc)
