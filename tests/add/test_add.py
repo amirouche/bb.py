@@ -6,6 +6,7 @@ Grey-box style:
 - Test: Call CLI command
 - Assert: Check output and files
 """
+
 import json
 from pathlib import Path
 
@@ -20,14 +21,14 @@ def test_add_simple_function(cli_runner, tmp_path):
 ''')
 
     # Test: Run add command
-    result = cli_runner.run(['add', f'{test_file}@eng'])
+    result = cli_runner.run(["add", f"{test_file}@eng"])
 
     # Assert: Check success and output
     assert result.returncode == 0
-    assert 'Hash:' in result.stdout
+    assert "Hash:" in result.stdout
 
     # Extract hash and verify file was created
-    func_hash = result.stdout.split('Hash:')[1].strip().split()[0]
+    func_hash = result.stdout.split("Hash:")[1].strip().split()[0]
     assert len(func_hash) == 64
 
     # Verify object was stored
@@ -45,18 +46,18 @@ def test_add_function_creates_v1_structure(cli_runner, tmp_path):
 ''')
 
     # Test
-    func_hash = cli_runner.add(str(test_file), 'eng')
+    func_hash = cli_runner.add(str(test_file), "eng")
 
     # Assert: Check v1 directory structure
     func_dir = cli_runner.pool_dir / func_hash[:2] / func_hash[2:]
     assert func_dir.exists()
 
     # Check object.json exists
-    object_json = func_dir / 'object.json'
+    object_json = func_dir / "object.json"
     assert object_json.exists()
 
     # Check language mapping exists
-    eng_dir = func_dir / 'eng'
+    eng_dir = func_dir / "eng"
     assert eng_dir.exists()
 
 
@@ -71,19 +72,19 @@ def test_add_function_stores_normalized_code(cli_runner, tmp_path):
 ''')
 
     # Test
-    func_hash = cli_runner.add(str(test_file), 'eng')
+    func_hash = cli_runner.add(str(test_file), "eng")
 
     # Assert: Check normalized code in object.json
     func_dir = cli_runner.pool_dir / func_hash[:2] / func_hash[2:]
-    object_json = func_dir / 'object.json'
+    object_json = func_dir / "object.json"
 
-    with open(object_json, 'r') as f:
+    with open(object_json, "r") as f:
         data = json.load(f)
 
     # Function should be renamed to _bb_v_0
-    assert '_bb_v_0' in data['normalized_code']
+    assert "_bb_v_0" in data["normalized_code"]
     # Original function name should NOT appear
-    assert 'my_function' not in data['normalized_code']
+    assert "my_function" not in data["normalized_code"]
 
 
 def test_add_same_logic_same_hash(cli_runner, tmp_path):
@@ -108,8 +109,8 @@ def test_add_same_logic_same_hash(cli_runner, tmp_path):
 ''')
 
     # Test: Add both
-    eng_hash = cli_runner.add(str(eng_file), 'eng')
-    fra_hash = cli_runner.add(str(fra_file), 'fra')
+    eng_hash = cli_runner.add(str(eng_file), "eng")
+    fra_hash = cli_runner.add(str(fra_file), "fra")
 
     # Assert: Same hash (logic is identical, only docstring differs)
     assert eng_hash == fra_hash
@@ -131,15 +132,15 @@ def test_add_multilingual_creates_mappings(cli_runner, tmp_path):
 ''')
 
     # Test
-    eng_hash = cli_runner.add(str(eng_file), 'eng')
-    fra_hash = cli_runner.add(str(fra_file), 'fra')
+    eng_hash = cli_runner.add(str(eng_file), "eng")
+    fra_hash = cli_runner.add(str(fra_file), "fra")
 
     # Assert: Same hash, both language directories exist
     assert eng_hash == fra_hash
 
     func_dir = cli_runner.pool_dir / eng_hash[:2] / eng_hash[2:]
-    assert (func_dir / 'eng').exists()
-    assert (func_dir / 'fra').exists()
+    assert (func_dir / "eng").exists()
+    assert (func_dir / "fra").exists()
 
 
 def test_add_async_function(cli_runner, tmp_path):
@@ -153,45 +154,45 @@ def test_add_async_function(cli_runner, tmp_path):
 ''')
 
     # Test
-    result = cli_runner.run(['add', f'{test_file}@eng'])
+    result = cli_runner.run(["add", f"{test_file}@eng"])
 
     # Assert
     assert result.returncode == 0
-    assert 'Hash:' in result.stdout
+    assert "Hash:" in result.stdout
 
 
 def test_add_missing_language_suffix_fails(cli_runner, tmp_path):
     """Test that add fails without language suffix"""
     # Setup
     test_file = tmp_path / "test.py"
-    test_file.write_text('def foo(): pass')
+    test_file.write_text("def foo(): pass")
 
     # Test: Run without @lang
-    result = cli_runner.run(['add', str(test_file)])
+    result = cli_runner.run(["add", str(test_file)])
 
     # Assert: Should fail
     assert result.returncode != 0
-    assert 'Missing language suffix' in result.stderr
+    assert "Missing language suffix" in result.stderr
 
 
 def test_add_invalid_language_code_fails(cli_runner, tmp_path):
     """Test that add fails with too short language code"""
     # Setup
     test_file = tmp_path / "test.py"
-    test_file.write_text('def foo(): pass')
+    test_file.write_text("def foo(): pass")
 
     # Test: Run with too short lang (must be 3-256 chars)
-    result = cli_runner.run(['add', f'{test_file}@ab'])
+    result = cli_runner.run(["add", f"{test_file}@ab"])
 
     # Assert: Should fail
     assert result.returncode != 0
-    assert 'Language code must be 3-256 characters' in result.stderr
+    assert "Language code must be 3-256 characters" in result.stderr
 
 
 def test_add_nonexistent_file_fails(cli_runner):
     """Test that add fails for nonexistent file"""
     # Test
-    result = cli_runner.run(['add', '/nonexistent/file.py@eng'])
+    result = cli_runner.run(["add", "/nonexistent/file.py@eng"])
 
     # Assert
     assert result.returncode != 0
@@ -211,21 +212,21 @@ def analyze(data):
 ''')
 
     # Test
-    result = cli_runner.run(['add', f'{test_file}@eng'])
+    result = cli_runner.run(["add", f"{test_file}@eng"])
 
     # Assert
     assert result.returncode == 0
 
     # Verify imports are preserved in object.json
-    func_hash = result.stdout.split('Hash:')[1].strip().split()[0]
+    func_hash = result.stdout.split("Hash:")[1].strip().split()[0]
     func_dir = cli_runner.pool_dir / func_hash[:2] / func_hash[2:]
-    object_json = func_dir / 'object.json'
+    object_json = func_dir / "object.json"
 
-    with open(object_json, 'r') as f:
+    with open(object_json, "r") as f:
         data = json.load(f)
 
-    assert 'import math' in data['normalized_code']
-    assert 'from collections import Counter' in data['normalized_code']
+    assert "import math" in data["normalized_code"]
+    assert "from collections import Counter" in data["normalized_code"]
 
 
 def test_add_syntax_error_fails(cli_runner, tmp_path):
@@ -235,7 +236,7 @@ def test_add_syntax_error_fails(cli_runner, tmp_path):
     test_file.write_text("def foo( invalid syntax")
 
     # Test
-    result = cli_runner.run(['add', f'{test_file}@eng'])
+    result = cli_runner.run(["add", f"{test_file}@eng"])
 
     # Assert
     assert result.returncode != 0
@@ -248,11 +249,11 @@ def test_add_empty_file_fails(cli_runner, tmp_path):
     test_file.write_text("")
 
     # Test
-    result = cli_runner.run(['add', f'{test_file}@eng'])
+    result = cli_runner.run(["add", f"{test_file}@eng"])
 
     # Assert
     assert result.returncode != 0
-    assert 'No function definition' in result.stderr
+    assert "No function definition" in result.stderr
 
 
 def test_add_class_only_fails(cli_runner, tmp_path):
@@ -262,11 +263,11 @@ def test_add_class_only_fails(cli_runner, tmp_path):
     test_file.write_text("class Foo:\n    pass\n")
 
     # Test
-    result = cli_runner.run(['add', f'{test_file}@eng'])
+    result = cli_runner.run(["add", f"{test_file}@eng"])
 
     # Assert
     assert result.returncode != 0
-    assert 'No function definition' in result.stderr
+    assert "No function definition" in result.stderr
 
 
 def test_add_function_without_docstring(cli_runner, tmp_path):
@@ -276,11 +277,11 @@ def test_add_function_without_docstring(cli_runner, tmp_path):
     test_file.write_text("def double(x):\n    return x * 2\n")
 
     # Test
-    result = cli_runner.run(['add', f'{test_file}@eng'])
+    result = cli_runner.run(["add", f"{test_file}@eng"])
 
     # Assert
     assert result.returncode == 0
-    assert 'Hash:' in result.stdout
+    assert "Hash:" in result.stdout
 
 
 def test_add_hash_stability(cli_runner, tmp_path):
@@ -293,8 +294,8 @@ def test_add_hash_stability(cli_runner, tmp_path):
 ''')
 
     # Test: Add twice
-    hash1 = cli_runner.add(str(test_file), 'eng')
-    hash2 = cli_runner.add(str(test_file), 'eng')
+    hash1 = cli_runner.add(str(test_file), "eng")
+    hash2 = cli_runner.add(str(test_file), "eng")
 
     # Assert: Identical hashes
     assert hash1 == hash2
@@ -304,7 +305,7 @@ def test_add_hash_stability(cli_runner, tmp_path):
 def test_add_missing_bb_import_fails(cli_runner, tmp_path):
     """Test that add fails when bb imports don't exist in pool"""
     # Setup: Create function that imports a non-existent bb function
-    fake_hash = 'a' * 64
+    fake_hash = "a" * 64
     test_file = tmp_path / "with_missing_dep.py"
     test_file.write_text(f'''from bb.pool import object_{fake_hash} as helper
 
@@ -314,12 +315,12 @@ def use_helper(x):
 ''')
 
     # Test
-    result = cli_runner.run(['add', f'{test_file}@eng'])
+    result = cli_runner.run(["add", f"{test_file}@eng"])
 
     # Assert: Should fail with informative error
     assert result.returncode != 0
-    assert 'do not exist in the local pool' in result.stderr
-    assert 'helper' in result.stderr
+    assert "do not exist in the local pool" in result.stderr
+    assert "helper" in result.stderr
 
 
 def test_add_with_existing_bb_import_succeeds(cli_runner, tmp_path):
@@ -330,7 +331,7 @@ def test_add_with_existing_bb_import_succeeds(cli_runner, tmp_path):
     """Helper function"""
     return x * 2
 ''')
-    helper_hash = cli_runner.add(str(helper_file), 'eng')
+    helper_hash = cli_runner.add(str(helper_file), "eng")
 
     # Create function that imports the helper
     test_file = tmp_path / "use_helper.py"
@@ -342,11 +343,11 @@ def use_helper(x):
 ''')
 
     # Test
-    result = cli_runner.run(['add', f'{test_file}@eng'])
+    result = cli_runner.run(["add", f"{test_file}@eng"])
 
     # Assert: Should succeed
     assert result.returncode == 0
-    assert 'Hash:' in result.stdout
+    assert "Hash:" in result.stdout
 
 
 def test_add_hash_determinism_with_example_files(cli_runner):
@@ -361,17 +362,17 @@ def test_add_hash_determinism_with_example_files(cli_runner):
     the internal storage structure.
     """
     # Setup: Locate the example files
-    examples_dir = Path(__file__).parent.parent.parent / 'examples'
-    english_file = examples_dir / 'example_simple.py'
-    french_file = examples_dir / 'example_simple_french.py'
+    examples_dir = Path(__file__).parent.parent.parent / "examples"
+    english_file = examples_dir / "example_simple.py"
+    french_file = examples_dir / "example_simple_french.py"
 
     # Verify example files exist
     assert english_file.exists(), f"Example file not found: {english_file}"
     assert french_file.exists(), f"Example file not found: {french_file}"
 
     # Test: Add both files via CLI
-    eng_hash = cli_runner.add(str(english_file), 'eng')
-    fra_hash = cli_runner.add(str(french_file), 'fra')
+    eng_hash = cli_runner.add(str(english_file), "eng")
+    fra_hash = cli_runner.add(str(french_file), "fra")
 
     # Assert 1: Same hash (core principle)
     assert eng_hash == fra_hash, (
@@ -390,17 +391,17 @@ def test_add_hash_determinism_with_example_files(cli_runner):
     assert func_dir.exists(), "Function directory should exist"
 
     # Assert 4: Both language mappings exist under same function
-    assert (func_dir / 'eng').exists(), "English mapping directory should exist"
-    assert (func_dir / 'fra').exists(), "French mapping directory should exist"
+    assert (func_dir / "eng").exists(), "English mapping directory should exist"
+    assert (func_dir / "fra").exists(), "French mapping directory should exist"
 
     # Assert 5: object.json exists with normalized code
-    object_json = func_dir / 'object.json'
+    object_json = func_dir / "object.json"
     assert object_json.exists(), "object.json should exist"
 
-    with open(object_json, 'r') as f:
+    with open(object_json, "r") as f:
         data = json.load(f)
 
     # Assert 6: Normalized code uses _bb_v_0 (not original function names)
-    assert '_bb_v_0' in data['normalized_code']
-    assert 'calculate_sum' not in data['normalized_code']
-    assert 'calculer_somme' not in data['normalized_code']
+    assert "_bb_v_0" in data["normalized_code"]
+    assert "calculate_sum" not in data["normalized_code"]
+    assert "calculer_somme" not in data["normalized_code"]

@@ -15,7 +15,6 @@ import random
 import sys
 import traceback
 from pathlib import Path
-from typing import List, Tuple, Optional
 
 # Import ASTON from bb.py
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -27,9 +26,21 @@ from tests.code.code import generate as generate_ast_code
 
 # Mutation fuzzing constants and utilities
 IMPORT_MODULES = [
-    "os", "sys", "re", "json", "math", "random", "pathlib",
-    "collections", "itertools", "functools", "typing", "datetime",
-    "hashlib", "urllib", "abc",
+    "os",
+    "sys",
+    "re",
+    "json",
+    "math",
+    "random",
+    "pathlib",
+    "collections",
+    "itertools",
+    "functools",
+    "typing",
+    "datetime",
+    "hashlib",
+    "urllib",
+    "abc",
 ]
 
 IMPORT_ITEMS = {
@@ -86,7 +97,9 @@ def mutate_code(code: str, seed: int) -> str:
 class FuzzResult:
     """Result of a single fuzz test."""
 
-    def __init__(self, success: bool, error: str = "", code: str = "", test_id: str = ""):
+    def __init__(
+        self, success: bool, error: str = "", code: str = "", test_id: str = ""
+    ):
         self.success = success
         self.error = error
         self.code = code
@@ -112,7 +125,7 @@ def test_round_trip(code: str, test_id: str) -> FuzzResult:
         reconstructed_dump = ast.dump(reconstructed)
 
         if original_dump != reconstructed_dump:
-            error = f"AST structural mismatch"
+            error = "AST structural mismatch"
             return FuzzResult(False, error, code, test_id)
 
         # Verify code equivalence
@@ -138,7 +151,7 @@ def save_failure(code: str, test_id: str, error: str) -> str:
     """Save failing code to /tmp and return filepath."""
     filename = f"/tmp/aston_fuzz_fail_{test_id}.py"
 
-    with open(filename, 'w', encoding='utf-8') as f:
+    with open(filename, "w", encoding="utf-8") as f:
         f.write(f"# Failure: {error}\n")
         f.write(f"# Test ID: {test_id}\n\n")
         f.write(code)
@@ -167,13 +180,15 @@ class FuzzStrategy:
         print(f"{self.name} - Summary")
         print(f"{'=' * 70}")
         print(f"Total:   {total}")
-        print(f"Passed:  {self.passed} ({100 * self.passed // total if total > 0 else 0}%)")
+        print(
+            f"Passed:  {self.passed} ({100 * self.passed // total if total > 0 else 0}%)"
+        )
         if self.skipped > 0:
             print(f"Skipped: {self.skipped}")
         print(f"Failed:  {self.failed}")
 
         if self.failures:
-            print(f"\nFailures:")
+            print("\nFailures:")
             for failure in self.failures:
                 print(f"  {failure['test_id']}: {failure['error'][:100]}")
                 print(f"    File: {failure['filepath']}")
@@ -185,7 +200,7 @@ class CorpusFuzzStrategy(FuzzStrategy):
 
     def __init__(self):
         super().__init__("Corpus Fuzzing")
-        self.examples_dir = Path(__file__).parent.parent.parent / 'examples'
+        self.examples_dir = Path(__file__).parent.parent.parent / "examples"
 
     def run(self):
         """Test all example files."""
@@ -193,12 +208,12 @@ class CorpusFuzzStrategy(FuzzStrategy):
             print(f"⚠ Examples directory not found: {self.examples_dir}")
             return
 
-        example_files = sorted(self.examples_dir.glob('*.py'))
+        example_files = sorted(self.examples_dir.glob("*.py"))
         print(f"\n[1/3] Testing corpus: {len(example_files)} example files")
 
         for filepath in example_files:
             try:
-                with open(filepath, 'r', encoding='utf-8') as f:
+                with open(filepath, "r", encoding="utf-8") as f:
                     code = f.read()
 
                 test_id = f"corpus_{filepath.stem}"
@@ -213,12 +228,14 @@ class CorpusFuzzStrategy(FuzzStrategy):
                     print(f"  ✗ {filepath.name}: FAILED")
                     print(f"    Error: {result.error[:100]}")
 
-                    self.failures.append({
-                        'test_id': test_id,
-                        'error': result.error,
-                        'filepath': saved_path,
-                        'reproduce': f"python3 bb.py aston --test {saved_path}",
-                    })
+                    self.failures.append(
+                        {
+                            "test_id": test_id,
+                            "error": result.error,
+                            "filepath": saved_path,
+                            "reproduce": f"python3 bb.py aston --test {saved_path}",
+                        }
+                    )
 
             except Exception as e:
                 self.failed += 1
@@ -244,7 +261,9 @@ class MutationFuzzStrategy(FuzzStrategy):
     def run(self):
         """Generate and test mutations."""
         total_tests = len(self.base_corpus) * self.num_mutations
-        print(f"\n[2/3] Testing mutations: {len(self.base_corpus)} base × {self.num_mutations} mutations = {total_tests} tests")
+        print(
+            f"\n[2/3] Testing mutations: {len(self.base_corpus)} base × {self.num_mutations} mutations = {total_tests} tests"
+        )
 
         for base_idx, base_code in enumerate(self.base_corpus):
             base_passed = 0
@@ -264,17 +283,23 @@ class MutationFuzzStrategy(FuzzStrategy):
                     base_failed += 1
                     saved_path = save_failure(mutated_code, test_id, result.error)
 
-                    self.failures.append({
-                        'test_id': test_id,
-                        'error': result.error,
-                        'filepath': saved_path,
-                        'reproduce': f"python3 tests/aston/fuzz.py --mutation --seed {seed}",
-                    })
+                    self.failures.append(
+                        {
+                            "test_id": test_id,
+                            "error": result.error,
+                            "filepath": saved_path,
+                            "reproduce": f"python3 tests/aston/fuzz.py --mutation --seed {seed}",
+                        }
+                    )
 
             if base_failed == 0:
-                print(f"  ✓ Base {base_idx + 1}/{len(self.base_corpus)}: {base_passed} mutations passed")
+                print(
+                    f"  ✓ Base {base_idx + 1}/{len(self.base_corpus)}: {base_passed} mutations passed"
+                )
             else:
-                print(f"  ⚠ Base {base_idx + 1}/{len(self.base_corpus)}: {base_passed} passed, {base_failed} failed")
+                print(
+                    f"  ⚠ Base {base_idx + 1}/{len(self.base_corpus)}: {base_passed} passed, {base_failed} failed"
+                )
 
 
 class GenerativeFuzzStrategy(FuzzStrategy):
@@ -287,7 +312,9 @@ class GenerativeFuzzStrategy(FuzzStrategy):
 
     def run(self):
         """Generate and test random AST code."""
-        print(f"\n[3/3] Testing generated code: {self.num_tests} tests (seeds {self.start_seed}-{self.start_seed + self.num_tests - 1})")
+        print(
+            f"\n[3/3] Testing generated code: {self.num_tests} tests (seeds {self.start_seed}-{self.start_seed + self.num_tests - 1})"
+        )
 
         for i in range(self.num_tests):
             seed = self.start_seed + i
@@ -313,12 +340,14 @@ class GenerativeFuzzStrategy(FuzzStrategy):
                 print(f"  ✗ Seed {seed}: FAILED")
                 print(f"    Error: {result.error[:100]}")
 
-                self.failures.append({
-                    'test_id': test_id,
-                    'error': result.error,
-                    'filepath': saved_path,
-                    'reproduce': f"python3 tests/aston/fuzz.py --generative --seed {seed}",
-                })
+                self.failures.append(
+                    {
+                        "test_id": test_id,
+                        "error": result.error,
+                        "filepath": saved_path,
+                        "reproduce": f"python3 tests/aston/fuzz.py --generative --seed {seed}",
+                    }
+                )
 
         if self.passed > 0:
             print(f"  ✓ Total: {self.passed}/{self.num_tests} passed")
@@ -329,13 +358,28 @@ def main():
     # Parse command line arguments
     import argparse
 
-    parser = argparse.ArgumentParser(description='Comprehensive ASTON round-trip fuzzer')
-    parser.add_argument('--corpus', action='store_true', help='Run corpus fuzzing only')
-    parser.add_argument('--mutation', action='store_true', help='Run mutation fuzzing only')
-    parser.add_argument('--generative', action='store_true', help='Run generative fuzzing only')
-    parser.add_argument('--seed', type=int, default=0, help='Starting seed for generative fuzzing')
-    parser.add_argument('--mutations', type=int, default=50, help='Mutations per base (default: 50)')
-    parser.add_argument('--tests', type=int, default=100, help='Number of generative tests (default: 100)')
+    parser = argparse.ArgumentParser(
+        description="Comprehensive ASTON round-trip fuzzer"
+    )
+    parser.add_argument("--corpus", action="store_true", help="Run corpus fuzzing only")
+    parser.add_argument(
+        "--mutation", action="store_true", help="Run mutation fuzzing only"
+    )
+    parser.add_argument(
+        "--generative", action="store_true", help="Run generative fuzzing only"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=0, help="Starting seed for generative fuzzing"
+    )
+    parser.add_argument(
+        "--mutations", type=int, default=50, help="Mutations per base (default: 50)"
+    )
+    parser.add_argument(
+        "--tests",
+        type=int,
+        default=100,
+        help="Number of generative tests (default: 100)",
+    )
 
     args = parser.parse_args()
 
@@ -353,7 +397,9 @@ def main():
         strategies.append(MutationFuzzStrategy(num_mutations=args.mutations))
 
     if args.generative or not (args.corpus or args.mutation):
-        strategies.append(GenerativeFuzzStrategy(num_tests=args.tests, start_seed=args.seed))
+        strategies.append(
+            GenerativeFuzzStrategy(num_tests=args.tests, start_seed=args.seed)
+        )
 
     # Run all strategies
     for strategy in strategies:
@@ -370,7 +416,9 @@ def main():
     print("Overall Summary")
     print("=" * 70)
     print(f"Total tests:  {total}")
-    print(f"Passed:       {total_passed} ({100 * total_passed // total if total > 0 else 0}%)")
+    print(
+        f"Passed:       {total_passed} ({100 * total_passed // total if total > 0 else 0}%)"
+    )
     if total_skipped > 0:
         print(f"Skipped:      {total_skipped}")
     print(f"Failed:       {total_failed}")
@@ -399,5 +447,5 @@ def main():
         sys.exit(0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

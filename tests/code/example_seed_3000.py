@@ -1,5 +1,4 @@
-import wujet
-import rvg
+
 
 async def ttunnj(mhyvmm, wykw):
     async with 42:
@@ -11,17 +10,18 @@ async def ttunnj(mhyvmm, wykw):
             pass
             pass
             pass
-        async for fozpvugu in 'cg': # type: srwhek
+        async for fozpvugu in "cg":  # type: srwhek
             pass
         else:
             pass
             pass
-    for s in vg: # type: ks
+    for s in vg:  # type: ks
 
         @-12
-        class jau(-67, 'xxleabq'):
+        class jau(-67, "xxleabq"):
             pass
-        import rr
+
+
         while True:
             pass
             pass
@@ -40,7 +40,7 @@ async def ttunnj(mhyvmm, wykw):
             pass
 
         @8.479746889556717
-        async def vd(f): # type: sa
+        async def vd(f):  # type: sa
             pass
             pass
             pass

@@ -4,17 +4,17 @@ Tests for async/await function support.
 Unit tests for low-level async function normalization (AST aspects).
 Integration tests for async function CLI commands.
 """
+
 import ast
 
-import pytest
 
 import bb
-from tests.conftest import normalize_code_for_test
 
 
 # =============================================================================
 # Integration tests for async function CLI commands
 # =============================================================================
+
 
 def test_async_add_and_show(cli_runner, tmp_path):
     """Integration test: Add async function and show it"""
@@ -25,12 +25,12 @@ def test_async_add_and_show(cli_runner, tmp_path):
     return response
 ''')
 
-    func_hash = cli_runner.add(str(test_file), 'eng')
-    result = cli_runner.run(['show', f'{func_hash}@eng'])
+    func_hash = cli_runner.add(str(test_file), "eng")
+    result = cli_runner.run(["show", f"{func_hash}@eng"])
 
     assert result.returncode == 0
-    assert 'async def fetch_data' in result.stdout
-    assert 'url' in result.stdout
+    assert "async def fetch_data" in result.stdout
+    assert "url" in result.stdout
 
 
 def test_async_add_and_get(cli_runner, tmp_path):
@@ -42,12 +42,12 @@ def test_async_add_and_get(cli_runner, tmp_path):
     return result
 ''')
 
-    func_hash = cli_runner.add(str(test_file), 'eng')
-    result = cli_runner.run(['get', f'{func_hash}@eng'])
+    func_hash = cli_runner.add(str(test_file), "eng")
+    result = cli_runner.run(["get", f"{func_hash}@eng"])
 
     assert result.returncode == 0
-    assert 'async def process_item' in result.stdout
-    assert 'item' in result.stdout
+    assert "async def process_item" in result.stdout
+    assert "item" in result.stdout
 
 
 def test_async_multilingual_same_hash(cli_runner, tmp_path):
@@ -66,8 +66,8 @@ def test_async_multilingual_same_hash(cli_runner, tmp_path):
     return data
 ''')
 
-    eng_hash = cli_runner.add(str(eng_file), 'eng')
-    fra_hash = cli_runner.add(str(fra_file), 'fra')
+    eng_hash = cli_runner.add(str(eng_file), "eng")
+    fra_hash = cli_runner.add(str(fra_file), "fra")
 
     assert eng_hash == fra_hash
 
@@ -75,6 +75,7 @@ def test_async_multilingual_same_hash(cli_runner, tmp_path):
 # =============================================================================
 # Unit tests for async function normalization (low-level AST)
 # =============================================================================
+
 
 def test_normalize_simple_async_function():
     """Test normalizing a simple async function"""
@@ -163,7 +164,9 @@ def test_async_function_preserves_async_keyword():
 '''
     tree = ast.parse(code)
 
-    normalized_with_doc, normalized_without_doc, _, _, _ = bb.code_normalize(tree, "eng")
+    normalized_with_doc, normalized_without_doc, _, _, _ = bb.code_normalize(
+        tree, "eng"
+    )
 
     assert "async def _bb_v_0" in normalized_with_doc
     assert "async def _bb_v_0" in normalized_without_doc
@@ -171,9 +174,9 @@ def test_async_function_preserves_async_keyword():
 
 def test_ast_normalizer_visit_async_function_def():
     """Test ASTNormalizer handles AsyncFunctionDef"""
-    code = '''async def original_name():
+    code = """async def original_name():
     pass
-'''
+"""
     tree = ast.parse(code)
 
     name_mapping = {"original_name": "_bb_v_0"}
@@ -187,10 +190,10 @@ def test_ast_normalizer_visit_async_function_def():
 
 def test_names_collect_includes_async_function():
     """Test names_collect handles async functions"""
-    code = '''async def async_func(param):
+    code = """async def async_func(param):
     local_var = 42
     return local_var
-'''
+"""
     tree = ast.parse(code)
 
     names = bb.code_collect_names(tree)
