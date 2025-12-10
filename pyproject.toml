@@ -25,6 +25,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
+dependencies = [
+    "pytest>=8.4.2",
+]
 
 [project.urls]
 Homepage = "https://github.com/amirouche/bb.py"
