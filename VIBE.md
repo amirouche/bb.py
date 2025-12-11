@@ -1,6 +1,7 @@
 # VIBE.md - AI Assistant Guide for Beyond Babel
 
 - Use the directory ./tmp/ for temporary files, including database, and scripts;
+- Never use global variables;
 
 ## Project Overview
 
