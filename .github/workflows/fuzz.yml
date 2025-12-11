@@ -39,7 +39,7 @@ jobs:
         echo "========================================"
         echo "Testing ASTON Round-Trip on Examples"
         echo "========================================"
-        for file in examples/*.py; do
+        for file in doc/examples/*.py; do
           echo "Testing $file..."
           python3 bb.py aston --test "$file"
         done
