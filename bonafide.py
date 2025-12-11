@@ -247,29 +247,30 @@ BonafideTxn = namedtuple("BonafideTxn", ["cnx"])
 
 def transactional(func):
     """Decorator that provides transactional behavior for database operations.
-    
+
     This decorator wraps a function to provide automatic transaction management.
     It handles commit/rollback behavior and connection cleanup based on whether
     the function executes successfully or raises an exception.
-    
+
     The decorator supports three modes of operation:
     1. When called with a BonafideCnx: Creates a transaction, executes the function,
        commits on success, rolls back on failure, and closes the connection.
     2. When called with a BonafideTxn: Passes through to the function directly
        (for nested transactional calls).
     3. When called with unsupported types: Raises NotImplementedError.
-    
+
     Args:
         func: The function to wrap with transactional behavior.
-        
+
     Returns:
         A wrapped function that provides transactional behavior.
-        
+
     Behavior:
         - On success: Commits the transaction and returns the function result
         - On exception: Rolls back the transaction and re-raises the exception
         - Always: Closes the database connection in a finally block
     """
+
     def wrapper(something, *args, **kwargs):
         if isinstance(something, BonafideCnx):
             cnx = something
@@ -284,8 +285,6 @@ def transactional(func):
                 raise
             else:
                 return out
-            finally:
-                cnx.sqlite.close()
         elif isinstance(something, BonafideTxn):
             return func(something, *args, **kwargs)
         else:
@@ -394,7 +393,7 @@ def nstore_indices(n: int) -> List[List[int]]:
 # NStore functions
 
 
-def nstore_create(prefix: Tuple, n: int, name: str) -> NStore:
+def _nstore_create(prefix: Tuple, n: int, name: str) -> NStore:
     """Create an NStore instance.
 
     This function maintains backward compatibility with the old API while supporting
@@ -448,7 +447,7 @@ def nstore(bonafide: Bonafide, name: str, n: int) -> NStore:
     """
     prefix = (name,)
     nstore_instance = nstore_new(name, prefix, n)
-    nstore_register(bonafide, name, nstore_instance)
+    _nstore_register(bonafide, name, nstore_instance)
     return nstore_instance
 
 
@@ -465,7 +464,7 @@ def _nstore_unpermute(items: Tuple, index: List[int]) -> Tuple:
     return tuple(result)
 
 
-def nstore_register(bonafide: Bonafide, name: str, nstore: NStore) -> None:
+def _nstore_register(bonafide: Bonafide, name: str, nstore: NStore) -> None:
     """Register an NStore instance in the Bonafide subspace.
 
     Args:

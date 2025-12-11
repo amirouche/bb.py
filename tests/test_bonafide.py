@@ -16,9 +16,9 @@ from bonafide import (
     bytes_read,
     bytes_next,
     nstore_indices,
-    nstore_create,
+    nstore_create as _nstore_create,
     nstore_new,
-    nstore_register,
+    nstore_register as _nstore_register,
     nstore_get,
     BBH,
     Variable,
@@ -169,11 +169,11 @@ def test_nstore_indices_n_4():
 
 
 def test_nstore_create():
-    """Test nstore_create function"""
+    """Test _nstore_create function"""
     prefix = ("test",)
     n = 3
     name = "test_store"
-    nstore = nstore_create(prefix, n, name)
+    nstore = _nstore_create(prefix, n, name)
 
     assert nstore.prefix == prefix
     assert nstore.n == n
@@ -195,7 +195,7 @@ def test_nstore_new():
 
 
 def test_nstore_register_and_get():
-    """Test nstore_register and nstore_get functions"""
+    """Test _nstore_register and nstore_get functions"""
     # Create a mock Bonafide instance
     bonafide = Bonafide(
         db_path="test.db",
@@ -207,7 +207,7 @@ def test_nstore_register_and_get():
     )
 
     nstore = nstore_new("test", ("test",), 2)
-    nstore_register(bonafide, "test", nstore)
+    _nstore_register(bonafide, "test", nstore)
 
     retrieved = nstore_get(bonafide, "test")
     assert retrieved == nstore
