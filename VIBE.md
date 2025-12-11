@@ -2,6 +2,8 @@
 
 - Use the directory ./tmp/ for temporary files, including database, and scripts;
 - Never use global variables;
+- Never use shorthand words that are not proper words such as conn,
+  perm, ana, etc... You can use: cnx, txn.
 
 ## Project Overview
 
