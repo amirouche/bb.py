@@ -1,5 +1,7 @@
 # VIBE.md - AI Assistant Guide for Beyond Babel
 
+- Use the directory ./tmp/ for temporary files, including database, and scripts;
+
 ## Project Overview
 
 **Beyond Babel** is a function pool manager for Python that enables multilingual function sharing through AST normalization and content-addressed storage. It allows the same logical function written in different human languages (with different variable names, docstrings, etc.) to share the same hash and be stored together.
