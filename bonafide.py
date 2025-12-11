@@ -145,6 +145,7 @@ def _query(
     Returns:
         A list of rows returned by the query.
     """
+
     def _execute_query_func(
         conn: sqlite3.Connection, query_str: str, params: Tuple[Any, ...]
     ) -> List[Tuple[Any, ...]]:
@@ -166,7 +167,7 @@ def query(
     limit: Optional[int] = None,
 ) -> Optional[_builtin_bytes]:
     """Query key-value pairs from the database.
-    
+
     Args:
         conn: SQLite connection
         key: Key to query
@@ -210,7 +211,7 @@ def query(
 
 def set(conn: sqlite3.Connection, key: _builtin_bytes, value: _builtin_bytes) -> None:
     """Set a key-value pair in the database.
-    
+
     Args:
         conn: SQLite connection
         key: Key to set
@@ -218,8 +219,7 @@ def set(conn: sqlite3.Connection, key: _builtin_bytes, value: _builtin_bytes) ->
     """
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
-        (key, value)
+        "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)", (key, value)
     )
 
 
@@ -231,7 +231,7 @@ def delete(
     limit: Optional[int] = None,
 ) -> int:
     """Delete key-value pairs from the database.
-    
+
     Args:
         conn: SQLite connection
         key: Start key (inclusive if forward, exclusive if reverse)
@@ -241,7 +241,7 @@ def delete(
 
     Returns:
         Number of rows deleted
-    
+
     Behavior:
         - If other is None: delete single key
         - If other is not None: delete range [key, other)
@@ -287,7 +287,7 @@ def bytes(
     limit: Optional[int] = None,
 ) -> int:
     """Calculate total bytes (key lengths + value lengths) in a key range.
-    
+
     Args:
         conn: SQLite connection
         key: Start key (inclusive if forward, exclusive if reverse)
@@ -297,22 +297,18 @@ def bytes(
 
     Returns:
         Total bytes (key lengths + value lengths)
-    
+
     Behavior:
         - If key <= other: forward scan [key, other) in ascending order
         - If key > other: reverse scan [other, key) in descending order
     """
     if key <= other:
         # Forward scan: key <= k < other
-        base_query = (
-            "SELECT key, value FROM kv_store WHERE key >= ? AND key < ? ORDER BY key ASC"
-        )
+        base_query = "SELECT key, value FROM kv_store WHERE key >= ? AND key < ? ORDER BY key ASC"
         params: List[Any] = [key, other]
     else:
         # Reverse scan: other <= k < key, descending order
-        base_query = (
-            "SELECT key, value FROM kv_store WHERE key >= ? AND key < ? ORDER BY key DESC"
-        )
+        base_query = "SELECT key, value FROM kv_store WHERE key >= ? AND key < ? ORDER BY key DESC"
         params = [other, key]
 
     if limit is not None:
@@ -339,7 +335,7 @@ def count(
     limit: Optional[int] = None,
 ) -> int:
     """Count the number of key-value pairs in a key range.
-    
+
     Args:
         conn: SQLite connection
         key: Start key (inclusive if forward, exclusive if reverse)
@@ -349,18 +345,22 @@ def count(
 
     Returns:
         Number of key-value pairs in the range
-    
+
     Behavior:
         - If key <= other: forward scan [key, other) in ascending order
         - If key > other: reverse scan [other, key) in descending order
     """
     if key <= other:
         # Forward scan: key <= k < other
-        base_query = "SELECT key FROM kv_store WHERE key >= ? AND key < ? ORDER BY key ASC"
+        base_query = (
+            "SELECT key FROM kv_store WHERE key >= ? AND key < ? ORDER BY key ASC"
+        )
         params: List[Any] = [key, other]
     else:
         # Reverse scan: other <= k < key
-        base_query = "SELECT key FROM kv_store WHERE key >= ? AND key < ? ORDER BY key DESC"
+        base_query = (
+            "SELECT key FROM kv_store WHERE key >= ? AND key < ? ORDER BY key DESC"
+        )
         params = [other, key]
 
     if limit is not None:
@@ -383,19 +383,19 @@ def count(
 def transaction(bonafide: Bonafide):
     """
     Context manager for database transactions.
-    
+
     Commits the transaction if no exception is raised, rolls back otherwise.
-    
+
     Args:
         bonafide: The Bonafide configuration and state.
-    
+
     Yields:
         A database connection for the transaction.
     """
     # Create a new connection for this transaction
     conn = sqlite3.connect(bonafide.db_path, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
-    
+
     try:
         yield conn
         # Commit if no exception occurred
@@ -475,13 +475,13 @@ if __name__ == "__main__":
 
     # Test transaction context manager
     print("\nTesting transaction context manager:")
-    
+
     # Successful transaction
     with transaction(bonafide) as conn:
         cursor = conn.cursor()
         cursor.execute(
             "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
-            ("transaction_key", b"transaction_value")
+            ("transaction_key", b"transaction_value"),
         )
     print("✓ Successful transaction committed")
 
@@ -498,7 +498,7 @@ if __name__ == "__main__":
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
-                ("rollback_key", b"rollback_value")
+                ("rollback_key", b"rollback_value"),
             )
             raise ValueError("Simulated error for rollback test")
     except ValueError:
@@ -516,14 +516,14 @@ if __name__ == "__main__":
 
     # Test the new query function
     print("\nTesting new query function:")
-    
+
     # Insert test data for query demonstration
     with transaction(bonafide) as conn:
         cursor = conn.cursor()
         for i in range(1, 6):
             cursor.execute(
                 "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)",
-                (f"query_key_{i}".encode(), f"query_value_{i}".encode())
+                (f"query_key_{i}".encode(), f"query_value_{i}".encode()),
             )
 
     # Test single key lookup
@@ -544,51 +544,55 @@ if __name__ == "__main__":
 
         # Test reverse range query
         results = query(conn, b"query_key_4", b"query_key_1")
-        print(f"✓ Reverse range query [query_key_4, query_key_1): {len(results)} results")
+        print(
+            f"✓ Reverse range query [query_key_4, query_key_1): {len(results)} results"
+        )
         for key, value in results:
             print(f"  {key} -> {value}")
 
     # Test set, delete, bytes, and count functions
     print("\nTesting set, delete, bytes, and count functions:")
-    
+
     with transaction(bonafide) as conn:
         # Test set
         set(conn, b"test_set_key", b"test_set_value")
         print("✓ Set: test_set_key -> test_set_value")
-        
+
         # Test query after set
         result = query(conn, b"test_set_key")
         print(f"✓ Query after set: {result}")
-        
+
         # Test count
         count_result = count(conn, b"test_set_key", b"test_set_keyA")
         print(f"✓ Count in range: {count_result}")
-        
+
         # Test bytes
         bytes_result = bytes(conn, b"test_set_key", b"test_set_keyA")
         key_len = len(b"test_set_key")
         value_len = len(b"test_set_value")
         expected_bytes = key_len + value_len
         print(f"✓ Bytes in range: {bytes_result} (expected: {expected_bytes})")
-        
+
         # Test delete
         deleted_count = delete(conn, b"test_set_key")
         print(f"✓ Delete: test_set_key (deleted {deleted_count} rows)")
-        
+
         # Verify delete
         result = query(conn, b"test_set_key")
         print(f"✓ Query after delete: {result}")
-        
+
         # Test range delete
         print("\nTesting range delete:")
         # Insert test data for range delete
         for i in range(1, 6):
             set(conn, f"range_key_{i}".encode(), f"range_value_{i}".encode())
-        
+
         # Delete range
         deleted_count = delete(conn, b"range_key_1", b"range_key_4")
-        print(f"✓ Range delete [range_key_1, range_key_4): deleted {deleted_count} rows")
-        
+        print(
+            f"✓ Range delete [range_key_1, range_key_4): deleted {deleted_count} rows"
+        )
+
         # Verify range delete
         remaining_count = 0
         for i in range(1, 6):
