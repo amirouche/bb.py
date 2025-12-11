@@ -3,14 +3,14 @@ Integration tests for end-to-end workflows.
 
 Grey-box style tests that exercise complete CLI workflows combining multiple commands.
 """
-import ast
 
-import pytest
+import ast
 
 
 # =============================================================================
 # Integration tests for complete CLI workflows
 # =============================================================================
+
 
 def test_workflow_add_show_roundtrip(cli_runner, tmp_path):
     """Test add then show produces correct output"""
@@ -21,15 +21,15 @@ def test_workflow_add_show_roundtrip(cli_runner, tmp_path):
 ''')
 
     # Add function
-    func_hash = cli_runner.add(str(test_file), 'eng')
+    func_hash = cli_runner.add(str(test_file), "eng")
 
     # Show function
-    result = cli_runner.run(['show', f'{func_hash}@eng'])
+    result = cli_runner.run(["show", f"{func_hash}@eng"])
 
     assert result.returncode == 0
-    assert 'def greet' in result.stdout
-    assert 'name' in result.stdout
-    assert 'Hello' in result.stdout
+    assert "def greet" in result.stdout
+    assert "name" in result.stdout
+    assert "Hello" in result.stdout
 
 
 def test_workflow_add_get_roundtrip(cli_runner, tmp_path):
@@ -41,8 +41,8 @@ def test_workflow_add_get_roundtrip(cli_runner, tmp_path):
     return result'''
     test_file.write_text(original_code)
 
-    func_hash = cli_runner.add(str(test_file), 'eng')
-    result = cli_runner.run(['get', f'{func_hash}@eng'])
+    func_hash = cli_runner.add(str(test_file), "eng")
+    result = cli_runner.run(["get", f"{func_hash}@eng"])
 
     assert result.returncode == 0
 
@@ -71,15 +71,15 @@ def test_workflow_multilingual_same_hash(cli_runner, tmp_path):
     result = first + second
     return result''')
 
-    eng_hash = cli_runner.add(str(eng_file), 'eng')
-    fra_hash = cli_runner.add(str(fra_file), 'fra')
+    eng_hash = cli_runner.add(str(eng_file), "eng")
+    fra_hash = cli_runner.add(str(fra_file), "fra")
 
     # Should have the same hash
     assert eng_hash == fra_hash
 
     # Should be able to retrieve in both languages
-    eng_result = cli_runner.run(['get', f'{eng_hash}@eng'])
-    fra_result = cli_runner.run(['get', f'{fra_hash}@fra'])
+    eng_result = cli_runner.run(["get", f"{eng_hash}@eng"])
+    fra_result = cli_runner.run(["get", f"{fra_hash}@fra"])
 
     assert eng_result.returncode == 0
     assert fra_result.returncode == 0
@@ -99,16 +99,16 @@ def test_workflow_multilingual_get_different_languages(cli_runner, tmp_path):
     return f"Hello, {name}!"
 ''')
 
-    eng_hash = cli_runner.add(str(eng_file), 'eng')
-    cli_runner.add(str(fra_file), 'fra')
+    eng_hash = cli_runner.add(str(eng_file), "eng")
+    cli_runner.add(str(fra_file), "fra")
 
     # Get English version
-    eng_result = cli_runner.run(['get', f'{eng_hash}@eng'])
-    assert 'Greet someone in English' in eng_result.stdout
+    eng_result = cli_runner.run(["get", f"{eng_hash}@eng"])
+    assert "Greet someone in English" in eng_result.stdout
 
     # Get French version
-    fra_result = cli_runner.run(['get', f'{eng_hash}@fra'])
-    assert 'Saluer' in fra_result.stdout
+    fra_result = cli_runner.run(["get", f"{eng_hash}@fra"])
+    assert "Saluer" in fra_result.stdout
 
 
 def test_workflow_function_with_imports(cli_runner, tmp_path):
@@ -123,13 +123,13 @@ def analyze(data):
     return math.sqrt(len(count))
 ''')
 
-    func_hash = cli_runner.add(str(test_file), 'eng')
-    result = cli_runner.run(['show', f'{func_hash}@eng'])
+    func_hash = cli_runner.add(str(test_file), "eng")
+    result = cli_runner.run(["show", f"{func_hash}@eng"])
 
     assert result.returncode == 0
-    assert 'import math' in result.stdout
-    assert 'from collections import Counter' in result.stdout
-    assert 'def analyze' in result.stdout
+    assert "import math" in result.stdout
+    assert "from collections import Counter" in result.stdout
+    assert "def analyze" in result.stdout
 
 
 def test_workflow_function_with_bb_import(cli_runner, tmp_path):
@@ -141,7 +141,7 @@ def test_workflow_function_with_bb_import(cli_runner, tmp_path):
     return x * 2
 ''')
 
-    helper_hash = cli_runner.add(str(helper_file), 'eng')
+    helper_hash = cli_runner.add(str(helper_file), "eng")
 
     # Now add a function that uses the helper
     main_file = tmp_path / "main.py"
@@ -152,54 +152,54 @@ def process(value):
     return helper(value) + 1
 ''')
 
-    main_hash = cli_runner.add(str(main_file), 'eng')
+    main_hash = cli_runner.add(str(main_file), "eng")
 
     # Show should restore the import with alias
-    result = cli_runner.run(['show', f'{main_hash}@eng'])
+    result = cli_runner.run(["show", f"{main_hash}@eng"])
 
     assert result.returncode == 0
-    assert 'from bb.pool import' in result.stdout
-    assert 'as helper' in result.stdout
-    assert 'def process' in result.stdout
+    assert "from bb.pool import" in result.stdout
+    assert "as helper" in result.stdout
+    assert "def process" in result.stdout
 
 
 def test_workflow_add_multiple_then_list(cli_runner, tmp_path):
     """Test adding multiple functions and listing them via log"""
     # Add three different functions
-    for i, name in enumerate(['alpha', 'beta', 'gamma']):
+    for i, name in enumerate(["alpha", "beta", "gamma"]):
         test_file = tmp_path / f"{name}.py"
         test_file.write_text(f'''def {name}():
     """Function {name}"""
     return {i}
 ''')
-        cli_runner.add(str(test_file), 'eng')
+        cli_runner.add(str(test_file), "eng")
 
     # Log should work (even if empty, shouldn't error)
-    result = cli_runner.run(['log'])
+    result = cli_runner.run(["log"])
     assert result.returncode == 0
 
 
 def test_workflow_error_handling_invalid_file(cli_runner):
     """Test error handling for nonexistent file"""
-    result = cli_runner.run(['add', '/nonexistent/file.py@eng'])
+    result = cli_runner.run(["add", "/nonexistent/file.py@eng"])
     assert result.returncode != 0
 
 
 def test_workflow_error_handling_missing_language(cli_runner, tmp_path):
     """Test error handling for missing language suffix"""
     test_file = tmp_path / "test.py"
-    test_file.write_text('def foo(): pass')
+    test_file.write_text("def foo(): pass")
 
-    result = cli_runner.run(['add', str(test_file)])
+    result = cli_runner.run(["add", str(test_file)])
     assert result.returncode != 0
-    assert 'Missing language suffix' in result.stderr
+    assert "Missing language suffix" in result.stderr
 
 
 def test_workflow_error_handling_invalid_language(cli_runner, tmp_path):
     """Test error handling for too short language code"""
     test_file = tmp_path / "test.py"
-    test_file.write_text('def foo(): pass')
+    test_file.write_text("def foo(): pass")
 
-    result = cli_runner.run(['add', f'{test_file}@ab'])
+    result = cli_runner.run(["add", f"{test_file}@ab"])
     assert result.returncode != 0
-    assert 'Language code must be 3-256 characters' in result.stderr
+    assert "Language code must be 3-256 characters" in result.stderr
