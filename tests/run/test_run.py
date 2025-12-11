@@ -4,13 +4,11 @@ Tests for 'bb.py run' command.
 Grey-box integration tests for function execution.
 """
 
-import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
 
 def cli_run(args: list, env: dict = None) -> subprocess.CompletedProcess:

@@ -10,7 +10,6 @@ Grey-box style:
 import json
 
 
-
 def test_add_function_with_check_decorator(cli_runner, tmp_path):
     """Test adding a function with @check decorator stores checks in metadata"""
     # Setup: First add a function to be tested

@@ -1,5 +1,3 @@
-import hexd, sn
-import hqta
 
 
 async def hosizay():

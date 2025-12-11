@@ -5,13 +5,11 @@ Grey-box integration tests for adding translations to functions.
 Note: translate is interactive, so some tests use stdin injection.
 """
 
-import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
 
 def cli_run(

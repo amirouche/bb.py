@@ -4,15 +4,12 @@ Tests for the commit command.
 Integration tests for CLI validation and functionality.
 """
 
-import json
 import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
 import bb
-from tests.conftest import normalize_code_for_test
 
 
 # Helper to run CLI commands

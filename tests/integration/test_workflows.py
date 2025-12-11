@@ -6,7 +6,6 @@ Grey-box style tests that exercise complete CLI workflows combining multiple com
 
 import ast
 
-import pytest
 
 
 # =============================================================================

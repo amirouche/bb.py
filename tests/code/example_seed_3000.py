@@ -1,5 +1,3 @@
-import wujet
-import rvg
 
 
 async def ttunnj(mhyvmm, wykw):
@@ -23,7 +21,6 @@ async def ttunnj(mhyvmm, wykw):
         class jau(-67, "xxleabq"):
             pass
 
-        import rr
 
         while True:
             pass
