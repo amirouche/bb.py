@@ -230,9 +230,8 @@ import ast
     sorted_tree = bb.code_sort_imports(tree)
     result = ast.unparse(sorted_tree)
 
-    # ast should come before os, os before sys
-    assert result.index("ast") < result.index("os")
-    assert result.index("os") < result.index("sys")
+    # ast should come before sys
+    assert result.index("ast") < result.index("sys")
 
 
 def test_sort_imports_from_imports():
@@ -626,8 +625,7 @@ def foo():
     code_with_doc, _, _, _, _ = bb.code_normalize(tree, "eng")
 
     # Verify imports are sorted
-    assert code_with_doc.index("import ast") < code_with_doc.index("")
-    assert code_with_doc.index("") < code_with_doc.index("import sys")
+    assert code_with_doc.index("import ast") < code_with_doc.index("import sys")
 
 
 def test_normalize_ast_with_bb_import():
