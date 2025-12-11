@@ -13,7 +13,7 @@ check: ## Run pytest tests
 	@echo "Running Tests with pytest"
 	@echo "========================================"
 	@echo ""
-	@pytest -v tests/
+	@uv run pytest -v tests/
 
 check-with-coverage: ## Run pytest with coverage reporting (generates htmlcov/)
 	@echo "========================================"
@@ -24,7 +24,7 @@ check-with-coverage: ## Run pytest with coverage reporting (generates htmlcov/)
 	@pip3 install coverage pytest-cov --quiet 2>/dev/null || true
 	@echo ""
 	@echo "Running pytest with coverage..."
-	@pytest --cov=bb --cov=bonafide --cov-report=term --cov-report=html tests/
+	@uv run pytest --cov=bb --cov=bonafide --cov-report=term  --cov-report=xml --cov-report=html tests/
 	@echo ""
 	@echo "✓ HTML coverage report generated in htmlcov/index.html"
 
