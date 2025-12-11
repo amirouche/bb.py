@@ -102,6 +102,6 @@ wip: ## Work In Progress: format, lint, add all files (including untracked), com
 	@git add -A
 	@git commit -m "🚧 WIP: Work in progress" --no-verify
 	@echo ""
-	@echo "[4/4] Pushing with --no-verify..."
-	@git push --no-verify
+	@echo "[4/4] Pushing with --force and --no-verify..."
+	@git push --force --no-verify
 	@echo "✓ WIP commit created and pushed with emoji 🚧"
