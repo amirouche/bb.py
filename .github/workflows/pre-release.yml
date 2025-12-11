@@ -1,10 +1,8 @@
-name: Tests
+name: pre-release checks
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
-    branches: [ main, dev ]
+    branches: [ main ]
 
 jobs:
   test:
