@@ -1,10 +1,17 @@
 # VIBE.md - AI Assistant Guide for Beyond Babel
 
+- Python 3.12;
+- Function-based, no keyword `class`, instead use collections.namedtuple, or `dict`;
+- Package manager: uv;
+- Test runner: pytest with coverage support;
+- Few big files instead of many small files, that is easier to navigate;
+- Test strategy: Grey box integration test, test public interface, and
+  fallback to level to check correctness, avoid monkeypatching; Also fuzzing;
 - Use the directory ./tmp/ for temporary files, including database, and scripts;
 - Never use global variables;
 - Never use shorthand words that are not proper words such as conn,
-  perm, ana, etc... You can use: cnx, txn.
-- Avoid top-level function calls whenever possible; prefer using functions that can be called with parameters.
+  perm, ana, etc... You can use: cnx, txn;
+- Avoid top-level function calls whenever possible; prefer using functions that can be called with parameters;
 
 ## Project Overview
 
@@ -67,21 +74,6 @@ Store in $HOME/.local/bb/pool/ (or $BB_DIRECTORY/pool/) with:
 
 ### Project Structure
 
-```
-bb.py/
-├── bb.py                      # Main CLI tool
-├── examples/                      # Example functions directory
-│   ├── README.md                  # Examples documentation
-│   ├── example_simple.py          # English example
-│   ├── example_simple_french.py   # French example (same logic)
-│   ├── example_simple_spanish.py  # Spanish example (same logic)
-│   ├── example_with_import.py     # Example with stdlib imports
-│   └── example_with_bb.py     # Example calling other pool functions
-├── strategies/                    # Design documents
-├── tests/                         # Test suite
-└── .gitignore                     # Ignores __pycache__, etc.
-```
-
 ### Function Pool Structure (v1)
 
 ```
@@ -102,181 +94,6 @@ $HOME/.local/bb/pool/          # Default location (or $BB_DIRECTORY/pool/)
 ## Key Components
 
 ### Core Classes
-
-#### `ASTNormalizer` (lines 20-40)
-- **Purpose**: Transform AST by renaming variables/functions according to mapping
-- **Methods**:
-  - `visit_Name()`: Rename variable references
-  - `visit_arg()`: Rename function arguments
-  - `visit_FunctionDef()`: Rename function definitions
-
-### Core Functions
-
-#### `ast_normalize(tree, lang)` (lines 272-318)
-**Central normalization pipeline**
-- Sorts imports lexicographically
-- Extracts function definition and imports
-- Extracts docstring separately
-- Rewrites `from bb.pool import X as Y` → `from bb.pool import X` (removes alias)
-- Creates name mappings (`original → _bb_v_X`)
-- Returns: normalized code (with/without docstring), docstring, mappings
-
-#### `mapping_create_name(function_def, imports, bb_aliases)` (lines 133-180)
-**Generates bidirectional name mappings**
-- Function name always gets `_bb_v_0`
-- Variables/args get sequential indices: `_bb_v_1`, `_bb_v_2`, ...
-- **Excluded from renaming**: Python builtins, imported names, bb aliases
-- Returns: `(forward_mapping, reverse_mapping)`
-
-#### `imports_rewrite_bb(imports)` (lines 183-213)
-**Transforms bb imports for normalization**
-- Rewrites: `from bb.pool import HASH as alias` → `from bb.pool import HASH` (removes alias)
-- Tracks alias mappings for later denormalization
-- Necessary because normalized code uses `HASH._bb_v_0(...)` instead of `alias(...)`
-
-#### `calls_replace_bb(tree, alias_mapping, name_mapping)` (lines 216-235)
-**Replaces aliased function calls with normalized form**
-- Transforms: `alias(...)` → `HASH._bb_v_0(...)`
-- Uses alias_mapping to determine which names are bb functions
-
-#### `hash_compute(code)` (lines 321-335)
-**Generates SHA256 hash**
-- CRITICAL: Hash computed on code **WITHOUT docstring**
-- Ensures same logic = same hash across languages
-- Returns 64-character hex output
-
-#### `mapping_compute_hash(docstring, name_mapping, alias_mapping, comment='')` (lines 338-371)
-**Computes content-addressed hash for language mappings** (Schema v1)
-- Creates canonical JSON from mapping components (sorted keys, no whitespace)
-- Includes comment field in hash to distinguish variants
-- Enables deduplication: identical mappings share same hash/storage
-- Returns: 64-character hex SHA256 hash
-
-#### `schema_detect_version(func_hash)` (lines 374-406)
-**Detects if a function exists in the pool**
-- Checks filesystem for v1 format: `pool/XX/YYYYYY.../object.json`
-- Returns: 1 if found, None if not found
-
-#### `metadata_create()` (lines 409-435)
-**Generates default metadata for functions** (Schema v1)
-- ISO 8601 timestamp (`created` field)
-- Author from environment (USER or USERNAME)
-- Returns: Dictionary with metadata structure
-- Used when saving functions to v1 format
-
-#### `function_save_v1(hash_value, normalized_code, metadata)` (lines 495-532)
-**Stores function in v1 format** (Schema v1)
-- Creates function directory: `$BB_DIRECTORY/pool/XX/YYYYYY.../`
-- Writes `object.json` with schema_version=1, metadata
-- Does NOT store language-specific data (stored separately in mapping files)
-- Clean separation: code in object.json, language variants in mapping.json files
-
-#### `mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment='')` (lines 534-585)
-**Stores language mapping in v1 format** (Schema v1)
-- Creates mapping directory: `$BB_DIRECTORY/pool/XX/Y.../lang/ZZ/W.../`
-- Writes `mapping.json` with docstring, name_mapping, alias_mapping, comment
-- Content-addressed by mapping hash (enables deduplication)
-- Identical mappings across functions share same file
-- Returns: mapping hash for verification
-
-#### `function_save(hash_value, lang, normalized_code, docstring, name_mapping, alias_mapping, comment='')` (lines 471-494)
-**Main entry point for saving functions** (Schema v1)
-- Wrapper that calls function_save_v1() + mapping_save_v1()
-- Creates metadata automatically using metadata_create()
-- Accepts optional comment parameter for mapping variant identification
-- **This is the default save function** - all new code uses v1 format
-
-#### `function_load_v1(hash_value)` (lines 2072-2100)
-**Loads function from pool using schema v1**
-- Reads object.json: `$BB_DIRECTORY/pool/XX/YYYYYY.../object.json`
-- Returns: Dictionary with schema_version, hash, normalized_code, metadata
-- Does NOT load language-specific data (use mapping functions for that)
-
-#### `mappings_list_v1(func_hash, lang)` (lines 851-909)
-**Lists all mapping variants for a language** (Schema v1)
-- Scans language directory: `$BB_DIRECTORY/pool/XX/Y.../lang/`
-- Returns: List of (mapping_hash, comment) tuples
-- Used to discover available mapping variants
-- Returns empty list if language doesn't exist
-
-#### `mapping_load_v1(func_hash, lang, mapping_hash)` (lines 912-950)
-**Loads specific language mapping** (Schema v1)
-- Reads mapping.json: `$BB_DIRECTORY/pool/XX/Y.../lang/ZZ/W.../mapping.json`
-- Returns: Tuple of (docstring, name_mapping, alias_mapping, comment)
-- Content-addressed storage enables deduplication
-
-#### `function_load(hash_value, lang, mapping_hash=None)` (lines 953-1011)
-**Main entry point for loading functions**
-- Calls function_load_v1() + mapping_load_v1()
-- If multiple mappings exist and no mapping_hash specified, picks first alphabetically
-- Returns: Tuple of (normalized_code, name_mapping, alias_mapping, docstring)
-- **This is the default load function**
-
-#### `function_show(hash_with_lang_and_mapping)` (lines 1014-1107)
-**Show function with mapping exploration and selection**
-- Supports three formats: `HASH@LANG`, `HASH@LANG@MAPPING_HASH`
-- Single mapping: Outputs code directly to stdout
-- Multiple mappings: Displays selection menu with copyable commands and comments
-- Explicit mapping hash: Directly outputs specified mapping
-- Uses function_load() + code_denormalize() to reconstruct original code
-- **This is the recommended command** for exploring and viewing functions
-- **Note**: CLI command `bb.py show HASH@lang[@mapping_hash]`
-
-#### `code_denormalize(normalized_code, name_mapping, alias_mapping)` (lines 497-679)
-**Reconstructs original-looking code**
-- Reverses variable renaming: `_bb_v_X → original_name`
-- Rewrites imports: `from bb.pool import X` → `from bb.pool import X as alias` (restores alias)
-- Transforms calls: `HASH._bb_v_0(...)` → `alias(...)`
-
-### Storage Schema
-
-See [STORE.md](STORE.md) for the complete storage specification.
-
-**Directory Structure:**
-```
-$BB_DIRECTORY/pool/            # Default: $HOME/.local/bb/pool/
-  ab/                              # First 2 chars of function hash
-    c123def456.../                 # Function directory (remaining hash chars)
-      object.json                  # Core function data
-      eng/                         # Language code directory
-        xy/                        # First 2 chars of mapping hash
-          z789.../                 # Mapping directory (remaining hash chars)
-            mapping.json           # Language mapping (content-addressed)
-      fra/                         # Another language
-        mn/
-          opqr.../
-            mapping.json           # Another language/variant
-```
-
-**object.json**:
-```json
-{
-  "schema_version": 1,
-  "hash": "abc123...",
-  "normalized_code": "def _bb_v_0(...):\n    ...",
-  "metadata": {
-    "created": "2025-11-21T10:00:00Z",
-    "author": "username"
-  }
-}
-```
-
-**mapping.json** (in lang/XX/YYY.../):
-```json
-{
-  "docstring": "Calculate the average...",
-  "name_mapping": {"_bb_v_0": "calculate_average", "_bb_v_1": "numbers"},
-  "alias_mapping": {"abc123": "helper"},
-  "comment": "Formal mathematical terminology"
-}
-```
-
-Key features:
-- Language identifiers up to 256 characters
-- Multiple mappings per language via multiple mapping.json files
-- Content-addressed mapping storage (deduplicated across functions)
-- No duplication between object.json and mapping.json
-- Extensible metadata (author, timestamp)
 
 ## Development Conventions
 
@@ -316,7 +133,7 @@ Key features:
 
 **Rationale**: This convention groups related operations alphabetically and makes the primary subject clear at a glance, which is particularly useful in a function-centric architecture where functions are the primary unit of composition.
 
-**Avoid type_name proliferation**: Too many distinct type_names hurts readability and discoverability. Prefer consolidating related concepts under a common prefix. Target type_names: `code_`, `command_`, `compile_`, `git_`, `helper_`, `storage_`, `hash_`.
+**Avoid type_name proliferation**: Too many distinct type_names hurts readability and discoverability. Prefer consolidating related concepts under a common prefix. 
 
 **Special type_name `helper_`**: Use `helper_` prefix for utility functions that don't fit other categories (e.g., UI interactions, generic operations). Example: `helper_open_editor_for_message()`.
 
@@ -373,19 +190,6 @@ Beyond Babel follows a **grey-box integration testing** approach as the primary 
 
 ### Directory Structure
 
-```
-tests/
-├── conftest.py              # Shared fixtures (CLIRunner, normalize_code_for_test)
-├── integration/
-│   └── test_workflows.py    # End-to-end workflows combining multiple commands
-├── add/
-│   └── test_add.py          # Tests for 'bb.py add' command
-├── show/
-│   └── test_show.py         # Tests for 'bb.py show' command
-├── test_internals.py        # Unit tests for complex algorithms
-└── test_storage.py          # Storage schema validation tests
-```
-
 ### Grey-Box Integration Tests
 
 Grey-box tests call CLI commands but verify internal state:
@@ -426,18 +230,11 @@ These tests live in `tests/test_internals.py`.
 
 ```bash
 # Run all tests
-pytest
-
-# Run integration tests only
-pytest tests/integration/ tests/add/ tests/show/
-
-# Run unit tests only
-pytest tests/test_internals.py tests/test_storage.py
+make check check-fuzz
 
 # Run with coverage
-pytest --cov=bb --cov-report=html
+make check-cov
 
-# Run tests matching pattern
 pytest -k "add"
 ```
 
@@ -448,20 +245,6 @@ pytest -k "add"
 **Normalized code strings**: All normalized code strings in tests MUST use the `normalize_code_for_test()` helper function to ensure the code format matches `ast.unparse()` output.
 
 ### Running Examples
-
-```bash
-# Add examples to pool
-python3 bb.py add examples/example_simple.py@eng
-python3 bb.py add examples/example_simple_french.py@fra
-python3 bb.py add examples/example_simple_spanish.py@spa
-
-# Verify they share the same hash
-find ~/.local/bb/pool -name "object.json"  # or $BB_DIRECTORY/pool/
-
-# Show in different language
-python3 bb.py show HASH@eng
-python3 bb.py show HASH@fra
-```
 
 ### Verification Checklist
 
@@ -478,8 +261,8 @@ python3 bb.py show HASH@fra
 ### Branch Strategy
 
 - `main`: Stable releases
-- `claude/*`: AI-generated feature branches
-- Pull requests required for merging to main
+- `dev`: working branch
+- Pull requests required for merging to `dev`, or `main`
 
 ### Commit Message Style
 
