@@ -1689,7 +1689,7 @@ def code_create_metadata(
     Returns:
         Dictionary with metadata fields
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     # Get name and email from config
     config = storage_read_config()
@@ -1697,7 +1697,7 @@ def code_create_metadata(
     email = config["user"].get("email", "")
 
     # Get current timestamp in ISO 8601 format
-    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     metadata = {"created": timestamp, "name": name, "email": email}
 
