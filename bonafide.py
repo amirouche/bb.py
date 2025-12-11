@@ -13,7 +13,6 @@ import itertools
 import struct
 import uuid
 from collections import namedtuple
-from contextlib import contextmanager
 from typing import Any, Callable, List, Optional, TypeVar, Dict, Tuple
 
 # Type variable for function return types
@@ -231,6 +230,10 @@ Bonafide = namedtuple(
     ],
 )
 
+# Connection and transaction types
+BonafideCnx = namedtuple("BonafideCnx", ["bonafide", "sqlite"])
+BonafideTxn = namedtuple("BonafideTxn", ["cnx"])
+
 
 def _nstore_indices_verify_coverage(indices: List[List[int]], n: int) -> bool:
     """Verify that indices cover all possible query patterns."""
@@ -385,19 +388,17 @@ def _nstore_unpermute(items: Tuple, index: List[int]) -> Tuple:
     return tuple(result)
 
 
-def nstore_add(bonafide: Bonafide, name: str, items: Tuple) -> None:
+@transactional
+def nstore_add(txn, name: str, items: Tuple) -> None:
     """Add a tuple to the nstore."""
-    nstore = nstore_get(bonafide, name)
+    nstore = nstore_get(txn.cnx.bonafide, name)
     assert len(items) == nstore.n, f"Expected {nstore.n} items, got {len(items)}"
 
-    def _add_impl(conn: sqlite3.Connection) -> None:
-        # Add to all permuted indices
-        for subspace, index in enumerate(nstore.indices):
-            permuted = _nstore_permute(items, index)
-            key = bytes_write(nstore.prefix + (subspace,) + permuted)
-            set(conn, key, b"\x01")
-
-    apply(bonafide, _add_impl)
+    # Add to all permuted indices
+    for subspace, index in enumerate(nstore.indices):
+        permuted = _nstore_permute(items, index)
+        key = bytes_write(nstore.prefix + (subspace,) + permuted)
+        set(txn, key, b"\x01")
 
 
 def nstore_register(bonafide: Bonafide, name: str, nstore: NStore) -> None:
@@ -427,35 +428,29 @@ def nstore_get(bonafide: Bonafide, name: str) -> NStore:
     return bonafide.subspace[name]
 
 
-def nstore_delete(bonafide: Bonafide, name: str, items: Tuple) -> None:
+def nstore_delete(txn, name: str, items: Tuple) -> None:
     """Delete a tuple from the nstore."""
-    nstore = nstore_get(bonafide, name)
+    nstore = nstore_get(txn.cnx.bonafide, name)
     assert len(items) == nstore.n, f"Expected {nstore.n} items, got {len(items)}"
 
-    def _delete_impl(conn: sqlite3.Connection) -> None:
-        # Delete from all permuted indices
-        for subspace, index in enumerate(nstore.indices):
-            permuted = _nstore_permute(items, index)
-            key = bytes_write(nstore.prefix + (subspace,) + permuted)
-            delete(conn, key)
-
-    apply(bonafide, _delete_impl)
+    # Delete from all permuted indices
+    for subspace, index in enumerate(nstore.indices):
+        permuted = _nstore_permute(items, index)
+        key = bytes_write(nstore.prefix + (subspace,) + permuted)
+        delete(txn, key)
 
 
-def nstore_ask(bonafide: Bonafide, name: str, items: Tuple) -> bool:
+def nstore_ask(txn, name: str, items: Tuple) -> bool:
     """Check if a tuple exists in the nstore."""
-    nstore = nstore_get(bonafide, name)
+    nstore = nstore_get(txn.cnx.bonafide, name)
     assert len(items) == nstore.n, f"Expected {nstore.n} items, got {len(items)}"
 
-    def _ask_impl(conn: sqlite3.Connection) -> bool:
-        # Check base index (subspace 0) with the original tuple
-        # The key format is: prefix + (subspace,) + permuted_tuple
-        # For subspace 0, the permutation is the identity permutation [0, 1, 2, ...]
-        permuted = _nstore_permute(items, nstore.indices[0])
-        key = bytes_write(nstore.prefix + (0,) + permuted)
-        return query(conn, key) is not None
-
-    return apply(bonafide, _ask_impl, readonly=True)
+    # Check base index (subspace 0) with the original tuple
+    # The key format is: prefix + (subspace,) + permuted_tuple
+    # For subspace 0, the permutation is the identity permutation [0, 1, 2, ...]
+    permuted = _nstore_permute(items, nstore.indices[0])
+    key = bytes_write(nstore.prefix + (0,) + permuted)
+    return query(txn, key) is not None
 
 
 def _nstore_pattern_to_combination(pattern: Tuple) -> List[int]:
@@ -511,10 +506,10 @@ def _nstore_bind_tuple(
 
 
 def nstore_query(
-    bonafide: Bonafide, name: str, pattern: Tuple, *patterns: Tuple
+    txn, name: str, pattern: Tuple, *patterns: Tuple
 ) -> List[Dict[str, Any]]:
     """Query tuples matching pattern and optional additional where patterns."""
-    nstore = nstore_get(bonafide, name)
+    nstore = nstore_get(txn.cnx.bonafide, name)
     patterns = [pattern] + list(patterns)
 
     # Start with initial empty binding
@@ -543,12 +538,9 @@ def nstore_query(
                 # All bytes are 0xFF, use next longer sequence
                 key_end = key_start + b"\x00"
 
-            def _query_impl(conn: sqlite3.Connection) -> List[Tuple]:
-                # Range scan
-                results = query(conn, key_start, key_end)
-                return [(row[0], row[1]) for row in results]
-
-            results = apply(bonafide, _query_impl, readonly=True)
+            # Range scan
+            results = query(txn, key_start, key_end)
+            results = [(row[0], row[1]) for row in results]
 
             for key, _ in results:
                 # Decode key
@@ -569,9 +561,9 @@ def nstore_query(
     return bindings
 
 
-def nstore_count(bonafide: Bonafide, name: str, pattern: Tuple) -> int:
+def nstore_count(txn, name: str, pattern: Tuple) -> int:
     """Count tuples matching pattern."""
-    nstore = nstore_get(bonafide, name)
+    nstore = nstore_get(txn.cnx.bonafide, name)
     assert len(pattern) == nstore.n, (
         f"Pattern length {len(pattern)} doesn't match nstore size {nstore.n}"
     )
@@ -587,15 +579,12 @@ def nstore_count(bonafide: Bonafide, name: str, pattern: Tuple) -> int:
         # All bytes are 0xFF, use next longer sequence
         key_end = key_start + b"\x00"
 
-    def _count_impl(conn: sqlite3.Connection) -> int:
-        return count(conn, key_start, key_end)
-
-    return apply(bonafide, _count_impl, readonly=True)
+    return count(txn, key_start, key_end)
 
 
-def nstore_bytes(bonafide: Bonafide, name: str, pattern: Tuple) -> int:
+def nstore_bytes(txn, name: str, pattern: Tuple) -> int:
     """Sum the length of bytes in keys and values for tuples matching pattern."""
-    nstore = nstore_get(bonafide, name)
+    nstore = nstore_get(txn.cnx.bonafide, name)
     assert len(pattern) == nstore.n, (
         f"Pattern length {len(pattern)} doesn't match nstore size {nstore.n}"
     )
@@ -611,36 +600,38 @@ def nstore_bytes(bonafide: Bonafide, name: str, pattern: Tuple) -> int:
         # All bytes are 0xFF, use next longer sequence
         key_end = key_start + b"\x00"
 
-    def _bytes_impl(conn: sqlite3.Connection) -> int:
-        return bytes(conn, key_start, key_end)
-
-    return apply(bonafide, _bytes_impl, readonly=True)
+    return bytes(txn, key_start, key_end)
 
 
 def _bonafide_worker(bonafide: Bonafide) -> None:
     """
     Worker thread that processes database operations.
     """
+    # TODO: implement clean exit shutdown
+
+    # Create a new connection for this operation
+    cnx = sqlite3.connect(bonafide.db_path, check_same_thread=False)
+    cnx.execute("PRAGMA journal_mode=WAL")
+    cnx = BonafideCnx(bonafide, cnx)
+
     while True:
         try:
             # Get task from queue
             task_id, func, args, kwargs, result_queue = bonafide.worker_queue.get()
-
-            # Create a new connection for this operation
-            conn = sqlite3.connect(bonafide.db_path, check_same_thread=False)
-            conn.execute("PRAGMA journal_mode=WAL")
-
             try:
-                result = func(conn, *args, **kwargs)
+                result = func(cnx, *args, **kwargs)
                 result_queue.put((task_id, result))
             except Exception as e:
                 result_queue.put((task_id, e))
             finally:
-                conn.close()
                 bonafide.worker_queue.task_done()
         except Exception:
             # If any error occurs, continue processing
             bonafide.worker_queue.task_done()
+            cnx.sqlite.close()
+            cnx = sqlite3.connect(bonafide.db_path, check_same_thread=False)
+            cnx.execute("PRAGMA journal_mode=WAL")
+            cnx = BonafideCnx(bonafide, cnx)
 
 
 def _start_worker_threads(bonafide: Bonafide, num_threads: int = None) -> None:
@@ -671,7 +662,7 @@ def apply(
     **kwargs: Any,
 ) -> T:
     """
-    Execute a function within the bonafide storage context.
+    Execute a function within the bonafide thread.
 
     Args:
         bonafide: The Bonafide configuration and state.
@@ -719,7 +710,7 @@ def apply(
 
 
 def query(
-    conn: sqlite3.Connection,
+    txn,
     key: _builtin_bytes,
     other: Optional[_builtin_bytes] = None,
     offset: int = 0,
@@ -941,33 +932,32 @@ def count(
     return cursor.fetchone()[0]
 
 
-@contextmanager
-def transaction(bonafide: Bonafide):
-    """
-    Context manager for database transactions.
+def transactional(func):
+    def wrapper(something, *args, **kwargs):
+        if isinstance(something, BonafideCnx):
+            cnx = something
+            txn = BonafideTxn(cnx)
+            try:
+                out = func(tnx, *args, **kwargs)
+                # Commit if no exception occurred
+                cnx.commit()
+            except Exception:
+                # Rollback if an exception occurred
+                cnx.rollback()
+                raise
+            else:
+                return out
+            finally:
+                cnx.close()
+        elif isinstance(something, BonafideTxn):
+            return func(something, *args, **kwargs)
+        else:
+            msg = "transactional does not support unexpected: {}".format(
+                type(something)
+            )
+            raise NotImplementedError(msg)
 
-    Commits the transaction if no exception is raised, rolls back otherwise.
-
-    Args:
-        bonafide: The Bonafide configuration and state.
-
-    Yields:
-        A database connection for the transaction.
-    """
-    # Create a new connection for this transaction
-    conn = sqlite3.connect(bonafide.db_path, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-
-    try:
-        yield conn
-        # Commit if no exception occurred
-        conn.commit()
-    except Exception:
-        # Rollback if an exception occurred
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    return wrapper
 
 
 def new(
@@ -997,18 +987,17 @@ def new(
     )
 
     # Initialize the table with key and value BLOB fields
-    def _initialize_table(conn: sqlite3.Connection, table_name: str) -> None:
-        conn.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {table_name} (
-                key BLOB PRIMARY KEY,
-                value BLOB NOT NULL
-            )
-            """
+    cnx = sqlite3.connect(bonafide.db_path, check_same_thread=False)
+    cnx.execute("PRAGMA journal_mode=WAL")
+    cnx.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            key BLOB PRIMARY KEY,
+            value BLOB NOT NULL
         )
-        conn.commit()
-
-    # Apply the table initialization
-    apply(bonafide, _initialize_table, name)
+        """
+    )
+    cnx.commit()
+    cnx.close()
 
     return bonafide
