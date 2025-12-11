@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-GitHub Review Comments Helper (JSON output)
+GitHub Review Comments Helper (JSON output) - GraphQL Version
 
 Fetches unresolved review comments for the current branch's PR and displays them
-in JSON format.
+in JSON format using GitHub's GraphQL API.
 
-Usage: ./bin/github-review-comments-json.py
+Usage: ./bin/github-review-comments-json-v2.py
 """
 
 import json
@@ -69,10 +69,54 @@ def get_pr_number(branch):
 
 
 def get_review_comments(owner, repo, pr_number):
-    """Get review comments for a PR using GitHub API."""
-    api_url = f"repos/{owner}/{repo}/pulls/{pr_number}/comments"
-    comments_json = run_command(f"gh api {api_url}")
-    return json.loads(comments_json)
+    """Get review comments for a PR using GitHub GraphQL API."""
+    query = """
+    query FetchReviewComments($owner: String!, $repo: String!, $prNumber: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $prNumber) {
+          reviewThreads(first: 100) {
+            edges {
+              node {
+                isResolved
+                isOutdated
+                comments(first: 100) {
+                  nodes {
+                    id
+                    body
+                    diffHunk
+                    path
+                    position
+                    originalPosition
+                    url
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+
+    # Use gh api graphql with variables
+    result = run_command(
+        f"gh api graphql --field owner={owner} --field repo={repo} --field prNumber={pr_number} -F query='{query}'"
+    )
+    data = json.loads(result)
+
+    # Extract review threads and convert to comment-like format
+    threads = data["data"]["repository"]["pullRequest"]["reviewThreads"]["edges"]
+
+    comments = []
+    for thread in threads:
+        thread_node = thread["node"]
+        for comment in thread_node["comments"]["nodes"]:
+            # Add resolution status to comment
+            comment["isResolved"] = thread_node["isResolved"]
+            comment["isOutdated"] = thread_node["isOutdated"]
+            comments.append(comment)
+
+    return comments
 
 
 def main():
@@ -95,16 +139,18 @@ def main():
     # Filter unresolved comments and extract required fields
     unresolved_comments = []
     for comment in comments:
-        if comment.get("resolved_at") is None:
+        # Use the new isResolved field from GraphQL API
+        if not comment.get("isResolved", False):
             unresolved_comments.append(
                 {
                     "id": comment.get("id"),
-                    "url": comment.get("html_url", comment.get("url")),
-                    "diff_hunk": comment.get("diff_hunk", ""),
+                    "url": comment.get("url"),
+                    "diff_hunk": comment.get("diffHunk", ""),
                     "path": comment.get("path", ""),
                     "position": comment.get("position"),
-                    "original_position": comment.get("original_position"),
+                    "original_position": comment.get("originalPosition"),
                     "body": comment.get("body", ""),
+                    "is_outdated": comment.get("isOutdated", False),
                 }
             )
 
