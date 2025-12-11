@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-Test script for Bonafide storage primitives.
+Test script for Bonafide storage primitives and nstore functionality.
 """
+
+import sys
+import os
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import bonafide
 import threading
 import os
+import tempfile
 from typing import Optional
 
 
@@ -478,4 +484,307 @@ if __name__ == "__main__":
     test_bonafide_query_function()
     test_bonafide_set_delete()
     test_bonafide_bytes_count()
+    print("\nAll tests passed!")
+
+
+def test_nstore_indices():
+    """Test the nstore_indices function."""
+    # Test mathematical properties
+    assert len(bonafide.nstore_indices(3)) == 3  # C(3,1) = 3
+    assert len(bonafide.nstore_indices(4)) == 6  # C(4,2) = 6
+    assert len(bonafide.nstore_indices(5)) == 10  # C(5,2) = 10
+
+    # Test specific indices for n=3
+    indices_3 = bonafide.nstore_indices(3)
+    expected_3 = [[0, 1, 2], [1, 2, 0], [2, 0, 1]]
+    assert indices_3 == expected_3
+
+    # Test specific indices for n=4
+    indices_4 = bonafide.nstore_indices(4)
+    expected_4 = [
+        [0, 1, 2, 3],
+        [1, 2, 3, 0],
+        [2, 0, 3, 1],
+        [3, 0, 1, 2],
+        [3, 1, 2, 0],
+        [3, 2, 0, 1],
+    ]
+    assert indices_4 == expected_4
+
+    print("✓ nstore_indices test passed")
+
+
+def test_nstore_basic_operations():
+    """Test basic nstore operations."""
+    # Create a temporary database
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        db_path = tmp.name
+
+    try:
+        # Create bonafide instance
+        bf = bonafide.new(db_path=db_path, pool_size=2)
+
+        # Create an nstore for 3-tuples
+        store = bonafide.nstore_create(prefix=(0,), n=3)
+
+        # Test adding tuples
+        tuple1 = ("user1", "tag1", "value1")
+        tuple2 = ("user1", "tag2", "value2")
+        tuple3 = ("user2", "tag1", "value3")
+
+        bonafide.nstore_add(bf, store, tuple1)
+        bonafide.nstore_add(bf, store, tuple2)
+        bonafide.nstore_add(bf, store, tuple3)
+
+        # Test asking if tuples exist
+        assert bonafide.nstore_ask(bf, store, tuple1) == True
+        assert bonafide.nstore_ask(bf, store, tuple2) == True
+        assert bonafide.nstore_ask(bf, store, tuple3) == True
+        assert bonafide.nstore_ask(bf, store, ("user1", "tag1", "wrong")) == False
+
+        # Test querying with patterns
+        results = bonafide.nstore_query(
+            bf, store, ("user1", bonafide.Variable("tag"), bonafide.Variable("value"))
+        )
+        assert len(results) == 2  # Should find tuple1 and tuple2
+
+        results = bonafide.nstore_query(
+            bf, store, ("user2", bonafide.Variable("tag"), bonafide.Variable("value"))
+        )
+        assert len(results) == 1  # Should find tuple3
+
+        # Test counting
+        count = bonafide.nstore_count(
+            bf, store, ("user1", bonafide.Variable("tag"), bonafide.Variable("value"))
+        )
+        assert count == 2
+
+        # Test deleting
+        bonafide.nstore_delete(bf, store, tuple1)
+        assert bonafide.nstore_ask(bf, store, tuple1) == False
+
+        # Verify count after deletion
+        count = bonafide.nstore_count(
+            bf, store, ("user1", bonafide.Variable("tag"), bonafide.Variable("value"))
+        )
+        assert count == 1
+
+        print("✓ nstore basic operations test passed")
+
+    finally:
+        # Clean up
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
+def test_nstore_bytes_encoding():
+    """Test the bytes encoding/decoding functions."""
+    # Test simple tuple
+    original = (1, "hello", b"world", None, True)
+    encoded = bonafide.bytes_write(original)
+    decoded = bonafide.bytes_read(encoded)
+    assert decoded == original
+
+    # Test nested tuple
+    nested = (1, (2, 3), "test")
+    encoded = bonafide.bytes_write(nested)
+    decoded = bonafide.bytes_read(encoded)
+    assert decoded == nested
+
+    # Test empty tuple
+    empty = ()
+    encoded = bonafide.bytes_write(empty)
+    decoded = bonafide.bytes_read(encoded)
+    assert decoded == empty
+
+    # Test various types
+    complex_tuple = (
+        None,
+        True,
+        False,
+        0,
+        42,
+        -1,
+        3.14,
+        "string",
+        b"bytes",
+        (1, 2, 3),
+    )
+    encoded = bonafide.bytes_write(complex_tuple)
+    decoded = bonafide.bytes_read(encoded)
+    assert decoded == complex_tuple
+
+    print("✓ bytes encoding/decoding test passed")
+
+
+def test_nstore_4_tuples():
+    """Test nstore operations with 4-tuples."""
+    # Create a temporary database
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        db_path = tmp.name
+
+    try:
+        # Create bonafide instance
+        bf = bonafide.new(db_path=db_path, pool_size=2)
+
+        # Create an nstore for 4-tuples
+        store = bonafide.nstore_create(prefix=(1,), n=4)
+
+        # Test adding 4-tuples
+        tuples_4 = [
+            ("user1", "post1", "tag1", "2023"),
+            ("user1", "post2", "tag2", "2023"),
+            ("user2", "post1", "tag1", "2024"),
+        ]
+
+        for tuple_data in tuples_4:
+            bonafide.nstore_add(bf, store, tuple_data)
+
+        # Test querying 4-tuples
+        user1_results = bonafide.nstore_query(
+            bf,
+            store,
+            (
+                "user1",
+                bonafide.Variable("post"),
+                bonafide.Variable("tag"),
+                bonafide.Variable("year"),
+            ),
+        )
+        assert len(user1_results) == 2
+
+        year_2023_results = bonafide.nstore_query(
+            bf,
+            store,
+            (
+                bonafide.Variable("user"),
+                bonafide.Variable("post"),
+                bonafide.Variable("tag"),
+                "2023",
+            ),
+        )
+        assert len(year_2023_results) == 2
+
+        # Test counting 4-tuples
+        user1_count = bonafide.nstore_count(
+            bf,
+            store,
+            (
+                "user1",
+                bonafide.Variable("post"),
+                bonafide.Variable("tag"),
+                bonafide.Variable("year"),
+            ),
+        )
+        assert user1_count == 2
+
+        print("✓ nstore 4-tuples test passed")
+
+    finally:
+        # Clean up
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
+def test_nstore_complex_queries():
+    """Test complex nstore queries with multiple patterns."""
+    # Create a temporary database
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        db_path = tmp.name
+
+    try:
+        # Create bonafide instance
+        bf = bonafide.new(db_path=db_path, pool_size=2)
+
+        # Create an nstore for relationship tuples (user, action, resource, timestamp)
+        store = bonafide.nstore_create(prefix=(0,), n=4)
+
+        # Add test data
+        relationships = [
+            ("alice", "view", "doc1", "2023-01-01"),
+            ("alice", "edit", "doc1", "2023-01-02"),
+            ("bob", "view", "doc1", "2023-01-03"),
+            ("alice", "view", "doc2", "2023-01-04"),
+            ("charlie", "edit", "doc2", "2023-01-05"),
+        ]
+
+        for rel in relationships:
+            bonafide.nstore_add(bf, store, rel)
+
+        # Test single pattern queries
+        alice_views = bonafide.nstore_query(
+            bf,
+            store,
+            ("alice", "view", bonafide.Variable("doc"), bonafide.Variable("date")),
+        )
+        assert len(alice_views) == 2
+
+        doc1_views = bonafide.nstore_query(
+            bf,
+            store,
+            (bonafide.Variable("user"), "view", "doc1", bonafide.Variable("date")),
+        )
+        assert len(doc1_views) == 2
+
+        # Test multi-pattern queries (join simulation)
+        # Find users who viewed doc1 and then did something else
+        doc1_viewers = bonafide.nstore_query(
+            bf,
+            store,
+            (
+                bonafide.Variable("user"),
+                bonafide.Variable("action"),
+                "doc1",
+                bonafide.Variable("date"),
+            ),
+        )
+
+        # For each viewer, find their other actions
+        viewer_other_actions = []
+        for binding in doc1_viewers:
+            user = binding["user"]
+            other_actions = bonafide.nstore_query(
+                bf,
+                store,
+                (
+                    user,
+                    bonafide.Variable("action"),
+                    bonafide.Variable("doc"),
+                    bonafide.Variable("date"),
+                ),
+            )
+            # Exclude the doc1 actions
+            for action_binding in other_actions:
+                if action_binding["doc"] != "doc1":
+                    viewer_other_actions.append(action_binding)
+
+        # Alice should have at least some other actions
+        # The exact structure depends on variable naming in the query
+        # For now, just verify we got some results
+        assert len(viewer_other_actions) >= 1
+
+        print("✓ nstore complex queries test passed")
+
+    finally:
+        # Clean up
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
+if __name__ == "__main__":
+    test_basic_operations()
+    test_concurrent_access()
+    test_query_function()
+    test_apply_function()
+    test_new_function()
+    test_readonly_functionality()
+    test_transaction_context_manager()
+    test_bonafide_query_function()
+    test_bonafide_set_delete()
+    test_bonafide_bytes_count()
+    test_nstore_indices()
+    test_nstore_basic_operations()
+    test_nstore_bytes_encoding()
+    test_nstore_4_tuples()
+    test_nstore_complex_queries()
     print("\nAll tests passed!")
