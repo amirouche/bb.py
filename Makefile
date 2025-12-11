@@ -65,10 +65,10 @@ cosmit: ## Format code with ruff, lint with --fix, and commit if changes
 	@echo "======================================="
 	@echo ""
 	@echo "[1/3] Running ruff format..."
-	@uv run ruff format
+	@uv run ruff format --config pyproject.toml
 	@echo ""
 	@echo "[2/3] Running ruff check with --fix on main source files..."
-	@uv run ruff check --fix bb.py
+	@uv run ruff check --fix --config pyproject.toml
 	@echo ""
 	@echo "[3/3] Checking for changes and committing..."
 	@if git diff --quiet; then \
