@@ -614,6 +614,20 @@ def test_nstore_bytes_encoding():
     decoded = bonafide.bytes_read(encoded)
     assert decoded == complex_tuple
 
+    # Test BBH (Beyond Babel Hash) - must be exactly 64 hex characters (32 bytes)
+    test_hash = bonafide.BBH(
+        "a227ea217138c98bac904c7dc4f4c66f90626c837d28c8222486e5de68597ef7"
+    )
+    bbh_tuple = ("hash", test_hash)
+    encoded = bonafide.bytes_write(bbh_tuple)
+    decoded = bonafide.bytes_read(encoded)
+    assert decoded == bbh_tuple
+    assert isinstance(decoded[1], bonafide.BBH)
+    assert (
+        decoded[1].value
+        == "a227ea217138c98bac904c7dc4f4c66f90626c837d28c8222486e5de68597ef7"
+    )
+
     print("✓ bytes encoding/decoding test passed")
 
 
