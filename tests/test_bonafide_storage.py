@@ -524,48 +524,58 @@ def test_nstore_basic_operations():
         # Create bonafide instance
         bf = bonafide.new(db_path=db_path, pool_size=2)
 
-        # Create an nstore for 3-tuples
-        store = bonafide.nstore_create(prefix=(0,), n=3)
+        # Create an nstore for 3-tuples using the new subspace-based API
+        store = bonafide.nstore(bf, "test_store", n=3)
 
         # Test adding tuples
         tuple1 = ("user1", "tag1", "value1")
         tuple2 = ("user1", "tag2", "value2")
         tuple3 = ("user2", "tag1", "value3")
 
-        bonafide.nstore_add(bf, store, tuple1)
-        bonafide.nstore_add(bf, store, tuple2)
-        bonafide.nstore_add(bf, store, tuple3)
+        bonafide.nstore_add(bf, "test_store", tuple1)
+        bonafide.nstore_add(bf, "test_store", tuple2)
+        bonafide.nstore_add(bf, "test_store", tuple3)
 
         # Test asking if tuples exist
-        assert bonafide.nstore_ask(bf, store, tuple1) == True
-        assert bonafide.nstore_ask(bf, store, tuple2) == True
-        assert bonafide.nstore_ask(bf, store, tuple3) == True
-        assert bonafide.nstore_ask(bf, store, ("user1", "tag1", "wrong")) == False
+        assert bonafide.nstore_ask(bf, "test_store", tuple1) == True
+        assert bonafide.nstore_ask(bf, "test_store", tuple2) == True
+        assert bonafide.nstore_ask(bf, "test_store", tuple3) == True
+        assert (
+            bonafide.nstore_ask(bf, "test_store", ("user1", "tag1", "wrong")) == False
+        )
 
         # Test querying with patterns
         results = bonafide.nstore_query(
-            bf, store, ("user1", bonafide.Variable("tag"), bonafide.Variable("value"))
+            bf,
+            "test_store",
+            ("user1", bonafide.Variable("tag"), bonafide.Variable("value")),
         )
         assert len(results) == 2  # Should find tuple1 and tuple2
 
         results = bonafide.nstore_query(
-            bf, store, ("user2", bonafide.Variable("tag"), bonafide.Variable("value"))
+            bf,
+            "test_store",
+            ("user2", bonafide.Variable("tag"), bonafide.Variable("value")),
         )
         assert len(results) == 1  # Should find tuple3
 
         # Test counting
         count = bonafide.nstore_count(
-            bf, store, ("user1", bonafide.Variable("tag"), bonafide.Variable("value"))
+            bf,
+            "test_store",
+            ("user1", bonafide.Variable("tag"), bonafide.Variable("value")),
         )
         assert count == 2
 
         # Test deleting
-        bonafide.nstore_delete(bf, store, tuple1)
-        assert bonafide.nstore_ask(bf, store, tuple1) == False
+        bonafide.nstore_delete(bf, "test_store", tuple1)
+        assert bonafide.nstore_ask(bf, "test_store", tuple1) == False
 
         # Verify count after deletion
         count = bonafide.nstore_count(
-            bf, store, ("user1", bonafide.Variable("tag"), bonafide.Variable("value"))
+            bf,
+            "test_store",
+            ("user1", bonafide.Variable("tag"), bonafide.Variable("value")),
         )
         assert count == 1
 
@@ -641,8 +651,8 @@ def test_nstore_4_tuples():
         # Create bonafide instance
         bf = bonafide.new(db_path=db_path, pool_size=2)
 
-        # Create an nstore for 4-tuples
-        store = bonafide.nstore_create(prefix=(1,), n=4)
+        # Create an nstore for 4-tuples using the new subspace-based API
+        store = bonafide.nstore(bf, "test_store_4", n=4)
 
         # Test adding 4-tuples
         tuples_4 = [
@@ -652,12 +662,12 @@ def test_nstore_4_tuples():
         ]
 
         for tuple_data in tuples_4:
-            bonafide.nstore_add(bf, store, tuple_data)
+            bonafide.nstore_add(bf, "test_store_4", tuple_data)
 
         # Test querying 4-tuples
         user1_results = bonafide.nstore_query(
             bf,
-            store,
+            "test_store_4",
             (
                 "user1",
                 bonafide.Variable("post"),
@@ -669,7 +679,7 @@ def test_nstore_4_tuples():
 
         year_2023_results = bonafide.nstore_query(
             bf,
-            store,
+            "test_store_4",
             (
                 bonafide.Variable("user"),
                 bonafide.Variable("post"),
@@ -682,7 +692,7 @@ def test_nstore_4_tuples():
         # Test counting 4-tuples
         user1_count = bonafide.nstore_count(
             bf,
-            store,
+            "test_store_4",
             (
                 "user1",
                 bonafide.Variable("post"),
@@ -711,7 +721,7 @@ def test_nstore_complex_queries():
         bf = bonafide.new(db_path=db_path, pool_size=2)
 
         # Create an nstore for relationship tuples (user, action, resource, timestamp)
-        store = bonafide.nstore_create(prefix=(0,), n=4)
+        store = bonafide.nstore(bf, "relationships", n=4)
 
         # Add test data
         relationships = [
@@ -723,19 +733,19 @@ def test_nstore_complex_queries():
         ]
 
         for rel in relationships:
-            bonafide.nstore_add(bf, store, rel)
+            bonafide.nstore_add(bf, "relationships", rel)
 
         # Test single pattern queries
         alice_views = bonafide.nstore_query(
             bf,
-            store,
+            "relationships",
             ("alice", "view", bonafide.Variable("doc"), bonafide.Variable("date")),
         )
         assert len(alice_views) == 2
 
         doc1_views = bonafide.nstore_query(
             bf,
-            store,
+            "relationships",
             (bonafide.Variable("user"), "view", "doc1", bonafide.Variable("date")),
         )
         assert len(doc1_views) == 2
@@ -744,7 +754,7 @@ def test_nstore_complex_queries():
         # Find users who viewed doc1 and then did something else
         doc1_viewers = bonafide.nstore_query(
             bf,
-            store,
+            "relationships",
             (
                 bonafide.Variable("user"),
                 bonafide.Variable("action"),
@@ -759,7 +769,7 @@ def test_nstore_complex_queries():
             user = binding["user"]
             other_actions = bonafide.nstore_query(
                 bf,
-                store,
+                "relationships",
                 (
                     user,
                     bonafide.Variable("action"),
@@ -801,4 +811,66 @@ if __name__ == "__main__":
     test_nstore_bytes_encoding()
     test_nstore_4_tuples()
     test_nstore_complex_queries()
+    test_nstore_procedure()
     print("\nAll tests passed!")
+
+
+def test_nstore_procedure():
+    """Test the new nstore procedure with subspace-based approach."""
+    import tempfile
+    import os
+
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        db_path = tmp.name
+
+    try:
+        # Create bonafide instance
+        bf = bonafide.new(db_path=db_path, pool_size=2)
+
+        # Test the new nstore procedure
+        store = bonafide.nstore(bf, "my_store", n=3)
+
+        # Verify that the store was created and registered
+        assert store.name == "my_store"
+        assert store.prefix == ("my_store",)
+        assert store.n == 3
+
+        # Verify that the store is registered in the subspace
+        retrieved_store = bonafide.nstore_get(bf, "my_store")
+        assert retrieved_store.name == "my_store"
+        assert retrieved_store.prefix == ("my_store",)
+        assert retrieved_store.n == 3
+
+        # Test adding tuples using the new API
+        tuple1 = ("a", "b", "c")
+        tuple2 = ("a", "b", "d")
+
+        bonafide.nstore_add(bf, "my_store", tuple1)
+        bonafide.nstore_add(bf, "my_store", tuple2)
+
+        # Test querying using the new API
+        results = bonafide.nstore_query(
+            bf, "my_store", ("a", "b", bonafide.Variable("x"))
+        )
+        assert len(results) == 2
+
+        # Test counting using the new API
+        count = bonafide.nstore_count(
+            bf, "my_store", ("a", "b", bonafide.Variable("x"))
+        )
+        assert count == 2
+
+        # Test asking using the new API
+        assert bonafide.nstore_ask(bf, "my_store", tuple1) == True
+        assert bonafide.nstore_ask(bf, "my_store", ("a", "b", "nonexistent")) == False
+
+        # Test deleting using the new API
+        bonafide.nstore_delete(bf, "my_store", tuple1)
+        assert bonafide.nstore_ask(bf, "my_store", tuple1) == False
+
+        print("✓ nstore procedure test passed")
+
+    finally:
+        # Clean up
+        if os.path.exists(db_path):
+            os.unlink(db_path)

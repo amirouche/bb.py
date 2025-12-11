@@ -47,7 +47,7 @@ BBH = namedtuple("BBH", ["value"])
 Variable = namedtuple("Variable", ["name"])
 
 # NStore type
-NStore = namedtuple("NStore", ["prefix", "n", "indices"])
+NStore = namedtuple("NStore", ["prefix", "n", "indices", "name"])
 
 
 def _bytes_write_one(value: Any, nested: bool = False) -> bytes:
@@ -221,7 +221,14 @@ def bytes_next(data: _builtin_bytes) -> Optional[_builtin_bytes]:
 # Bonafide namedtuple to hold configuration and state
 Bonafide = namedtuple(
     "Bonafide",
-    ["db_path", "pool_size", "worker_queue", "worker_threads", "worker_lock"],
+    [
+        "db_path",
+        "pool_size",
+        "worker_queue",
+        "worker_threads",
+        "worker_lock",
+        "subspace",
+    ],
 )
 
 
@@ -309,10 +316,60 @@ def nstore_indices(n: int) -> List[List[int]]:
 # NStore functions
 
 
-def nstore_create(prefix: Tuple, n: int) -> NStore:
-    """Create an NStore instance."""
+def nstore_create(prefix: Tuple, n: int, name: str = "") -> NStore:
+    """Create an NStore instance.
+
+    This function maintains backward compatibility with the old API while supporting
+    the new subspace-based approach.
+
+    Args:
+        prefix: Tuple prefix for this nstore
+        n: Number of elements in tuples
+        name: Optional name for this nstore instance (default: "")
+
+    Returns:
+        NStore instance with the specified configuration
+    """
     indices = nstore_indices(n)
-    return NStore(prefix=prefix, n=n, indices=indices)
+    return NStore(prefix=prefix, n=n, indices=indices, name=name)
+
+
+def nstore_new(name: str, prefix: Tuple, n: int) -> NStore:
+    """Create a new NStore instance with subspace-based configuration.
+
+    This function creates an NStore that can be looked up by name in the Bonafide
+    configuration, allowing for more flexible nstore management.
+
+    Args:
+        name: Unique name for this nstore instance
+        prefix: Tuple prefix for this nstore
+        n: Number of elements in tuples
+
+    Returns:
+        NStore instance with the specified configuration
+    """
+    indices = nstore_indices(n)
+    return NStore(prefix=prefix, n=n, indices=indices, name=name)
+
+
+def nstore(bonafide: Bonafide, name: str, n: int) -> NStore:
+    """Create and register a new NStore with inferred prefix (name,).
+
+    This is a convenience function that creates an NStore with a prefix of (name,)
+    and automatically registers it in the Bonafide subspace.
+
+    Args:
+        bonafide: Bonafide instance
+        name: Unique name for this nstore instance (used as prefix)
+        n: Number of elements in tuples
+
+    Returns:
+        NStore instance with the specified configuration
+    """
+    prefix = (name,)
+    nstore_instance = nstore_new(name, prefix, n)
+    nstore_register(bonafide, name, nstore_instance)
+    return nstore_instance
 
 
 def _nstore_permute(items: Tuple, index: List[int]) -> Tuple:
@@ -328,8 +385,9 @@ def _nstore_unpermute(items: Tuple, index: List[int]) -> Tuple:
     return tuple(result)
 
 
-def nstore_add(bonafide: Bonafide, nstore: NStore, items: Tuple) -> None:
+def nstore_add(bonafide: Bonafide, name: str, items: Tuple) -> None:
     """Add a tuple to the nstore."""
+    nstore = nstore_get(bonafide, name)
     assert len(items) == nstore.n, f"Expected {nstore.n} items, got {len(items)}"
 
     def _add_impl(conn: sqlite3.Connection) -> None:
@@ -342,8 +400,36 @@ def nstore_add(bonafide: Bonafide, nstore: NStore, items: Tuple) -> None:
     apply(bonafide, _add_impl)
 
 
-def nstore_delete(bonafide: Bonafide, nstore: NStore, items: Tuple) -> None:
+def nstore_register(bonafide: Bonafide, name: str, nstore: NStore) -> None:
+    """Register an NStore instance in the Bonafide subspace.
+
+    Args:
+        bonafide: Bonafide instance
+        name: Name to register the nstore under
+        nstore: NStore instance to register
+    """
+    bonafide.subspace[name] = nstore
+
+
+def nstore_get(bonafide: Bonafide, name: str) -> NStore:
+    """Get an NStore instance by name from the Bonafide subspace.
+
+    Args:
+        bonafide: Bonafide instance
+        name: Name of the nstore to retrieve
+
+    Returns:
+        NStore instance
+
+    Raises:
+        KeyError: If no nstore with the given name exists
+    """
+    return bonafide.subspace[name]
+
+
+def nstore_delete(bonafide: Bonafide, name: str, items: Tuple) -> None:
     """Delete a tuple from the nstore."""
+    nstore = nstore_get(bonafide, name)
     assert len(items) == nstore.n, f"Expected {nstore.n} items, got {len(items)}"
 
     def _delete_impl(conn: sqlite3.Connection) -> None:
@@ -356,8 +442,9 @@ def nstore_delete(bonafide: Bonafide, nstore: NStore, items: Tuple) -> None:
     apply(bonafide, _delete_impl)
 
 
-def nstore_ask(bonafide: Bonafide, nstore: NStore, items: Tuple) -> bool:
+def nstore_ask(bonafide: Bonafide, name: str, items: Tuple) -> bool:
     """Check if a tuple exists in the nstore."""
+    nstore = nstore_get(bonafide, name)
     assert len(items) == nstore.n, f"Expected {nstore.n} items, got {len(items)}"
 
     def _ask_impl(conn: sqlite3.Connection) -> bool:
@@ -424,9 +511,10 @@ def _nstore_bind_tuple(
 
 
 def nstore_query(
-    bonafide: Bonafide, nstore: NStore, pattern: Tuple, *patterns: Tuple
+    bonafide: Bonafide, name: str, pattern: Tuple, *patterns: Tuple
 ) -> List[Dict[str, Any]]:
     """Query tuples matching pattern and optional additional where patterns."""
+    nstore = nstore_get(bonafide, name)
     patterns = [pattern] + list(patterns)
 
     # Start with initial empty binding
@@ -481,8 +569,9 @@ def nstore_query(
     return bindings
 
 
-def nstore_count(bonafide: Bonafide, nstore: NStore, pattern: Tuple) -> int:
+def nstore_count(bonafide: Bonafide, name: str, pattern: Tuple) -> int:
     """Count tuples matching pattern."""
+    nstore = nstore_get(bonafide, name)
     assert len(pattern) == nstore.n, (
         f"Pattern length {len(pattern)} doesn't match nstore size {nstore.n}"
     )
@@ -504,8 +593,9 @@ def nstore_count(bonafide: Bonafide, nstore: NStore, pattern: Tuple) -> int:
     return apply(bonafide, _count_impl, readonly=True)
 
 
-def nstore_bytes(bonafide: Bonafide, nstore: NStore, pattern: Tuple) -> int:
+def nstore_bytes(bonafide: Bonafide, name: str, pattern: Tuple) -> int:
     """Sum the length of bytes in keys and values for tuples matching pattern."""
+    nstore = nstore_get(bonafide, name)
     assert len(pattern) == nstore.n, (
         f"Pattern length {len(pattern)} doesn't match nstore size {nstore.n}"
     )
@@ -903,6 +993,7 @@ def new(
         worker_queue=queue.Queue(),
         worker_threads=[],
         worker_lock=threading.Lock(),
+        subspace={},
     )
 
     # Initialize the table with key and value BLOB fields
