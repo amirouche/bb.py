@@ -1,4 +1,4 @@
-.PHONY: help check check-with-coverage check-fuzz clean
+.PHONY: help check check-with-coverage check-fuzz check-review clean
 
 # Default target - show help
 help: ## Show this help message with all available targets
@@ -49,6 +49,13 @@ check-fuzz: ## Run comprehensive fuzz tests (corpus, mutation, generative)
 	@python3 tests/aston/fuzz.py --mutations 20 --tests 50
 	@echo ""
 	@echo "✓ All fuzz tests passed!"
+
+check-review: ## Check GitHub PR review comments (requires gh CLI and authenticated GitHub)
+	@echo "======================================="
+	@echo "Checking GitHub PR Review Comments"
+	@echo "======================================="
+	@echo ""
+	@./bin/github-review-comments-json.py
 
 clean: ## Clean up generated files (htmlcov/, .coverage, __pycache__)
 	@echo "Cleaning up generated files..."
