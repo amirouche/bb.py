@@ -4,6 +4,7 @@
 - Never use global variables;
 - Never use shorthand words that are not proper words such as conn,
   perm, ana, etc... You can use: cnx, txn.
+- Avoid top-level function calls whenever possible; prefer using functions that can be called with parameters.
 
 ## Project Overview
 

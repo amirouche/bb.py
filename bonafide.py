@@ -23,7 +23,17 @@ _builtin_bytes = bytes
 
 # Default constants
 DEFAULT_DB_PATH = "bonafide.db"
-DEFAULT_POOL_SIZE = os.cpu_count() * 2 if os.cpu_count() else 4
+POOL_SIZE_DEFAULT = 4
+
+
+def pool_size_default() -> int:
+    """Calculate the default pool size based on available CPU cores.
+
+    Returns:
+        int: Default pool size (2 * CPU count, or 4 if CPU count is not available)
+    """
+    return os.cpu_count() * 2 if os.cpu_count() else POOL_SIZE_DEFAULT
+
 
 # Order-preserving encoding constants
 _BONAFIDE_BYTE_NULL = 0x00
@@ -360,7 +370,7 @@ def nstore_indices(n: int) -> List[List[int]]:
 # NStore functions
 
 
-def nstore_create(prefix: Tuple, n: int, name: str = "") -> NStore:
+def nstore_create(prefix: Tuple, n: int, name: str) -> NStore:
     """Create an NStore instance.
 
     This function maintains backward compatibility with the old API while supporting
@@ -369,11 +379,12 @@ def nstore_create(prefix: Tuple, n: int, name: str = "") -> NStore:
     Args:
         prefix: Tuple prefix for this nstore
         n: Number of elements in tuples
-        name: Optional name for this nstore instance (default: "")
+        name: Name for this nstore instance
 
     Returns:
         NStore instance with the specified configuration
     """
+    # Semi-private function
     indices = nstore_indices(n)
     return NStore(prefix=prefix, n=n, indices=indices, name=name)
 
@@ -392,6 +403,7 @@ def nstore_new(name: str, prefix: Tuple, n: int) -> NStore:
     Returns:
         NStore instance with the specified configuration
     """
+    # Semi-private function
     indices = nstore_indices(n)
     return NStore(prefix=prefix, n=n, indices=indices, name=name)
 
@@ -437,6 +449,7 @@ def nstore_register(bonafide: Bonafide, name: str, nstore: NStore) -> None:
         name: Name to register the nstore under
         nstore: NStore instance to register
     """
+    # Semi-private function
     bonafide.subspace[name] = nstore
 
 
@@ -971,7 +984,7 @@ def count(
 
 def new(
     db_path: str = DEFAULT_DB_PATH,
-    pool_size: int = DEFAULT_POOL_SIZE,
+    pool_size: int = None,
     name: str = "kv_store",
 ) -> Bonafide:
     """
@@ -985,6 +998,10 @@ def new(
     Returns:
         A Bonafide namedtuple with configuration and state.
     """
+    # Calculate default pool size if not provided
+    if pool_size is None:
+        pool_size = pool_size_default()
+
     # Create the Bonafide instance
     bonafide = Bonafide(
         db_path=db_path,
