@@ -10,3 +10,4 @@
 - `add`: support python namespaces
 - `storage`: export from SQLite to directory
 - `identity`: support cryptographic identity management and signing function hash with mapping upon review
+- `bonafide`: clean pool exit shutdown
