@@ -235,6 +235,47 @@ BonafideCnx = namedtuple("BonafideCnx", ["bonafide", "sqlite"])
 BonafideTxn = namedtuple("BonafideTxn", ["cnx"])
 
 
+def transactional(func):
+    def wrapper(something, *args, **kwargs):
+        if isinstance(something, BonafideCnx):
+            cnx = something
+            txn = BonafideTxn(cnx)
+            try:
+                out = func(txn, *args, **kwargs)
+                # Commit if no exception occurred
+                cnx.commit()
+            except Exception:
+                # Rollback if an exception occurred
+                cnx.rollback()
+                raise
+            else:
+                return out
+            finally:
+                cnx.close()
+        elif isinstance(something, BonafideTxn):
+            return func(something, *args, **kwargs)
+        else:
+            msg = "transactional does not support unexpected: {}".format(
+                type(something)
+            )
+            raise NotImplementedError(msg)
+
+    return wrapper
+
+
+@transactional
+def nstore_add(txn, name: str, items: Tuple) -> None:
+    """Add a tuple to the nstore."""
+    nstore = nstore_get(txn.cnx.bonafide, name)
+    assert len(items) == nstore.n, f"Expected {nstore.n} items, got {len(items)}"
+
+    # Add to all permuted indices
+    for subspace, index in enumerate(nstore.indices):
+        permuted = _nstore_permute(items, index)
+        key = bytes_write(nstore.prefix + (subspace,) + permuted)
+        set(txn, key, b"\x01")
+
+
 def _nstore_indices_verify_coverage(indices: List[List[int]], n: int) -> bool:
     """Verify that indices cover all possible query patterns."""
     tab = list(range(n))
@@ -388,19 +429,6 @@ def _nstore_unpermute(items: Tuple, index: List[int]) -> Tuple:
     return tuple(result)
 
 
-@transactional
-def nstore_add(txn, name: str, items: Tuple) -> None:
-    """Add a tuple to the nstore."""
-    nstore = nstore_get(txn.cnx.bonafide, name)
-    assert len(items) == nstore.n, f"Expected {nstore.n} items, got {len(items)}"
-
-    # Add to all permuted indices
-    for subspace, index in enumerate(nstore.indices):
-        permuted = _nstore_permute(items, index)
-        key = bytes_write(nstore.prefix + (subspace,) + permuted)
-        set(txn, key, b"\x01")
-
-
 def nstore_register(bonafide: Bonafide, name: str, nstore: NStore) -> None:
     """Register an NStore instance in the Bonafide subspace.
 
@@ -428,6 +456,7 @@ def nstore_get(bonafide: Bonafide, name: str) -> NStore:
     return bonafide.subspace[name]
 
 
+@transactional
 def nstore_delete(txn, name: str, items: Tuple) -> None:
     """Delete a tuple from the nstore."""
     nstore = nstore_get(txn.cnx.bonafide, name)
@@ -440,6 +469,7 @@ def nstore_delete(txn, name: str, items: Tuple) -> None:
         delete(txn, key)
 
 
+@transactional
 def nstore_ask(txn, name: str, items: Tuple) -> bool:
     """Check if a tuple exists in the nstore."""
     nstore = nstore_get(txn.cnx.bonafide, name)
@@ -505,6 +535,7 @@ def _nstore_bind_tuple(
     return result
 
 
+@transactional
 def nstore_query(
     txn, name: str, pattern: Tuple, *patterns: Tuple
 ) -> List[Dict[str, Any]]:
@@ -561,6 +592,7 @@ def nstore_query(
     return bindings
 
 
+@transactional
 def nstore_count(txn, name: str, pattern: Tuple) -> int:
     """Count tuples matching pattern."""
     nstore = nstore_get(txn.cnx.bonafide, name)
@@ -582,6 +614,7 @@ def nstore_count(txn, name: str, pattern: Tuple) -> int:
     return count(txn, key_start, key_end)
 
 
+@transactional
 def nstore_bytes(txn, name: str, pattern: Tuple) -> int:
     """Sum the length of bytes in keys and values for tuples matching pattern."""
     nstore = nstore_get(txn.cnx.bonafide, name)
@@ -709,6 +742,7 @@ def apply(
             bonafide.worker_lock.release()
 
 
+@transactional
 def query(
     txn,
     key: _builtin_bytes,
@@ -731,7 +765,9 @@ def query(
     """
     if other is None:
         # Single key lookup
-        cursor = conn.execute("SELECT value FROM kv_store WHERE key = ?", (key,))
+        cursor = txn.cnx.sqlite.execute(
+            "SELECT value FROM kv_store WHERE key = ?", (key,)
+        )
         result = cursor.fetchone()
         return result[0] if result else None
     else:
@@ -755,11 +791,12 @@ def query(
             query += " LIMIT -1 OFFSET ?"
             params.append(offset)
 
-        cursor = conn.execute(query, params)
+        cursor = txn.cnx.sqlite.execute(query, params)
         return [(row[0], row[1]) for row in cursor]
 
 
-def set(conn: sqlite3.Connection, key: _builtin_bytes, value: _builtin_bytes) -> None:
+@transactional
+def set(txn, key: _builtin_bytes, value: _builtin_bytes) -> None:
     """Set a key-value pair in the database.
 
     Args:
@@ -767,15 +804,15 @@ def set(conn: sqlite3.Connection, key: _builtin_bytes, value: _builtin_bytes) ->
         key: Key to set
         value: Value to associate with the key
     """
-    cursor = conn.cursor()
+    cursor = txn.cnx.sqlite.cursor()
     cursor.execute(
         "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)", (key, value)
     )
-    conn.commit()
 
 
+@transactional
 def delete(
-    conn: sqlite3.Connection,
+    txn,
     key: _builtin_bytes,
     other: Optional[_builtin_bytes] = None,
     offset: int = 0,
@@ -801,9 +838,8 @@ def delete(
     """
     if other is None:
         # Single key delete
-        cursor = conn.cursor()
+        cursor = txn.cnx.sqlite.cursor()
         cursor.execute("DELETE FROM kv_store WHERE key = ?", (key,))
-        conn.commit()
         return cursor.rowcount
     else:
         # Range delete
@@ -826,14 +862,14 @@ def delete(
             base_query += " LIMIT -1 OFFSET ?"
             params.append(offset)
 
-        cursor = conn.cursor()
+        cursor = txn.cnx.sqlite.cursor()
         cursor.execute(base_query, params)
-        conn.commit()
         return cursor.rowcount
 
 
+@transactional
 def bytes(
-    conn: sqlite3.Connection,
+    txn,
     key: _builtin_bytes,
     other: _builtin_bytes,
     offset: int = 0,
@@ -876,12 +912,13 @@ def bytes(
 
     # Wrap in SUM query
     query = f"SELECT COALESCE(SUM(LENGTH(key) + LENGTH(value)), 0) FROM ({base_query})"
-    cursor = conn.execute(query, params)
+    cursor = txn.cnx.sqlite.execute(query, params)
     return cursor.fetchone()[0]
 
 
+@transactional
 def count(
-    conn: sqlite3.Connection,
+    txn,
     key: _builtin_bytes,
     other: _builtin_bytes,
     offset: int = 0,
@@ -928,36 +965,8 @@ def count(
 
     # Wrap in COUNT query
     query = f"SELECT COUNT(*) FROM ({base_query})"
-    cursor = conn.execute(query, params)
+    cursor = txn.cnx.sqlite.execute(query, params)
     return cursor.fetchone()[0]
-
-
-def transactional(func):
-    def wrapper(something, *args, **kwargs):
-        if isinstance(something, BonafideCnx):
-            cnx = something
-            txn = BonafideTxn(cnx)
-            try:
-                out = func(tnx, *args, **kwargs)
-                # Commit if no exception occurred
-                cnx.commit()
-            except Exception:
-                # Rollback if an exception occurred
-                cnx.rollback()
-                raise
-            else:
-                return out
-            finally:
-                cnx.close()
-        elif isinstance(something, BonafideTxn):
-            return func(something, *args, **kwargs)
-        else:
-            msg = "transactional does not support unexpected: {}".format(
-                type(something)
-            )
-            raise NotImplementedError(msg)
-
-    return wrapper
 
 
 def new(
@@ -991,7 +1000,7 @@ def new(
     cnx.execute("PRAGMA journal_mode=WAL")
     cnx.execute(
         f"""
-        CREATE TABLE IF NOT EXISTS {table_name} (
+        CREATE TABLE IF NOT EXISTS {name} (
             key BLOB PRIMARY KEY,
             value BLOB NOT NULL
         )
