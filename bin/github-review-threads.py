@@ -82,7 +82,6 @@ def get_review_threads(owner, repo, pr_number):
             edges {
               node {
                 isResolved
-                isOutdated
                 comments(first: 100) {
                   nodes {
                     id
@@ -117,7 +116,6 @@ def get_review_threads(owner, repo, pr_number):
         for comment in thread_node["comments"]["nodes"]:
             # Add resolution status to comment
             comment["isResolved"] = thread_node["isResolved"]
-            comment["isOutdated"] = thread_node["isOutdated"]
             comments.append(comment)
 
     return comments
@@ -154,7 +152,6 @@ def main():
                     "position": thread.get("position"),
                     "original_position": thread.get("originalPosition"),
                     "body": thread.get("body", ""),
-                    "is_outdated": thread.get("isOutdated", False),
                 }
             )
 
