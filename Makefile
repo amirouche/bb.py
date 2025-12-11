@@ -58,3 +58,24 @@ clean: ## Clean up generated files (htmlcov/, .coverage, __pycache__)
 	@find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	@find . -type f -name "*.pyc" -delete 2>/dev/null || true
 	@echo "✓ Cleanup complete"
+
+cosmit: ## Format code with ruff, lint with --fix, and commit if changes
+	@echo "======================================="
+	@echo "Running cosmit: format, lint, and commit"
+	@echo "======================================="
+	@echo ""
+	@echo "[1/3] Running ruff format..."
+	@uv run ruff format
+	@echo ""
+	@echo "[2/3] Running ruff check with --fix on main source files..."
+	@uv run ruff check --fix bb.py
+	@echo ""
+	@echo "[3/3] Checking for changes and committing..."
+	@if git diff --quiet; then \
+	    echo "No changes detected, skipping commit."; \
+	else \
+	    echo "Changes detected, creating cosmit commit..."; \
+	    git add .; \
+	    git commit -m "cosmit"; \
+	    echo "✓ cosmit commit created"; \
+	fi
