@@ -1,4 +1,4 @@
-.PHONY: help check check-with-coverage check-fuzz check-review clean
+.PHONY: help check check-with-coverage check-fuzz check-review clean wip
 
 # Default target - show help
 help: ## Show this help message with all available targets
@@ -86,3 +86,22 @@ cosmit: ## Format code with ruff, lint with --fix, and commit if changes
 	    git commit -m "cosmit"; \
 	    echo "✓ cosmit commit created"; \
 	fi
+
+wip: ## Work In Progress: format, lint, add all files (including untracked), commit with emoji, and push
+	@echo "======================================="
+	@echo "Running WIP: format, lint, commit, and push"
+	@echo "======================================="
+	@echo ""
+	@echo "[1/4] Running ruff format on all files..."
+	@uv run ruff format --config pyproject.toml || true
+	@echo ""
+	@echo "[2/4] Running ruff check with --fix on all files..."
+	@uv run ruff check --fix --config pyproject.toml || true
+	@echo ""
+	@echo "[3/4] Adding all files (including untracked) and creating WIP commit..."
+	@git add -A
+	@git commit -m "🚧 WIP: Work in progress" --no-verify
+	@echo ""
+	@echo "[4/4] Pushing with --no-verify..."
+	@git push --no-verify
+	@echo "✓ WIP commit created and pushed with emoji 🚧"
