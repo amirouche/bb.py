@@ -253,15 +253,15 @@ def transactional(func):
             try:
                 out = func(txn, *args, **kwargs)
                 # Commit if no exception occurred
-                cnx.commit()
+                cnx.sqlite.commit()
             except Exception:
                 # Rollback if an exception occurred
-                cnx.rollback()
+                cnx.sqlite.rollback()
                 raise
             else:
                 return out
             finally:
-                cnx.close()
+                cnx.sqlite.close()
         elif isinstance(something, BonafideTxn):
             return func(something, *args, **kwargs)
         else:
