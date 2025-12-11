@@ -112,9 +112,12 @@ def test_query_function():
 
     bonafide.apply(bf, setup_func)
 
-    # Test query function
-    result = bonafide._query(bf, "SELECT value FROM kv_store WHERE key = ?", ("key1",))
-    assert result[0][0] == b"value1"
+    # Test query function using transaction context manager
+    with bonafide.transaction(bf) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM kv_store WHERE key = ?", ("key1",))
+        result = cursor.fetchall()
+        assert result[0][0] == b"value1"
 
     print("✓ Query function test passed")
     if os.path.exists("test_query.db"):
