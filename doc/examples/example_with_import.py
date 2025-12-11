@@ -1,6 +1,7 @@
 import math
 from collections import Counter
 
+
 def process_data(items, threshold):
     """Process a list of items with a threshold."""
     count = Counter(items)
