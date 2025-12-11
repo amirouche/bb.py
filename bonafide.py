@@ -246,6 +246,30 @@ BonafideTxn = namedtuple("BonafideTxn", ["cnx"])
 
 
 def transactional(func):
+    """Decorator that provides transactional behavior for database operations.
+    
+    This decorator wraps a function to provide automatic transaction management.
+    It handles commit/rollback behavior and connection cleanup based on whether
+    the function executes successfully or raises an exception.
+    
+    The decorator supports three modes of operation:
+    1. When called with a BonafideCnx: Creates a transaction, executes the function,
+       commits on success, rolls back on failure, and closes the connection.
+    2. When called with a BonafideTxn: Passes through to the function directly
+       (for nested transactional calls).
+    3. When called with unsupported types: Raises NotImplementedError.
+    
+    Args:
+        func: The function to wrap with transactional behavior.
+        
+    Returns:
+        A wrapped function that provides transactional behavior.
+        
+    Behavior:
+        - On success: Commits the transaction and returns the function result
+        - On exception: Rolls back the transaction and re-raises the exception
+        - Always: Closes the database connection in a finally block
+    """
     def wrapper(something, *args, **kwargs):
         if isinstance(something, BonafideCnx):
             cnx = something
