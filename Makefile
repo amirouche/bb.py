@@ -24,7 +24,7 @@ check-with-coverage: ## Run pytest with coverage reporting (generates htmlcov/)
 	@pip3 install coverage pytest-cov --quiet 2>/dev/null || true
 	@echo ""
 	@echo "Running pytest with coverage..."
-	@pytest --cov=bb --cov=aston --cov-report=term --cov-report=html tests/
+	@pytest --cov=bb --cov=bonafide --cov-report=term --cov-report=html tests/
 	@echo ""
 	@echo "✓ HTML coverage report generated in htmlcov/index.html"
 
