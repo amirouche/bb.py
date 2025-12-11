@@ -201,7 +201,7 @@ class CorpusFuzzStrategy(FuzzStrategy):
 
     def __init__(self):
         super().__init__("Corpus Fuzzing")
-        self.examples_dir = Path(__file__).parent.parent.parent / "examples"
+        self.examples_dir = Path(__file__).parent.parent.parent / "doc" / "examples"
 
     def run(self):
         """Test all example files."""

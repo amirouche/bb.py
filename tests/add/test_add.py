@@ -355,14 +355,14 @@ def test_add_hash_determinism_with_example_files(cli_runner):
 
     This verifies the core BB principle via CLI: same logic = same hash,
     regardless of variable names or human language. Uses the example files:
-    - examples/example_simple.py (English)
-    - examples/example_simple_french.py (French)
+    - doc/examples/example_simple.py (English)
+    - doc/examples/example_simple_french.py (French)
 
     Grey-box: We use CLI to add files, then verify both the output AND
     the internal storage structure.
     """
     # Setup: Locate the example files
-    examples_dir = Path(__file__).parent.parent.parent / "examples"
+    examples_dir = Path(__file__).parent.parent.parent / "doc" / "examples"
     english_file = examples_dir / "example_simple.py"
     french_file = examples_dir / "example_simple_french.py"
 

@@ -963,10 +963,10 @@ def test_hash_determinism_multilingual_same_logic():
 
     This verifies the core BB principle: same logic = same hash, regardless of
     variable names or human language used. Uses the example files:
-    - examples/example_simple.py (English)
-    - examples/example_simple_french.py (French)
+    - doc/examples/example_simple.py (English)
+    - doc/examples/example_simple_french.py (French)
     """
-    examples_dir = Path(__file__).parent.parent / "examples"
+    examples_dir = Path(__file__).parent.parent / "doc" / "examples"
     english_file = examples_dir / "example_simple.py"
     french_file = examples_dir / "example_simple_french.py"
 
