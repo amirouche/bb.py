@@ -12,7 +12,6 @@ import sys
 from pathlib import Path
 
 
-
 def cli_run(
     args: list, env: dict = None, input_text: str = None
 ) -> subprocess.CompletedProcess:
