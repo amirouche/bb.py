@@ -407,7 +407,6 @@ def _nstore_create(prefix: Tuple, n: int, name: str) -> NStore:
     Returns:
         NStore instance with the specified configuration
     """
-    # Semi-private function
     indices = nstore_indices(n)
     return NStore(prefix=prefix, n=n, indices=indices, name=name)
 
@@ -426,7 +425,6 @@ def nstore_new(name: str, prefix: Tuple, n: int) -> NStore:
     Returns:
         NStore instance with the specified configuration
     """
-    # Semi-private function
     indices = nstore_indices(n)
     return NStore(prefix=prefix, n=n, indices=indices, name=name)
 
@@ -472,7 +470,6 @@ def _nstore_register(bonafide: Bonafide, name: str, nstore: NStore) -> None:
         name: Name to register the nstore under
         nstore: NStore instance to register
     """
-    # Semi-private function
     bonafide.subspace[name] = nstore
 
 
