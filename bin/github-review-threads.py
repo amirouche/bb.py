@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-GitHub Review Comments Helper (JSON output) - GraphQL Version
+GitHub Review Threads Helper (JSON output)
 
-Fetches unresolved review comments for the current branch's PR and displays them
+Fetches unresolved review threads for the current branch's PR and displays them
 in JSON format using GitHub's GraphQL API.
 
-Usage: ./bin/github-review-comments-json-v2.py
+This script checks for unresolved review threads (not individual comments) because
+GitHub's review system works with threads that can contain multiple comments.
+A thread is considered resolved when the code changes address the concerns.
+
+Usage: ./bin/github-review-threads.py
 """
 
 import json
@@ -68,8 +72,8 @@ def get_pr_number(branch):
     sys.exit(1)
 
 
-def get_review_comments(owner, repo, pr_number):
-    """Get review comments for a PR using GitHub GraphQL API."""
+def get_review_threads(owner, repo, pr_number):
+    """Get review threads for a PR using GitHub GraphQL API."""
     query = """
     query FetchReviewComments($owner: String!, $repo: String!, $prNumber: Int!) {
       repository(owner: $owner, name: $repo) {
@@ -133,37 +137,37 @@ def main():
     pr_number = get_pr_number(branch)
     print(f"PR number: {pr_number}", file=sys.stderr)
 
-    # Get review comments
-    comments = get_review_comments(owner, repo, pr_number)
+    # Get review threads
+    threads = get_review_threads(owner, repo, pr_number)
 
-    # Filter unresolved comments and extract required fields
-    unresolved_comments = []
-    for comment in comments:
-        # Use the new isResolved field from GraphQL API
-        if not comment.get("isResolved", False):
-            unresolved_comments.append(
+    # Filter unresolved threads and extract required fields
+    unresolved_threads = []
+    for thread in threads:
+        # Use the isResolved field from GraphQL API
+        if not thread.get("isResolved", False):
+            unresolved_threads.append(
                 {
-                    "id": comment.get("id"),
-                    "url": comment.get("url"),
-                    "diff_hunk": comment.get("diffHunk", ""),
-                    "path": comment.get("path", ""),
-                    "position": comment.get("position"),
-                    "original_position": comment.get("originalPosition"),
-                    "body": comment.get("body", ""),
-                    "is_outdated": comment.get("isOutdated", False),
+                    "id": thread.get("id"),
+                    "url": thread.get("url"),
+                    "diff_hunk": thread.get("diffHunk", ""),
+                    "path": thread.get("path", ""),
+                    "position": thread.get("position"),
+                    "original_position": thread.get("originalPosition"),
+                    "body": thread.get("body", ""),
+                    "is_outdated": thread.get("isOutdated", False),
                 }
             )
 
     # Output as JSON
-    print(json.dumps(unresolved_comments, indent=2))
+    print(json.dumps(unresolved_threads, indent=2))
 
     print(
-        f"\nFound {len(unresolved_comments)} unresolved review comments.",
+        f"\nFound {len(unresolved_threads)} unresolved review threads.",
         file=sys.stderr,
     )
 
-    # Exit with code 2 if there are unresolved comments
-    if unresolved_comments:
+    # Exit with code 2 if there are unresolved threads
+    if unresolved_threads:
         sys.exit(2)
 
 

@@ -55,7 +55,7 @@ check-review: ## Check GitHub PR review comments (requires gh CLI and authentica
 	@echo "Checking GitHub PR Review Comments"
 	@echo "======================================="
 	@echo ""
-	@./bin/github-review-comments-json.py
+	@./bin/github-review-threads.py
 
 clean: ## Clean up generated files (htmlcov/, .coverage, __pycache__)
 	@echo "Cleaning up generated files..."
