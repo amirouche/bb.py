@@ -11,7 +11,7 @@ The generator will be used in the Aston fuzzer for testing AST normalization.
 import ast
 import random
 import sys
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 
 
 def introspect_ast_nodes() -> Dict[str, Dict[str, str]]:
@@ -42,7 +42,7 @@ def introspect_ast_nodes() -> Dict[str, Dict[str, str]]:
             continue
 
         # Get fields and their types
-        if hasattr(obj, '_fields'):
+        if hasattr(obj, "_fields"):
             field_types = {}
             for field_name in obj._fields:
                 field_type = infer_field_type(obj, field_name)
@@ -74,124 +74,144 @@ def infer_field_type(node_class: type, field_name: str) -> str:
     # In practice, we need to inspect actual instances or refer to docs
 
     # Common patterns
-    if field_name in ['lineno', 'col_offset', 'end_lineno', 'end_col_offset']:
-        return 'int'
-    if field_name in ['name', 'id', 'attr', 'arg', 'module']:
-        return 'identifier'
-    if field_name in ['asname']:
-        return 'identifier?'
-    if field_name == 'value':
+    if field_name in ["lineno", "col_offset", "end_lineno", "end_col_offset"]:
+        return "int"
+    if field_name in ["name", "id", "attr", "arg", "module"]:
+        return "identifier"
+    if field_name in ["asname"]:
+        return "identifier?"
+    if field_name == "value":
         # Special handling for value field
-        if node_class.__name__ in ['Constant', 'Num', 'Str', 'Bytes', 'NameConstant', 'Ellipsis']:
-            return 'constant'
-        elif node_class.__name__ in ['Assign', 'AugAssign', 'AnnAssign', 'Return']:
-            return 'expr'
-        elif node_class.__name__ in ['Attribute', 'Subscript']:
-            return 'expr'
+        if node_class.__name__ in [
+            "Constant",
+            "Num",
+            "Str",
+            "Bytes",
+            "NameConstant",
+            "Ellipsis",
+        ]:
+            return "constant"
+        elif node_class.__name__ in ["Assign", "AugAssign", "AnnAssign", "Return"]:
+            return "expr"
+        elif node_class.__name__ in ["Attribute", "Subscript"]:
+            return "expr"
         else:
-            return 'unknown'
+            return "unknown"
 
     # Lists
-    if field_name in ['body', 'orelse', 'finalbody']:
+    if field_name in ["body", "orelse", "finalbody"]:
         # Lambda.body is expr, not stmt*
-        if node_class.__name__ == 'Lambda' and field_name == 'body':
-            return 'expr'
+        if node_class.__name__ == "Lambda" and field_name == "body":
+            return "expr"
         # IfExp.body and IfExp.orelse are expr, not stmt*
-        if node_class.__name__ == 'IfExp' and field_name in ['body', 'orelse']:
-            return 'expr'
-        return 'stmt*'
-    if field_name in ['elts', 'keys', 'values', 'comparators']:
-        return 'expr*'
-    if field_name in ['args', 'posonlyargs', 'kwonlyargs']:
+        if node_class.__name__ == "IfExp" and field_name in ["body", "orelse"]:
+            return "expr"
+        return "stmt*"
+    if field_name in ["elts", "keys", "values", "comparators"]:
+        return "expr*"
+    if field_name in ["args", "posonlyargs", "kwonlyargs"]:
         # FunctionDef/AsyncFunctionDef/Lambda.args is 'arguments', not 'arg*'
-        if node_class.__name__ in ['FunctionDef', 'AsyncFunctionDef', 'Lambda'] and field_name == 'args':
-            return 'arguments'
-        return 'arg*'
-    if field_name in ['names']:
+        if (
+            node_class.__name__ in ["FunctionDef", "AsyncFunctionDef", "Lambda"]
+            and field_name == "args"
+        ):
+            return "arguments"
+        return "arg*"
+    if field_name in ["names"]:
         # Import/ImportFrom use alias*, Global/Nonlocal use identifier*
-        if node_class.__name__ in ['Import', 'ImportFrom']:
-            return 'alias*'
-        elif node_class.__name__ in ['Global', 'Nonlocal']:
-            return 'identifier*'
+        if node_class.__name__ in ["Import", "ImportFrom"]:
+            return "alias*"
+        elif node_class.__name__ in ["Global", "Nonlocal"]:
+            return "identifier*"
         else:
-            return 'alias*'  # default
-    if field_name in ['bases', 'keywords', 'decorator_list']:
-        return 'expr*'
-    if field_name in ['targets']:
-        return 'expr*'
-    if field_name in ['handlers']:
-        return 'excepthandler*'
-    if field_name in ['items']:
-        return 'withitem*'
-    if field_name in ['ifs']:
-        return 'expr*'
-    if field_name in ['generators']:
-        return 'comprehension*'
+            return "alias*"  # default
+    if field_name in ["bases", "keywords", "decorator_list"]:
+        return "expr*"
+    if field_name in ["targets"]:
+        return "expr*"
+    if field_name in ["handlers"]:
+        return "excepthandler*"
+    if field_name in ["items"]:
+        return "withitem*"
+    if field_name in ["ifs"]:
+        return "expr*"
+    if field_name in ["generators"]:
+        return "comprehension*"
 
     # Optional fields
-    if field_name == 'returns':
-        return 'expr?'
-    if field_name == 'type_comment':
-        return 'string?'
-    if field_name in ['defaults', 'kw_defaults']:
-        return 'expr*'
+    if field_name == "returns":
+        return "expr?"
+    if field_name == "type_comment":
+        return "string?"
+    if field_name in ["defaults", "kw_defaults"]:
+        return "expr*"
 
     # Single nodes
-    if field_name in ['test', 'iter', 'target', 'left', 'right', 'func', 'lower', 'upper', 'step']:
-        return 'expr'
-    if field_name in ['cause']:
-        return 'expr?'
-    if field_name in ['exc']:
-        return 'expr?'
-    if field_name in ['type']:
-        return 'expr?'
-    if field_name in ['slice']:
-        return 'expr'
-    if field_name == 'annotation':
+    if field_name in [
+        "test",
+        "iter",
+        "target",
+        "left",
+        "right",
+        "func",
+        "lower",
+        "upper",
+        "step",
+    ]:
+        return "expr"
+    if field_name in ["cause"]:
+        return "expr?"
+    if field_name in ["exc"]:
+        return "expr?"
+    if field_name in ["type"]:
+        return "expr?"
+    if field_name in ["slice"]:
+        return "expr"
+    if field_name == "annotation":
         # AnnAssign.annotation is required, others might be optional
-        if node_class.__name__ == 'AnnAssign':
-            return 'expr'
+        if node_class.__name__ == "AnnAssign":
+            return "expr"
         else:
-            return 'expr?'
-    if field_name in ['simple']:
-        return 'int'
+            return "expr?"
+    if field_name in ["simple"]:
+        return "int"
 
     # Operators and context
-    if field_name == 'op':
+    if field_name == "op":
         # Check node class to determine operator type
-        if node_class.__name__ == 'BoolOp':
-            return 'boolop'
-        elif node_class.__name__ == 'UnaryOp':
-            return 'unaryop'
+        if node_class.__name__ == "BoolOp":
+            return "boolop"
+        elif node_class.__name__ == "UnaryOp":
+            return "unaryop"
         else:
-            return 'operator'
-    if field_name == 'ops':
+            return "operator"
+    if field_name == "ops":
         # Compare uses cmpop*, others use operator*
-        if node_class.__name__ == 'Compare':
-            return 'cmpop*'
+        if node_class.__name__ == "Compare":
+            return "cmpop*"
         else:
-            return 'operator*'
-    if field_name in ['ctx']:
-        return 'expr_context'
-    if field_name in ['boolop']:
-        return 'boolop'
-    if field_name in ['unaryop']:
-        return 'unaryop'
-    if field_name in ['cmpop']:
-        return 'cmpop*'
+            return "operator*"
+    if field_name in ["ctx"]:
+        return "expr_context"
+    if field_name in ["boolop"]:
+        return "boolop"
+    if field_name in ["unaryop"]:
+        return "unaryop"
+    if field_name in ["cmpop"]:
+        return "cmpop*"
 
     # Special cases
-    if field_name == 'kind':
-        return 'string?'
-    if field_name == 'n':
-        return 'constant'
-    if field_name == 's':
-        return 'constant'
-    if field_name in ['vararg', 'kwarg']:
-        return 'arg?'
+    if field_name == "kind":
+        return "string?"
+    if field_name == "n":
+        return "constant"
+    if field_name == "s":
+        return "constant"
+    if field_name in ["vararg", "kwarg"]:
+        return "arg?"
 
     # Default: try to infer from context
-    return 'unknown'
+    return "unknown"
 
 
 def get_usable_nodes() -> Dict[str, Dict[str, str]]:
@@ -206,10 +226,10 @@ def get_usable_nodes() -> Dict[str, Dict[str, str]]:
 
     # Nodes with complex inter-field dependencies or that cause frequent syntax errors
     excluded_nodes = {
-        'Raise',  # cause requires exc to be set
-        'Delete',  # requires valid delete targets (often generates invalid literals)
-        'Global',  # requires identifiers, not expressions
-        'Nonlocal',  # requires identifiers, not expressions
+        "Raise",  # cause requires exc to be set
+        "Delete",  # requires valid delete targets (often generates invalid literals)
+        "Global",  # requires identifiers, not expressions
+        "Nonlocal",  # requires identifiers, not expressions
     }
 
     for node_name, fields in all_nodes.items():
@@ -217,7 +237,7 @@ def get_usable_nodes() -> Dict[str, Dict[str, str]]:
         if node_name in excluded_nodes:
             continue
         # Skip nodes with unknown field types
-        if any(field_type == 'unknown' for field_type in fields.values()):
+        if any(field_type == "unknown" for field_type in fields.values()):
             continue
         usable_nodes[node_name] = fields
 
@@ -252,21 +272,21 @@ class ASTGenerator:
                 continue
 
             # Categorize by base class
-            if hasattr(obj, '__bases__'):
+            if hasattr(obj, "__bases__"):
                 bases = [b.__name__ for b in obj.__bases__]
-                if 'expr' in bases:
+                if "expr" in bases:
                     self.expr_nodes.append(name)
-                elif 'stmt' in bases:
+                elif "stmt" in bases:
                     self.stmt_nodes.append(name)
-                elif 'operator' in bases:
+                elif "operator" in bases:
                     self.operator_nodes.append(name)
-                elif 'boolop' in bases:
+                elif "boolop" in bases:
                     self.boolop_nodes.append(name)
-                elif 'unaryop' in bases:
+                elif "unaryop" in bases:
                     self.unaryop_nodes.append(name)
-                elif 'cmpop' in bases:
+                elif "cmpop" in bases:
                     self.cmpop_nodes.append(name)
-                elif 'expr_context' in bases:
+                elif "expr_context" in bases:
                     self.expr_context_nodes.append(name)
 
     def consume_energy(self, amount: int = 1) -> bool:
@@ -282,9 +302,9 @@ class ASTGenerator:
         """Generate a random valid Python identifier."""
         if not self.consume_energy():
             return None
-        letters = 'abcdefghijklmnopqrstuvwxyz'
+        letters = "abcdefghijklmnopqrstuvwxyz"
         length = self.rng.randint(1, 8)
-        return ''.join(self.rng.choice(letters) for _ in range(length))
+        return "".join(self.rng.choice(letters) for _ in range(length))
 
     def generate_constant(self) -> Any:
         """Generate a random constant value (for use in non-assignment contexts)."""
@@ -312,39 +332,45 @@ class ASTGenerator:
             return None
         return ast.Name(id=identifier, ctx=ast.Store())
 
-    def generate_field_value(self, field_type: str, depth: int, field_name: str = '') -> Any:
+    def generate_field_value(
+        self, field_type: str, depth: int, field_name: str = ""
+    ) -> Any:
         """Generate a value for a specific field type."""
         if not self.consume_energy():
             return None
 
         if depth >= self.max_depth:
             # At max depth, generate simple values only
-            if field_type == 'identifier':
+            if field_type == "identifier":
                 return self.generate_identifier()
-            elif field_type == 'identifier?':
+            elif field_type == "identifier?":
                 return None if self.rng.random() < 0.5 else self.generate_identifier()
-            elif field_type == 'int':
+            elif field_type == "int":
                 return self.rng.randint(0, 10)
-            elif field_type == 'constant':
+            elif field_type == "constant":
                 return self.generate_constant()
-            elif field_type in ['string', 'string?']:
-                return None if field_type == 'string?' and self.rng.random() < 0.5 else self.generate_identifier()
-            elif field_type in ['expr', 'stmt']:
+            elif field_type in ["string", "string?"]:
+                return (
+                    None
+                    if field_type == "string?" and self.rng.random() < 0.5
+                    else self.generate_identifier()
+                )
+            elif field_type in ["expr", "stmt"]:
                 # Return simplest possible node
                 return self.generate_simple_node(field_type)
-            elif field_type.endswith('*'):
+            elif field_type.endswith("*"):
                 return []
-            elif field_type.endswith('?'):
+            elif field_type.endswith("?"):
                 return None
             else:
                 return None
 
         # Regular generation
-        if field_type == 'identifier':
+        if field_type == "identifier":
             return self.generate_identifier()
-        elif field_type == 'identifier?':
+        elif field_type == "identifier?":
             return None if self.rng.random() < 0.5 else self.generate_identifier()
-        elif field_type == 'identifier*':
+        elif field_type == "identifier*":
             count = self.rng.randint(1, 2)
             ids = []
             for _ in range(count):
@@ -352,26 +378,30 @@ class ASTGenerator:
                 if id_val:
                     ids.append(id_val)
             return ids
-        elif field_type == 'int':
+        elif field_type == "int":
             return self.rng.randint(0, 10)
-        elif field_type == 'constant':
+        elif field_type == "constant":
             return self.generate_constant()
-        elif field_type == 'string':
+        elif field_type == "string":
             return self.generate_identifier()
-        elif field_type == 'string?':
+        elif field_type == "string?":
             return None if self.rng.random() < 0.5 else self.generate_identifier()
-        elif field_type == 'expr':
+        elif field_type == "expr":
             # Special case for assignment/loop targets
-            if field_name in ['target', 'targets']:
+            if field_name in ["target", "targets"]:
                 return self.generate_valid_target(depth)
             return self.generate_expr(depth + 1)
-        elif field_type == 'expr?':
+        elif field_type == "expr?":
             return None if self.rng.random() < 0.5 else self.generate_expr(depth + 1)
-        elif field_type == 'expr*':
+        elif field_type == "expr*":
             # Special case for assignment/delete targets
-            if field_name in ['targets']:
+            if field_name in ["targets"]:
                 count = self.rng.randint(1, 2)
-                return [self.generate_valid_target(depth + 1) for _ in range(count) if self.consume_energy()]
+                return [
+                    self.generate_valid_target(depth + 1)
+                    for _ in range(count)
+                    if self.consume_energy()
+                ]
             count = self.rng.randint(0, 2)
             exprs = []
             for _ in range(count):
@@ -379,9 +409,9 @@ class ASTGenerator:
                 if expr is not None:
                     exprs.append(expr)
             return exprs
-        elif field_type == 'stmt':
+        elif field_type == "stmt":
             return self.generate_stmt(depth + 1)
-        elif field_type == 'stmt*':
+        elif field_type == "stmt*":
             count = self.rng.randint(1, 3)
             stmts = []
             for _ in range(count):
@@ -389,21 +419,25 @@ class ASTGenerator:
                 if stmt is not None:
                     stmts.append(stmt)
             return stmts if stmts else [ast.Pass()]
-        elif field_type == 'operator':
+        elif field_type == "operator":
             return self.generate_operator()
-        elif field_type == 'operator*':
+        elif field_type == "operator*":
             count = self.rng.randint(1, 2)
-            return [self.generate_operator() for _ in range(count) if self.consume_energy()]
-        elif field_type == 'boolop':
+            return [
+                self.generate_operator() for _ in range(count) if self.consume_energy()
+            ]
+        elif field_type == "boolop":
             return self.generate_boolop()
-        elif field_type == 'unaryop':
+        elif field_type == "unaryop":
             return self.generate_unaryop()
-        elif field_type == 'cmpop*':
+        elif field_type == "cmpop*":
             count = self.rng.randint(1, 2)
-            return [self.generate_cmpop() for _ in range(count) if self.consume_energy()]
-        elif field_type == 'expr_context':
+            return [
+                self.generate_cmpop() for _ in range(count) if self.consume_energy()
+            ]
+        elif field_type == "expr_context":
             return self.generate_expr_context()
-        elif field_type == 'arg*':
+        elif field_type == "arg*":
             count = self.rng.randint(0, 2)
             args = []
             for _ in range(count):
@@ -411,11 +445,11 @@ class ASTGenerator:
                 if arg:
                     args.append(arg)
             return args
-        elif field_type == 'arg?':
+        elif field_type == "arg?":
             return None if self.rng.random() < 0.7 else self.generate_arg(depth + 1)
-        elif field_type == 'arguments':
+        elif field_type == "arguments":
             return self.generate_arguments(depth + 1)
-        elif field_type == 'alias*':
+        elif field_type == "alias*":
             count = self.rng.randint(1, 2)
             aliases = []
             for _ in range(count):
@@ -423,13 +457,21 @@ class ASTGenerator:
                 if alias:
                     aliases.append(alias)
             return aliases
-        elif field_type == 'excepthandler*':
+        elif field_type == "excepthandler*":
             count = self.rng.randint(1, 2)
-            return [self.generate_excepthandler(depth + 1) for _ in range(count) if self.consume_energy()]
-        elif field_type == 'withitem*':
+            return [
+                self.generate_excepthandler(depth + 1)
+                for _ in range(count)
+                if self.consume_energy()
+            ]
+        elif field_type == "withitem*":
             count = self.rng.randint(1, 2)
-            return [self.generate_withitem(depth + 1) for _ in range(count) if self.consume_energy()]
-        elif field_type == 'comprehension*':
+            return [
+                self.generate_withitem(depth + 1)
+                for _ in range(count)
+                if self.consume_energy()
+            ]
+        elif field_type == "comprehension*":
             comp = self.generate_comprehension(depth + 1)
             return [comp] if comp else []
         else:
@@ -437,9 +479,9 @@ class ASTGenerator:
 
     def generate_simple_node(self, node_type: str) -> ast.AST:
         """Generate simplest possible node of given type."""
-        if node_type == 'expr':
+        if node_type == "expr":
             return ast.Constant(value=42)
-        elif node_type == 'stmt':
+        elif node_type == "stmt":
             return ast.Pass()
         return ast.Constant(value=None)
 
@@ -449,7 +491,11 @@ class ASTGenerator:
             return None
         if depth >= self.max_depth or not self.expr_nodes:
             const_val = self.generate_constant()
-            return ast.Constant(value=const_val) if const_val is not None else ast.Constant(value=42)
+            return (
+                ast.Constant(value=const_val)
+                if const_val is not None
+                else ast.Constant(value=42)
+            )
 
         # Small chance to generate function composition or method chaining (only at low depth)
         if depth < 2 and self.rng.random() < 0.15:  # 15% chance
@@ -466,7 +512,7 @@ class ASTGenerator:
 
         # Prefer simpler expressions at higher depths
         if depth > 1:
-            simple_exprs = ['Constant', 'Name']
+            simple_exprs = ["Constant", "Name"]
             available = [n for n in simple_exprs if n in self.expr_nodes]
             if available:
                 node_name = self.rng.choice(available)
@@ -500,7 +546,7 @@ class ASTGenerator:
             outer_func = ast.Attribute(
                 value=ast.Name(id=obj_name, ctx=ast.Load()),
                 attr=attr_name,
-                ctx=ast.Load()
+                ctx=ast.Load(),
             )
 
         # Generate inner call
@@ -514,15 +560,11 @@ class ASTGenerator:
         inner_call = ast.Call(
             func=ast.Name(id=inner_func_name, ctx=ast.Load()),
             args=[inner_arg],
-            keywords=[]
+            keywords=[],
         )
 
         # Generate outer call with inner call as argument
-        return ast.Call(
-            func=outer_func,
-            args=[inner_call],
-            keywords=[]
-        )
+        return ast.Call(func=outer_func, args=[inner_call], keywords=[])
 
     def generate_method_chain(self, depth: int) -> Optional[ast.Call]:
         """
@@ -543,13 +585,9 @@ class ASTGenerator:
             return None
 
         first_call = ast.Call(
-            func=ast.Attribute(
-                value=base,
-                attr=method1_name,
-                ctx=ast.Load()
-            ),
+            func=ast.Attribute(value=base, attr=method1_name, ctx=ast.Load()),
             args=[],
-            keywords=[]
+            keywords=[],
         )
 
         # Possibly add a second method in the chain
@@ -559,13 +597,9 @@ class ASTGenerator:
                 return first_call
 
             second_call = ast.Call(
-                func=ast.Attribute(
-                    value=first_call,
-                    attr=method2_name,
-                    ctx=ast.Load()
-                ),
+                func=ast.Attribute(value=first_call, attr=method2_name, ctx=ast.Load()),
                 args=[],
-                keywords=[]
+                keywords=[],
             )
             return second_call
 
@@ -581,7 +615,7 @@ class ASTGenerator:
         # Prefer simpler statements at higher depths
         if depth > 1:
             # At higher depths, strongly prefer simple statements
-            simple_stmts = ['Pass', 'Expr']
+            simple_stmts = ["Pass", "Expr"]
             available = [n for n in simple_stmts if n in self.stmt_nodes]
             if available and self.rng.random() < 0.7:  # 70% chance to use simple stmt
                 node_name = self.rng.choice(available)
@@ -643,7 +677,7 @@ class ASTGenerator:
             kwonlyargs=[],
             kw_defaults=[],
             kwarg=None,
-            defaults=[]
+            defaults=[],
         )
 
     def generate_alias(self, depth: int) -> ast.alias:
@@ -652,17 +686,12 @@ class ASTGenerator:
 
     def generate_excepthandler(self, depth: int) -> ast.ExceptHandler:
         """Generate an exception handler."""
-        return ast.ExceptHandler(
-            type=None,
-            name=None,
-            body=[ast.Pass()]
-        )
+        return ast.ExceptHandler(type=None, name=None, body=[ast.Pass()])
 
     def generate_withitem(self, depth: int) -> ast.withitem:
         """Generate a with item."""
         return ast.withitem(
-            context_expr=self.generate_expr(depth + 1),
-            optional_vars=None
+            context_expr=self.generate_expr(depth + 1), optional_vars=None
         )
 
     def generate_comprehension(self, depth: int) -> Optional[ast.comprehension]:
@@ -673,12 +702,7 @@ class ASTGenerator:
         iter_expr = self.generate_expr(depth + 1)
         if target is None or iter_expr is None:
             return None
-        return ast.comprehension(
-            target=target,
-            iter=iter_expr,
-            ifs=[],
-            is_async=0
-        )
+        return ast.comprehension(target=target, iter=iter_expr, ifs=[], is_async=0)
 
     def generate_node(self, node_name: str, depth: int) -> Optional[ast.AST]:
         """Generate a specific AST node by name."""
@@ -686,9 +710,9 @@ class ASTGenerator:
             return None
 
         # Special handling for nodes with ordering constraints
-        if node_name == 'Try':
+        if node_name == "Try":
             return self.generate_try(depth)
-        elif node_name == 'TryStar':
+        elif node_name == "TryStar":
             return self.generate_try_star(depth)
 
         if node_name not in self.usable_nodes:
@@ -704,7 +728,9 @@ class ASTGenerator:
         # Generate values for all fields
         kwargs = {}
         for field_name, field_type in field_types.items():
-            kwargs[field_name] = self.generate_field_value(field_type, depth, field_name)
+            kwargs[field_name] = self.generate_field_value(
+                field_type, depth, field_name
+            )
 
         try:
             return node_class(**kwargs)
@@ -738,23 +764,19 @@ class ASTGenerator:
         # First generate handlers with types
         for i in range(num_handlers - 1):
             if self.consume_energy():
-                exc_type = self.generate_expr(depth + 1) if self.rng.random() < 0.7 else None
-                handler = ast.ExceptHandler(
-                    type=exc_type,
-                    name=None,
-                    body=[ast.Pass()]
+                exc_type = (
+                    self.generate_expr(depth + 1) if self.rng.random() < 0.7 else None
                 )
+                handler = ast.ExceptHandler(type=exc_type, name=None, body=[ast.Pass()])
                 handlers.append(handler)
 
         # Last handler - might be bare
         if self.consume_energy():
             # 30% chance for bare except as last handler
-            exc_type = None if self.rng.random() < 0.3 else self.generate_expr(depth + 1)
-            handler = ast.ExceptHandler(
-                type=exc_type,
-                name=None,
-                body=[ast.Pass()]
+            exc_type = (
+                None if self.rng.random() < 0.3 else self.generate_expr(depth + 1)
             )
+            handler = ast.ExceptHandler(type=exc_type, name=None, body=[ast.Pass()])
             handlers.append(handler)
 
         if not handlers:
@@ -773,12 +795,7 @@ class ASTGenerator:
             if final_stmt:
                 finalbody.append(final_stmt)
 
-        return ast.Try(
-            body=body,
-            handlers=handlers,
-            orelse=orelse,
-            finalbody=finalbody
-        )
+        return ast.Try(body=body, handlers=handlers, orelse=orelse, finalbody=finalbody)
 
     def generate_try_star(self, depth: int) -> Optional[ast.TryStar]:
         """Generate a TryStar node with properly ordered except handlers."""
@@ -803,23 +820,19 @@ class ASTGenerator:
         # First generate handlers with types
         for i in range(num_handlers - 1):
             if self.consume_energy():
-                exc_type = self.generate_expr(depth + 1) if self.rng.random() < 0.7 else None
-                handler = ast.ExceptHandler(
-                    type=exc_type,
-                    name=None,
-                    body=[ast.Pass()]
+                exc_type = (
+                    self.generate_expr(depth + 1) if self.rng.random() < 0.7 else None
                 )
+                handler = ast.ExceptHandler(type=exc_type, name=None, body=[ast.Pass()])
                 handlers.append(handler)
 
         # Last handler - might be bare
         if self.consume_energy():
             # 30% chance for bare except as last handler
-            exc_type = None if self.rng.random() < 0.3 else self.generate_expr(depth + 1)
-            handler = ast.ExceptHandler(
-                type=exc_type,
-                name=None,
-                body=[ast.Pass()]
+            exc_type = (
+                None if self.rng.random() < 0.3 else self.generate_expr(depth + 1)
             )
+            handler = ast.ExceptHandler(type=exc_type, name=None, body=[ast.Pass()])
             handlers.append(handler)
 
         if not handlers:
@@ -839,10 +852,7 @@ class ASTGenerator:
                 finalbody.append(final_stmt)
 
         return ast.TryStar(
-            body=body,
-            handlers=handlers,
-            orelse=orelse,
-            finalbody=finalbody
+            body=body, handlers=handlers, orelse=orelse, finalbody=finalbody
         )
 
     def generate_module(self) -> Optional[ast.Module]:
@@ -864,30 +874,30 @@ class ASTGenerator:
             if not self.consume_energy():
                 break
             # Choose between Import and ImportFrom
-            if self.rng.random() < 0.5 and 'Import' in self.usable_nodes:
-                import_stmt = self.generate_node('Import', 0)
+            if self.rng.random() < 0.5 and "Import" in self.usable_nodes:
+                import_stmt = self.generate_node("Import", 0)
                 if import_stmt:
                     body.append(import_stmt)
-            elif 'ImportFrom' in self.usable_nodes:
-                import_stmt = self.generate_node('ImportFrom', 0)
+            elif "ImportFrom" in self.usable_nodes:
+                import_stmt = self.generate_node("ImportFrom", 0)
                 if import_stmt:
                     body.append(import_stmt)
 
         # Optionally generate one FunctionDef or AsyncFunctionDef
         if self.rng.random() < 0.8:  # 80% chance to include a function
-            if self.rng.random() < 0.5 and 'FunctionDef' in self.usable_nodes:
+            if self.rng.random() < 0.5 and "FunctionDef" in self.usable_nodes:
                 func = self.generate_function_def(0)
                 if func:
                     body.append(func)
-            elif 'AsyncFunctionDef' in self.usable_nodes:
+            elif "AsyncFunctionDef" in self.usable_nodes:
                 func = self.generate_async_function_def(0)
                 if func:
                     body.append(func)
 
         # Ensure we have at least one import
         if not body:
-            if 'Import' in self.usable_nodes:
-                import_stmt = self.generate_node('Import', 0)
+            if "Import" in self.usable_nodes:
+                import_stmt = self.generate_node("Import", 0)
                 if import_stmt:
                     body.append(import_stmt)
             else:
@@ -933,7 +943,7 @@ class ASTGenerator:
             body=body_stmts,
             decorator_list=decorator_list,
             returns=None,
-            type_comment=None
+            type_comment=None,
         )
 
     def generate_async_function_def(self, depth: int) -> Optional[ast.AsyncFunctionDef]:
@@ -974,7 +984,7 @@ class ASTGenerator:
             body=body_stmts,
             decorator_list=decorator_list,
             returns=None,
-            type_comment=None
+            type_comment=None,
         )
 
 
@@ -1001,7 +1011,7 @@ def generate(seed: int, energy: Optional[int] = None) -> Optional[str]:
         code = ast.unparse(module)
         # Validate the generated code by trying to parse it
         try:
-            compile(code, '<generated>', 'exec')
+            compile(code, "<generated>", "exec")
             return code
         except SyntaxError:
             # Generated code has syntax errors, return None
@@ -1029,16 +1039,24 @@ def generate_field_type_mapping() -> str:
         for field_name, field_type in sorted(fields.items()):
             output.append(f"  {field_name}: {field_type}")
 
-    return '\n'.join(output)
+    return "\n".join(output)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description='Generate random Python AST code')
-    parser.add_argument('--seed', type=int, help='Random seed for deterministic generation')
-    parser.add_argument('--energy', type=int, help='Energy budget for generation (default: 1000)')
-    parser.add_argument('--mapping', action='store_true', help='Print field type mapping instead of generating code')
+    parser = argparse.ArgumentParser(description="Generate random Python AST code")
+    parser.add_argument(
+        "--seed", type=int, help="Random seed for deterministic generation"
+    )
+    parser.add_argument(
+        "--energy", type=int, help="Energy budget for generation (default: 1000)"
+    )
+    parser.add_argument(
+        "--mapping",
+        action="store_true",
+        help="Print field type mapping instead of generating code",
+    )
     args = parser.parse_args()
 
     if args.mapping:

@@ -10,6 +10,7 @@ Test Philosophy:
 - Assert: Check CLI output and/or files directly
 - Unit tests only for complex low-level aspects (AST, hashing, schema, migration)
 """
+
 import ast
 import subprocess
 import sys
@@ -23,9 +24,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import bb
 
 # Export fixtures and helpers
-__all__ = ['normalize_code_for_test', 'mock_bb_dir', 'sample_function_code',
-           'sample_function_file', 'sample_async_function_code', 'sample_async_function_file',
-           'cli_run', 'cli_runner']
+__all__ = [
+    "normalize_code_for_test",
+    "mock_bb_dir",
+    "sample_function_code",
+    "sample_function_file",
+    "sample_async_function_code",
+    "sample_async_function_file",
+    "cli_run",
+    "cli_runner",
+]
 
 
 def normalize_code_for_test(code: str) -> str:
@@ -57,7 +65,9 @@ def normalize_code_for_test(code: str) -> str:
     return ast.unparse(tree)
 
 
-def cli_run(args: list, env: dict = None, cwd: str = None) -> subprocess.CompletedProcess:
+def cli_run(
+    args: list, env: dict = None, cwd: str = None
+) -> subprocess.CompletedProcess:
     """
     Run bb.py CLI command.
 
@@ -76,19 +86,13 @@ def cli_run(args: list, env: dict = None, cwd: str = None) -> subprocess.Complet
     """
     import os
 
-    cmd = [sys.executable, str(Path(__file__).parent.parent / 'bb.py')] + args
+    cmd = [sys.executable, str(Path(__file__).parent.parent / "bb.py")] + args
 
     run_env = os.environ.copy()
     if env:
         run_env.update(env)
 
-    return subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        env=run_env,
-        cwd=cwd
-    )
+    return subprocess.run(cmd, capture_output=True, text=True, env=run_env, cwd=cwd)
 
 
 class CLIRunner:
@@ -102,10 +106,8 @@ class CLIRunner:
 
     def __init__(self, bb_dir: Path):
         self.bb_dir = bb_dir
-        self.pool_dir = bb_dir / 'pool'
-        self.env = {
-            'BB_DIRECTORY': str(bb_dir)
-        }
+        self.pool_dir = bb_dir / "pool"
+        self.env = {"BB_DIRECTORY": str(bb_dir)}
 
     def run(self, args: list, cwd: str = None) -> subprocess.CompletedProcess:
         """Run CLI command with this runner's bb directory."""
@@ -113,25 +115,25 @@ class CLIRunner:
 
     def add(self, file_path: str, lang: str) -> str:
         """Add a function and return its hash."""
-        result = self.run(['add', f'{file_path}@{lang}'])
+        result = self.run(["add", f"{file_path}@{lang}"])
         if result.returncode != 0:
             raise RuntimeError(f"add failed: {result.stderr}")
         # Extract hash from output
-        for line in result.stdout.split('\n'):
-            if 'Hash:' in line:
-                return line.split('Hash:')[1].strip()
+        for line in result.stdout.split("\n"):
+            if "Hash:" in line:
+                return line.split("Hash:")[1].strip()
         raise RuntimeError(f"Could not find hash in output: {result.stdout}")
 
     def show(self, hash_lang: str) -> str:
         """Show a function and return its code."""
-        result = self.run(['show', hash_lang])
+        result = self.run(["show", hash_lang])
         if result.returncode != 0:
             raise RuntimeError(f"show failed: {result.stderr}")
         return result.stdout
 
     def get(self, hash_lang: str) -> str:
         """Get a function and return its code."""
-        result = self.run(['get', hash_lang])
+        result = self.run(["get", hash_lang])
         if result.returncode != 0:
             raise RuntimeError(f"get failed: {result.stderr}")
         return result.stdout
@@ -148,8 +150,8 @@ def mock_bb_dir(tmp_path, monkeypatch):
         ├── pool/          # Pool directory
         └── config.json    # Configuration file
     """
-    base_dir = tmp_path / '.bb'
-    pool_dir = base_dir / 'pool'
+    base_dir = tmp_path / ".bb"
+    pool_dir = base_dir / "pool"
 
     def _get_temp_bb_dir():
         return base_dir
@@ -157,8 +159,8 @@ def mock_bb_dir(tmp_path, monkeypatch):
     def _get_temp_pool_dir():
         return pool_dir
 
-    monkeypatch.setattr(bb, 'storage_get_bb_directory', _get_temp_bb_dir)
-    monkeypatch.setattr(bb, 'storage_get_pool_directory', _get_temp_pool_dir)
+    monkeypatch.setattr(bb, "storage_get_bb_directory", _get_temp_bb_dir)
+    monkeypatch.setattr(bb, "storage_get_pool_directory", _get_temp_pool_dir)
     return tmp_path
 
 
@@ -173,8 +175,8 @@ def cli_runner(tmp_path):
         ├── pool/           # Pool directory
         └── config.json     # Configuration file
     """
-    bb_dir = tmp_path / '.bb'
-    pool_dir = bb_dir / 'pool'
+    bb_dir = tmp_path / ".bb"
+    pool_dir = bb_dir / "pool"
 
     pool_dir.mkdir(parents=True, exist_ok=True)
 
@@ -194,7 +196,7 @@ def sample_function_code():
 def sample_function_file(tmp_path, sample_function_code):
     """Create a temporary file with sample function code."""
     test_file = tmp_path / "sample.py"
-    test_file.write_text(sample_function_code, encoding='utf-8')
+    test_file.write_text(sample_function_code, encoding="utf-8")
     return test_file
 
 
@@ -211,5 +213,5 @@ def sample_async_function_code():
 def sample_async_function_file(tmp_path, sample_async_function_code):
     """Create a temporary file with sample async function code."""
     test_file = tmp_path / "async_sample.py"
-    test_file.write_text(sample_async_function_code, encoding='utf-8')
+    test_file.write_text(sample_async_function_code, encoding="utf-8")
     return test_file

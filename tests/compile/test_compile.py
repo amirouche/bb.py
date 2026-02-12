@@ -4,6 +4,7 @@ Tests for compilation functionality.
 Unit tests for dependency resolution and bundling (complex low-level aspects).
 Integration tests for CLI compile command error handling.
 """
+
 import pytest
 
 import bb
@@ -14,27 +15,28 @@ from tests.conftest import normalize_code_for_test
 # Integration tests for compile CLI command
 # =============================================================================
 
+
 def test_compile_debug_without_language_fails(cli_runner):
     """Test that compile --debug fails without language suffix"""
-    result = cli_runner.run(['compile', '--debug', 'a' * 64])
+    result = cli_runner.run(["compile", "--debug", "a" * 64])
 
     assert result.returncode != 0
-    assert '--debug requires language suffix' in result.stderr
+    assert "--debug requires language suffix" in result.stderr
 
 
 def test_compile_invalid_hash_format_fails(cli_runner):
     """Test that compile fails with invalid hash format"""
-    result = cli_runner.run(['compile', 'not-a-valid-hash@eng'])
+    result = cli_runner.run(["compile", "not-a-valid-hash@eng"])
 
     assert result.returncode != 0
-    assert 'Invalid hash format' in result.stderr
+    assert "Invalid hash format" in result.stderr
 
 
 def test_compile_nonexistent_function_fails(cli_runner):
     """Test that compile fails for nonexistent function"""
     fake_hash = "f" * 64
 
-    result = cli_runner.run(['compile', f'{fake_hash}@eng'])
+    result = cli_runner.run(["compile", f"{fake_hash}@eng"])
 
     assert result.returncode != 0
 
@@ -43,11 +45,11 @@ def test_compile_prepares_bundle(cli_runner, tmp_path):
     """Test that compile prepares the bundle directory before failing on Nuitka"""
     # Setup: Add a simple function
     test_file = tmp_path / "simple.py"
-    test_file.write_text('def answer(): return 42')
-    func_hash = cli_runner.add(str(test_file), 'eng')
+    test_file.write_text("def answer(): return 42")
+    func_hash = cli_runner.add(str(test_file), "eng")
 
     # Test: Run compile (will fail because Nuitka not installed)
-    result = cli_runner.run(['compile', f'{func_hash}@eng'])
+    result = cli_runner.run(["compile", f"{func_hash}@eng"])
 
     # Assert: Should fail on Nuitka, not on setup
     # If it gets to "Nuitka not found" or similar, the bundle prep succeeded
@@ -57,10 +59,10 @@ def test_compile_prepares_bundle(cli_runner, tmp_path):
 
 def test_compile_too_short_language_code_fails(cli_runner):
     """Test that compile fails with too short language code"""
-    result = cli_runner.run(['compile', 'a' * 64 + '@ab'])
+    result = cli_runner.run(["compile", "a" * 64 + "@ab"])
 
     assert result.returncode != 0
-    assert 'Language code must be 3-256 characters' in result.stderr
+    assert "Language code must be 3-256 characters" in result.stderr
 
 
 # =============================================================================
@@ -110,12 +112,15 @@ def _bb_v_0():
 # Unit tests for dependency resolution (complex low-level aspect)
 # =============================================================================
 
+
 def test_dependencies_resolve_no_deps(mock_bb_dir):
     """Test resolving dependencies for function with no deps"""
     func_hash = "nodeps01" + "0" * 56
     normalized_code = normalize_code_for_test("def _bb_v_0(): return 42")
 
-    bb.code_save(func_hash, "eng", normalized_code, "No deps", {"_bb_v_0": "answer"}, {})
+    bb.code_save(
+        func_hash, "eng", normalized_code, "No deps", {"_bb_v_0": "answer"}, {}
+    )
 
     deps = bb.code_resolve_dependencies(func_hash)
 
@@ -137,7 +142,14 @@ from bb.pool import object_{dep_hash}
 def _bb_v_0():
     return object_{dep_hash}._bb_v_0() * 2
 """)
-    bb.code_save(main_hash, "eng", main_code, "Main", {"_bb_v_0": "double_helper"}, {dep_hash: "helper"})
+    bb.code_save(
+        main_hash,
+        "eng",
+        main_code,
+        "Main",
+        {"_bb_v_0": "double_helper"},
+        {dep_hash: "helper"},
+    )
 
     deps = bb.code_resolve_dependencies(main_hash)
 
@@ -184,7 +196,9 @@ from bb.pool import object_{c_hash}
 def _bb_v_0():
     return object_{b_hash}._bb_v_0() + object_{c_hash}._bb_v_0()
 """)
-    bb.code_save(a_hash, "eng", a_code, "A", {"_bb_v_0": "a"}, {b_hash: "b", c_hash: "c"})
+    bb.code_save(
+        a_hash, "eng", a_code, "A", {"_bb_v_0": "a"}, {b_hash: "b", c_hash: "c"}
+    )
 
     deps = bb.code_resolve_dependencies(a_hash)
 
@@ -208,7 +222,14 @@ from bb.pool import object_{missing_hash}
 def _bb_v_0():
     return object_{missing_hash}._bb_v_0()
 """)
-    bb.code_save(main_hash, "eng", main_code, "Main with missing dep", {"_bb_v_0": "test"}, {missing_hash: "missing"})
+    bb.code_save(
+        main_hash,
+        "eng",
+        main_code,
+        "Main with missing dep",
+        {"_bb_v_0": "test"},
+        {missing_hash: "missing"},
+    )
 
     with pytest.raises(ValueError) as exc_info:
         bb.code_resolve_dependencies(main_hash)
@@ -254,11 +275,14 @@ def _bb_v_0():
 # Unit tests for bundling (complex low-level aspect)
 # =============================================================================
 
+
 def test_dependencies_bundle(mock_bb_dir, tmp_path):
     """Test bundling functions to output directory"""
     func_hash = "bundle01" + "0" * 56
     normalized_code = normalize_code_for_test("def _bb_v_0(): return 99")
-    bb.code_save(func_hash, "eng", normalized_code, "Bundle test", {"_bb_v_0": "test"}, {})
+    bb.code_save(
+        func_hash, "eng", normalized_code, "Bundle test", {"_bb_v_0": "test"}, {}
+    )
 
     output_dir = tmp_path / "bundle_output"
     result = bb.code_bundle_dependencies([func_hash], output_dir)
@@ -272,9 +296,10 @@ def test_dependencies_bundle(mock_bb_dir, tmp_path):
 # Unit tests for Nuitka command generation (complex low-level aspect)
 # =============================================================================
 
+
 def test_compile_get_nuitka_command_basic():
     """Test generating basic Nuitka command"""
-    cmd = bb.compile_get_nuitka_command("main.py", "myapp")
+    cmd = bb.command_compile_get_nuitka_command("main.py", "myapp")
 
     assert cmd[0] == "python3"
     assert cmd[1] == "-m"
@@ -288,7 +313,7 @@ def test_compile_get_nuitka_command_basic():
 
 def test_compile_get_nuitka_command_no_onefile():
     """Test generating Nuitka command without onefile"""
-    cmd = bb.compile_get_nuitka_command("main.py", "myapp", onefile=False)
+    cmd = bb.command_compile_get_nuitka_command("main.py", "myapp", onefile=False)
 
     assert "--standalone" in cmd
     assert "--onefile" not in cmd
@@ -298,7 +323,7 @@ def test_compile_get_nuitka_command_no_onefile():
 def test_compile_generate_runtime(tmp_path):
     """Test generating runtime module"""
     func_hash = "runtime1" + "0" * 56
-    runtime_dir = bb.compile_generate_runtime(func_hash, "eng", tmp_path)
+    runtime_dir = bb.command_compile_generate_runtime(func_hash, "eng", tmp_path)
 
     assert runtime_dir.exists()
     assert (runtime_dir / "__init__.py").exists()
@@ -314,6 +339,7 @@ def test_compile_generate_runtime(tmp_path):
 # Tests for --python mode
 # =============================================================================
 
+
 def test_compile_python_mode_creates_file(cli_runner, tmp_path):
     """Test that compile --python creates a main.py file"""
     import os
@@ -324,28 +350,28 @@ def test_compile_python_mode_creates_file(cli_runner, tmp_path):
     """Say hello"""
     return f"Hello, {name}!"
 ''')
-    func_hash = cli_runner.add(str(test_file), 'eng')
+    func_hash = cli_runner.add(str(test_file), "eng")
 
     # Test: Run compile with --python
     # Change to tmp_path so main.py is created there
     original_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
-        result = cli_runner.run(['compile', '--python', f'{func_hash}@eng'])
+        result = cli_runner.run(["compile", "--python", f"{func_hash}@eng"])
     finally:
         os.chdir(original_cwd)
 
     # Assert: Should succeed and create main.py
     assert result.returncode == 0
-    assert 'Python file created: main.py' in result.stdout
+    assert "Python file created: main.py" in result.stdout
 
-    main_py = tmp_path / 'main.py'
+    main_py = tmp_path / "main.py"
     assert main_py.exists()
 
     # Verify the content (without --debug, uses normalized names)
     content = main_py.read_text()
-    assert '#!/usr/bin/env python3' in content
-    assert 'def _bb_' in content  # Normalized function name
+    assert "#!/usr/bin/env python3" in content
+    assert "def _bb_" in content  # Normalized function name
     assert 'if __name__ == "__main__":' in content
 
 
@@ -361,28 +387,26 @@ def test_compile_python_mode_executable(cli_runner, tmp_path):
     """Double a number"""
     return x * 2
 ''')
-    func_hash = cli_runner.add(str(test_file), 'eng')
+    func_hash = cli_runner.add(str(test_file), "eng")
 
     # Compile with --python
     original_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
-        result = cli_runner.run(['compile', '--python', f'{func_hash}@eng'])
+        result = cli_runner.run(["compile", "--python", f"{func_hash}@eng"])
     finally:
         os.chdir(original_cwd)
 
     assert result.returncode == 0
 
     # Run the compiled file
-    main_py = tmp_path / 'main.py'
+    main_py = tmp_path / "main.py"
     run_result = subprocess.run(
-        [sys.executable, str(main_py), '21'],
-        capture_output=True,
-        text=True
+        [sys.executable, str(main_py), "21"], capture_output=True, text=True
     )
 
     assert run_result.returncode == 0
-    assert '42' in run_result.stdout
+    assert "42" in run_result.stdout
 
 
 def test_compile_generate_python(mock_bb_dir):
@@ -392,17 +416,21 @@ def test_compile_generate_python(mock_bb_dir):
     """Test function"""
     return 123
 ''')
-    bb.code_save(func_hash, "eng", normalized_code, "Test function", {"_bb_v_0": "test_func"}, {})
+    bb.code_save(
+        func_hash, "eng", normalized_code, "Test function", {"_bb_v_0": "test_func"}, {}
+    )
 
     # Without debug_mode, uses normalized names
-    python_code = bb.compile_generate_python(func_hash, "eng")
-    assert '#!/usr/bin/env python3' in python_code
-    assert 'def _bb_pytest01():' in python_code  # Normalized name
+    python_code = bb.command_compile_generate_python(func_hash, "eng")
+    assert "#!/usr/bin/env python3" in python_code
+    assert "def _bb_pytest01():" in python_code  # Normalized name
     assert 'if __name__ == "__main__":' in python_code
 
     # With debug_mode=True, uses human-readable names
-    python_code_debug = bb.compile_generate_python(func_hash, "eng", debug_mode=True)
-    assert 'def test_func():' in python_code_debug
+    python_code_debug = bb.command_compile_generate_python(
+        func_hash, "eng", debug_mode=True
+    )
+    assert "def test_func():" in python_code_debug
 
 
 def test_compile_recursive_function_no_debug(mock_bb_dir):
@@ -415,16 +443,22 @@ def test_compile_recursive_function_no_debug(mock_bb_dir):
         return 1
     return _bb_v_1 * _bb_v_0(_bb_v_1 - 1)
 ''')
-    bb.code_save(func_hash, "eng", normalized_code, "Calculate factorial",
-                 {"_bb_v_0": "factorial", "_bb_v_1": "n"}, {})
+    bb.code_save(
+        func_hash,
+        "eng",
+        normalized_code,
+        "Calculate factorial",
+        {"_bb_v_0": "factorial", "_bb_v_1": "n"},
+        {},
+    )
 
     # Without debug_mode, uses hash-based names
-    python_code = bb.compile_generate_python(func_hash, "eng")
+    python_code = bb.command_compile_generate_python(func_hash, "eng")
 
     # Both function definition AND recursive call should use the same name
-    assert 'def _bb_recursiv(' in python_code  # Function definition
-    assert '_bb_recursiv(_bb_v_1 - 1)' in python_code  # Recursive call renamed
-    assert '_bb_v_0' not in python_code  # No leftover _bb_v_0 references
+    assert "def _bb_recursiv(" in python_code  # Function definition
+    assert "_bb_recursiv(_bb_v_1 - 1)" in python_code  # Recursive call renamed
+    assert "_bb_v_0" not in python_code  # No leftover _bb_v_0 references
 
 
 def test_compile_recursive_function_debug_mode(mock_bb_dir):
@@ -437,13 +471,19 @@ def test_compile_recursive_function_debug_mode(mock_bb_dir):
         return 1
     return _bb_v_1 * _bb_v_0(_bb_v_1 - 1)
 ''')
-    bb.code_save(func_hash, "eng", normalized_code, "Calculate factorial",
-                 {"_bb_v_0": "factorial", "_bb_v_1": "n"}, {})
+    bb.code_save(
+        func_hash,
+        "eng",
+        normalized_code,
+        "Calculate factorial",
+        {"_bb_v_0": "factorial", "_bb_v_1": "n"},
+        {},
+    )
 
     # With debug_mode=True, uses human-readable names
-    python_code = bb.compile_generate_python(func_hash, "eng", debug_mode=True)
+    python_code = bb.command_compile_generate_python(func_hash, "eng", debug_mode=True)
 
     # Both function definition AND recursive call should use human-readable name
-    assert 'def factorial(' in python_code  # Function definition
-    assert 'factorial(n - 1)' in python_code  # Recursive call renamed
-    assert '_bb_v_0' not in python_code  # No leftover _bb_v_0 references
+    assert "def factorial(" in python_code  # Function definition
+    assert "factorial(n - 1)" in python_code  # Recursive call renamed
+    assert "_bb_v_0" not in python_code  # No leftover _bb_v_0 references

@@ -4,6 +4,7 @@ Tests for remote functionality.
 Unit tests for low-level git operations (URL parsing, type detection).
 Integration tests for CLI commands (remote add/list/remove/pull/push).
 """
+
 import json
 
 import pytest
@@ -15,6 +16,7 @@ from tests.conftest import normalize_code_for_test
 # =============================================================================
 # Unit tests for low-level git operations
 # =============================================================================
+
 
 def test_remote_type_detect_file():
     """Test detecting file:// remote type"""
@@ -28,7 +30,9 @@ def test_remote_type_detect_git_ssh():
 
 def test_remote_type_detect_git_https():
     """Test detecting git HTTPS remote type"""
-    assert bb.git_detect_remote_type("git+https://github.com/user/repo.git") == "git-https"
+    assert (
+        bb.git_detect_remote_type("git+https://github.com/user/repo.git") == "git-https"
+    )
 
 
 def test_remote_type_detect_git_file():
@@ -44,23 +48,23 @@ def test_remote_type_detect_unknown():
 def test_git_url_parse_ssh():
     """Test parsing SSH Git URL"""
     result = bb.git_url_parse("git@github.com:user/repo.git")
-    assert result['protocol'] == 'ssh'
-    assert result['host'] == 'github.com'
-    assert result['git_url'] == 'git@github.com:user/repo.git'
+    assert result["protocol"] == "ssh"
+    assert result["host"] == "github.com"
+    assert result["git_url"] == "git@github.com:user/repo.git"
 
 
 def test_git_url_parse_https():
     """Test parsing HTTPS Git URL"""
     result = bb.git_url_parse("git+https://github.com/user/repo.git")
-    assert result['protocol'] == 'https'
-    assert result['git_url'] == 'https://github.com/user/repo.git'
+    assert result["protocol"] == "https"
+    assert result["git_url"] == "https://github.com/user/repo.git"
 
 
 def test_git_url_parse_file():
     """Test parsing file Git URL"""
     result = bb.git_url_parse("git+file:///home/user/repo")
-    assert result['protocol'] == 'file'
-    assert result['git_url'] == 'file:///home/user/repo'
+    assert result["protocol"] == "file"
+    assert result["git_url"] == "file:///home/user/repo"
 
 
 def test_git_url_parse_invalid():
@@ -73,42 +77,45 @@ def test_git_url_parse_invalid():
 # Integration tests for remote CLI commands
 # =============================================================================
 
+
 def test_remote_add_file(cli_runner, tmp_path):
     """Test adding a file:// remote via CLI"""
     remote_path = tmp_path / "remote_pool"
     remote_path.mkdir()
 
-    result = cli_runner.run(['remote', 'add', 'local', f'file://{remote_path}'])
+    result = cli_runner.run(["remote", "add", "local", f"file://{remote_path}"])
 
     assert result.returncode == 0
-    assert 'Added remote' in result.stdout
-    assert 'local' in result.stdout
+    assert "Added remote" in result.stdout
+    assert "local" in result.stdout
 
 
 def test_remote_add_git_ssh(cli_runner):
     """Test adding a git SSH remote via CLI"""
-    result = cli_runner.run(['remote', 'add', 'origin', 'git@github.com:user/pool.git'])
+    result = cli_runner.run(["remote", "add", "origin", "git@github.com:user/pool.git"])
 
     assert result.returncode == 0
-    assert 'Added remote' in result.stdout
-    assert 'git-ssh' in result.stdout
+    assert "Added remote" in result.stdout
+    assert "git-ssh" in result.stdout
 
 
 def test_remote_add_git_https(cli_runner):
     """Test adding a git HTTPS remote via CLI"""
-    result = cli_runner.run(['remote', 'add', 'upstream', 'git+https://github.com/org/pool.git'])
+    result = cli_runner.run(
+        ["remote", "add", "upstream", "git+https://github.com/org/pool.git"]
+    )
 
     assert result.returncode == 0
-    assert 'Added remote' in result.stdout
-    assert 'git-https' in result.stdout
+    assert "Added remote" in result.stdout
+    assert "git-https" in result.stdout
 
 
 def test_remote_add_invalid_url_fails(cli_runner):
     """Test adding invalid URL format fails"""
-    result = cli_runner.run(['remote', 'add', 'bad', 'ftp://invalid'])
+    result = cli_runner.run(["remote", "add", "bad", "ftp://invalid"])
 
     assert result.returncode != 0
-    assert 'Invalid URL format' in result.stderr
+    assert "Invalid URL format" in result.stderr
 
 
 def test_remote_add_duplicate_fails(cli_runner, tmp_path):
@@ -116,19 +123,19 @@ def test_remote_add_duplicate_fails(cli_runner, tmp_path):
     remote_path = tmp_path / "remote"
     remote_path.mkdir()
 
-    cli_runner.run(['remote', 'add', 'dup', f'file://{remote_path}'])
-    result = cli_runner.run(['remote', 'add', 'dup', f'file://{remote_path}'])
+    cli_runner.run(["remote", "add", "dup", f"file://{remote_path}"])
+    result = cli_runner.run(["remote", "add", "dup", f"file://{remote_path}"])
 
     assert result.returncode != 0
-    assert 'already exists' in result.stderr
+    assert "already exists" in result.stderr
 
 
 def test_remote_list_empty(cli_runner):
     """Test listing remotes when none configured"""
-    result = cli_runner.run(['remote', 'list'])
+    result = cli_runner.run(["remote", "list"])
 
     assert result.returncode == 0
-    assert 'No remotes configured' in result.stdout
+    assert "No remotes configured" in result.stdout
 
 
 def test_remote_list_shows_remotes(cli_runner, tmp_path):
@@ -136,11 +143,11 @@ def test_remote_list_shows_remotes(cli_runner, tmp_path):
     remote_path = tmp_path / "remote"
     remote_path.mkdir()
 
-    cli_runner.run(['remote', 'add', 'myremote', f'file://{remote_path}'])
-    result = cli_runner.run(['remote', 'list'])
+    cli_runner.run(["remote", "add", "myremote", f"file://{remote_path}"])
+    result = cli_runner.run(["remote", "list"])
 
     assert result.returncode == 0
-    assert 'myremote' in result.stdout
+    assert "myremote" in result.stdout
 
 
 def test_remote_remove(cli_runner, tmp_path):
@@ -148,19 +155,19 @@ def test_remote_remove(cli_runner, tmp_path):
     remote_path = tmp_path / "remote"
     remote_path.mkdir()
 
-    cli_runner.run(['remote', 'add', 'toremove', f'file://{remote_path}'])
-    result = cli_runner.run(['remote', 'remove', 'toremove'])
+    cli_runner.run(["remote", "add", "toremove", f"file://{remote_path}"])
+    result = cli_runner.run(["remote", "remove", "toremove"])
 
     assert result.returncode == 0
-    assert 'Removed remote' in result.stdout
+    assert "Removed remote" in result.stdout
 
 
 def test_remote_remove_nonexistent_fails(cli_runner):
     """Test removing nonexistent remote fails"""
-    result = cli_runner.run(['remote', 'remove', 'doesnotexist'])
+    result = cli_runner.run(["remote", "remove", "doesnotexist"])
 
     assert result.returncode != 0
-    assert 'not found' in result.stderr
+    assert "not found" in result.stderr
 
 
 def test_remote_pull_file(cli_runner, tmp_path):
@@ -168,60 +175,68 @@ def test_remote_pull_file(cli_runner, tmp_path):
     # Setup: Create remote pool with a function (structure: remote_pool/XX/YYYY.../object.json)
     remote_pool = tmp_path / "remote_pool"
     remote_pool.mkdir()
-    remote_objects = remote_pool / "ab"  # No 'pool' subdirectory - git dir has XX/YYYY structure
+    remote_objects = (
+        remote_pool / "ab"
+    )  # No 'pool' subdirectory - git dir has XX/YYYY structure
     remote_objects.mkdir(parents=True)
 
     # Create a minimal v1 function with all required fields
     # Hash is 64 hex chars: prefix (2) + rest (62)
     func_hash = "ab" + "0" * 62  # 64 chars total
-    func_dir = remote_objects / ("0" * 62)  # Directory is remaining 62 chars after prefix
+    func_dir = remote_objects / (
+        "0" * 62
+    )  # Directory is remaining 62 chars after prefix
     func_dir.mkdir()
-    (func_dir / "object.json").write_text(json.dumps({
-        "schema_version": 1,
-        "hash": func_hash,
-        "normalized_code": normalize_code_for_test("def _bb_v_0(): pass"),
-        "metadata": {"created": "2025-01-01T00:00:00Z", "author": "test"}
-    }))
+    (func_dir / "object.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "hash": func_hash,
+                "normalized_code": normalize_code_for_test("def _bb_v_0(): pass"),
+                "metadata": {"created": "2025-01-01T00:00:00Z", "author": "test"},
+            }
+        )
+    )
 
     # Add remote and pull
-    cli_runner.run(['remote', 'add', 'source', f'file://{remote_pool}'])
-    result = cli_runner.run(['remote', 'pull', 'source'])
+    cli_runner.run(["remote", "add", "source", f"file://{remote_pool}"])
+    result = cli_runner.run(["remote", "pull", "source"])
 
     assert result.returncode == 0
-    assert 'Pulling from remote' in result.stdout
+    assert "Pulling from remote" in result.stdout
 
 
 def test_remote_push_file(cli_runner, tmp_path):
     """Test pushing to file:// remote"""
     # Setup: Add a function to local pool
     test_file = tmp_path / "func.py"
-    test_file.write_text('def foo(): pass')
-    func_hash = cli_runner.add(str(test_file), 'eng')
+    test_file.write_text("def foo(): pass")
+    func_hash = cli_runner.add(str(test_file), "eng")
 
     # Commit the function to git directory
-    result = cli_runner.run(['commit', func_hash, '--comment', 'test'])
+    result = cli_runner.run(["commit", func_hash, "--comment", "test"])
     assert result.returncode == 0
 
     # Create remote and push
     remote_pool = tmp_path / "remote_pool"
-    cli_runner.run(['remote', 'add', 'dest', f'file://{remote_pool}'])
-    result = cli_runner.run(['remote', 'push', 'dest'])
+    cli_runner.run(["remote", "add", "dest", f"file://{remote_pool}"])
+    result = cli_runner.run(["remote", "push", "dest"])
 
     assert result.returncode == 0
-    assert 'Pushing to remote' in result.stdout
+    assert "Pushing to remote" in result.stdout
 
 
 def test_remote_pull_nonexistent_fails(cli_runner):
     """Test pulling from nonexistent remote fails"""
-    result = cli_runner.run(['remote', 'pull', 'noremote'])
+    result = cli_runner.run(["remote", "pull", "noremote"])
 
     assert result.returncode != 0
-    assert 'not found' in result.stderr
+    assert "not found" in result.stderr
 
 
 def test_remote_push_nonexistent_fails(cli_runner):
     """Test pushing to nonexistent remote fails"""
-    result = cli_runner.run(['remote', 'push', 'noremote'])
+    result = cli_runner.run(["remote", "push", "noremote"])
 
     assert result.returncode != 0
-    assert 'not found' in result.stderr
+    assert "not found" in result.stderr

@@ -10,13 +10,13 @@ Learn by doing! Copy and paste these commands to see how bb works.
 
 ```bash
 # Add a simple function (English)
-python3 bb.py add examples/example_simple.py@eng
+python3 bb.py add doc/examples/example_simple.py@eng
 
 # Add the same function in French (same code, different docstring)
-python3 bb.py add examples/example_simple_french.py@fra
+python3 bb.py add doc/examples/example_simple_french.py@fra
 
 # Add the same function in Spanish (same code, different docstring)
-python3 bb.py add examples/example_simple_spanish.py@spa
+python3 bb.py add doc/examples/example_simple_spanish.py@spa
 ```
 
 **Expected output:**
@@ -98,7 +98,7 @@ find ~/.local/bb/objects -name "*.json"
 
 ```bash
 # Add a function that uses the standard library
-python3 bb.py add examples/example_with_import.py@fra
+python3 bb.py add doc/examples/example_with_import.py@fra
 ```
 
 The `show` command will reveal that imported names (like `Counter`) are NOT renamed:
@@ -111,7 +111,7 @@ python3 bb.py show <HASH>@fra
 
 ```bash
 # Add a function that calls another function from the pool
-python3 bb.py add examples/example_with_bb.py@spa
+python3 bb.py add doc/examples/example_with_bb.py@spa
 ```
 
 View it to see how bb handles function composition:
