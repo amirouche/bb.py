@@ -11,7 +11,11 @@ Beyond Babel is a function pool for Python where logic is identity. Functions wi
 ## Install
 
 ```bash
-pip install bb.py
+# Using pip
+pip install git+https://github.com/amirouche/bb.py.git
+
+# Using uv
+uv pip install git+https://github.com/amirouche/bb.py.git
 ```
 
 Requires Python 3.11+. No runtime dependencies.
