@@ -860,7 +860,7 @@ def test_mapping_compute_hash_canonical_json():
     assert hash1 == hash2
 
 
-def test_schema_detect_version_v1(mock_bb_dir):
+def test_schema_detect_version(mock_bb_dir):
     """Test that schema_detect_version correctly identifies v1 format"""
     pool_dir = mock_bb_dir / '.bb' / 'pool'
     test_hash = "abcd1234" + "0" * 56

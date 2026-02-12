@@ -129,12 +129,6 @@ class CLIRunner:
             raise RuntimeError(f"show failed: {result.stderr}")
         return result.stdout
 
-    def get(self, hash_lang: str) -> str:
-        """Get a function and return its code."""
-        result = self.run(['get', hash_lang])
-        if result.returncode != 0:
-            raise RuntimeError(f"get failed: {result.stderr}")
-        return result.stdout
 
 
 @pytest.fixture

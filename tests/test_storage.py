@@ -1,7 +1,7 @@
 """
-Tests for storage functions (Schema v1 write/read path).
+Tests for storage functions.
 
-Tests for saving and loading functions in v1 format.
+Tests for saving and loading functions.
 """
 import json
 
@@ -12,11 +12,11 @@ from tests.conftest import normalize_code_for_test
 
 
 # ============================================================================
-# Tests for V1 Write Path
+# Tests for Write Path
 # ============================================================================
 
-def test_function_save_v1_creates_object_json(mock_bb_dir):
-    """Test that function_save_v1 creates proper object.json"""
+def test_object_save_creates_object_json(mock_bb_dir):
+    """Test that object_save creates proper object.json"""
     test_hash = "abcd1234" + "0" * 56
     normalized_code = normalize_code_for_test("def _bb_v_0(): pass")
     metadata = {
@@ -25,7 +25,7 @@ def test_function_save_v1_creates_object_json(mock_bb_dir):
         'email': 'test@example.com'
     }
 
-    bb.code_save_v1(test_hash, normalized_code, metadata)
+    bb.object_save(test_hash, normalized_code, metadata)
 
     # Check that object.json was created
     pool_dir = mock_bb_dir / '.bb' / 'pool'
@@ -44,13 +44,13 @@ def test_function_save_v1_creates_object_json(mock_bb_dir):
     assert data['metadata'] == metadata
 
 
-def test_function_save_v1_no_language_data(mock_bb_dir):
-    """Test that function_save_v1 does NOT include language-specific data"""
+def test_object_save_no_language_data(mock_bb_dir):
+    """Test that object_save does NOT include language-specific data"""
     test_hash = "abcd1234" + "0" * 56
     normalized_code = normalize_code_for_test("def _bb_v_0(): pass")
     metadata = bb.code_create_metadata()
 
-    bb.code_save_v1(test_hash, normalized_code, metadata)
+    bb.object_save(test_hash, normalized_code, metadata)
 
     pool_dir = mock_bb_dir / '.bb' / 'pool'
     func_dir = pool_dir / test_hash[:2] / test_hash[2:]
@@ -65,8 +65,8 @@ def test_function_save_v1_no_language_data(mock_bb_dir):
     assert 'alias_mappings' not in data
 
 
-def test_mapping_save_v1_creates_mapping_json(mock_bb_dir):
-    """Test that mapping_save_v1 creates proper mapping.json"""
+def test_mapping_save_creates_mapping_json(mock_bb_dir):
+    """Test that mapping_save creates proper mapping.json"""
     func_hash = "abcd1234" + "0" * 56
     lang = "eng"
     docstring = "Test function"
@@ -77,10 +77,10 @@ def test_mapping_save_v1_creates_mapping_json(mock_bb_dir):
     # First create the function (object.json must exist)
     normalized_code = normalize_code_for_test("def _bb_v_0(): pass")
     metadata = bb.code_create_metadata()
-    bb.code_save_v1(func_hash, normalized_code, metadata)
+    bb.object_save(func_hash, normalized_code, metadata)
 
     # Now save the mapping
-    mapping_hash = bb.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
+    mapping_hash = bb.mapping_save(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
 
     # Check that mapping.json was created
     pool_dir = mock_bb_dir / '.bb' / 'pool'
@@ -100,8 +100,8 @@ def test_mapping_save_v1_creates_mapping_json(mock_bb_dir):
     assert data['comment'] == comment
 
 
-def test_mapping_save_v1_returns_hash(mock_bb_dir):
-    """Test that mapping_save_v1 returns the mapping hash"""
+def test_mapping_save_returns_hash(mock_bb_dir):
+    """Test that mapping_save returns the mapping hash"""
     func_hash = "abcd1234" + "0" * 56
     lang = "eng"
     docstring = "Test"
@@ -110,10 +110,10 @@ def test_mapping_save_v1_returns_hash(mock_bb_dir):
     comment = ""
 
     # Create function first
-    bb.code_save_v1(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
+    bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
 
     # Save mapping
-    mapping_hash = bb.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
+    mapping_hash = bb.mapping_save(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
 
     # Verify it's a valid hash
     assert len(mapping_hash) == 64
@@ -124,7 +124,7 @@ def test_mapping_save_v1_returns_hash(mock_bb_dir):
     assert mapping_hash == expected_hash
 
 
-def test_mapping_save_v1_deduplication(mock_bb_dir):
+def test_mapping_save_deduplication(mock_bb_dir):
     """Test that identical mappings share the same file (deduplication)"""
     func_hash1 = "aaaa" + "0" * 60
     func_hash2 = "bbbb" + "0" * 60
@@ -135,18 +135,18 @@ def test_mapping_save_v1_deduplication(mock_bb_dir):
     comment = "Same comment"
 
     # Create two different functions
-    bb.code_save_v1(func_hash1, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
-    bb.code_save_v1(func_hash2, normalize_code_for_test("def _bb_v_0(): return 42"), bb.code_create_metadata())
+    bb.object_save(func_hash1, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
+    bb.object_save(func_hash2, normalize_code_for_test("def _bb_v_0(): return 42"), bb.code_create_metadata())
 
     # Save identical mappings for both
-    mapping_hash1 = bb.mapping_save_v1(func_hash1, lang, docstring, name_mapping, alias_mapping, comment)
-    mapping_hash2 = bb.mapping_save_v1(func_hash2, lang, docstring, name_mapping, alias_mapping, comment)
+    mapping_hash1 = bb.mapping_save(func_hash1, lang, docstring, name_mapping, alias_mapping, comment)
+    mapping_hash2 = bb.mapping_save(func_hash2, lang, docstring, name_mapping, alias_mapping, comment)
 
     # Hashes should be identical
     assert mapping_hash1 == mapping_hash2
 
 
-def test_mapping_save_v1_different_comments_different_hashes(mock_bb_dir):
+def test_mapping_save_different_comments_different_hashes(mock_bb_dir):
     """Test that different comments produce different mapping hashes"""
     func_hash = "abcd1234" + "0" * 56
     lang = "eng"
@@ -155,18 +155,18 @@ def test_mapping_save_v1_different_comments_different_hashes(mock_bb_dir):
     alias_mapping = {}
 
     # Create function
-    bb.code_save_v1(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
+    bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
 
     # Save two mappings with different comments
-    hash1 = bb.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, "Formal")
-    hash2 = bb.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, "Informal")
+    hash1 = bb.mapping_save(func_hash, lang, docstring, name_mapping, alias_mapping, "Formal")
+    hash2 = bb.mapping_save(func_hash, lang, docstring, name_mapping, alias_mapping, "Informal")
 
     # Hashes should be different
     assert hash1 != hash2
 
 
-def test_v1_write_integration_full_structure(mock_bb_dir):
-    """Integration test: verify complete v1 directory structure"""
+def test_write_integration_full_structure(mock_bb_dir):
+    """Integration test: verify complete directory structure"""
     func_hash = "test1234" + "0" * 56
     normalized_code = normalize_code_for_test("def _bb_v_0(_bb_v_1): return _bb_v_1 * 2")
     metadata = {
@@ -178,10 +178,10 @@ def test_v1_write_integration_full_structure(mock_bb_dir):
     }
 
     # Save function
-    bb.code_save_v1(func_hash, normalized_code, metadata)
+    bb.object_save(func_hash, normalized_code, metadata)
 
     # Save mappings in two languages
-    eng_hash = bb.mapping_save_v1(
+    eng_hash = bb.mapping_save(
         func_hash, "eng",
         "Double the input",
         {"_bb_v_0": "double", "_bb_v_1": "value"},
@@ -189,7 +189,7 @@ def test_v1_write_integration_full_structure(mock_bb_dir):
         "Simple English"
     )
 
-    fra_hash = bb.mapping_save_v1(
+    fra_hash = bb.mapping_save(
         func_hash, "fra",
         "Doubler l'entrée",
         {"_bb_v_0": "doubler", "_bb_v_1": "valeur"},
@@ -214,11 +214,11 @@ def test_v1_write_integration_full_structure(mock_bb_dir):
 
 
 # ============================================================================
-# Tests for V1 Read Path
+# Tests for Read Path
 # ============================================================================
 
-def test_function_load_v1_loads_object_json(mock_bb_dir):
-    """Test that function_load_v1 loads object.json correctly"""
+def test_object_load_loads_object_json(mock_bb_dir):
+    """Test that object_load loads object.json correctly"""
     func_hash = "test5678" + "0" * 56
     normalized_code = normalize_code_for_test("def _bb_v_0(_bb_v_1): return _bb_v_1 * 2")
     metadata = {
@@ -230,10 +230,10 @@ def test_function_load_v1_loads_object_json(mock_bb_dir):
     }
 
     # Save function first
-    bb.code_save_v1(func_hash, normalized_code, metadata)
+    bb.object_save(func_hash, normalized_code, metadata)
 
     # Load it back
-    loaded_data = bb.code_load_v1(func_hash)
+    loaded_data = bb.object_load(func_hash)
 
     # Verify data
     assert loaded_data['schema_version'] == 1
@@ -242,8 +242,8 @@ def test_function_load_v1_loads_object_json(mock_bb_dir):
     assert loaded_data['metadata'] == metadata
 
 
-def test_mappings_list_v1_single_mapping(mock_bb_dir):
-    """Test that mappings_list_v1 returns single mapping correctly"""
+def test_mappings_list_single_mapping(mock_bb_dir):
+    """Test that mappings_list returns single mapping correctly"""
     func_hash = "list1234" + "0" * 56
     lang = "eng"
     docstring = "Test function"
@@ -252,11 +252,11 @@ def test_mappings_list_v1_single_mapping(mock_bb_dir):
     comment = "Test variant"
 
     # Create function and mapping
-    bb.code_save_v1(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
-    bb.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
+    bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
+    bb.mapping_save(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
 
     # List mappings
-    mappings = bb.mappings_list_v1(func_hash, lang)
+    mappings = bb.mappings_list(func_hash, lang)
 
     # Should have exactly one mapping
     assert len(mappings) == 1
@@ -265,20 +265,20 @@ def test_mappings_list_v1_single_mapping(mock_bb_dir):
     assert mapping_comment == comment
 
 
-def test_mappings_list_v1_multiple_mappings(mock_bb_dir):
-    """Test that mappings_list_v1 returns multiple mappings"""
+def test_mappings_list_multiple_mappings(mock_bb_dir):
+    """Test that mappings_list returns multiple mappings"""
     func_hash = "list5678" + "0" * 56
     lang = "eng"
 
     # Create function
-    bb.code_save_v1(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
+    bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
 
     # Add two mappings with different comments
-    bb.mapping_save_v1(func_hash, lang, "Doc 1", {"_bb_v_0": "func1"}, {}, "Formal")
-    bb.mapping_save_v1(func_hash, lang, "Doc 2", {"_bb_v_0": "func2"}, {}, "Casual")
+    bb.mapping_save(func_hash, lang, "Doc 1", {"_bb_v_0": "func1"}, {}, "Formal")
+    bb.mapping_save(func_hash, lang, "Doc 2", {"_bb_v_0": "func2"}, {}, "Casual")
 
     # List mappings
-    mappings = bb.mappings_list_v1(func_hash, lang)
+    mappings = bb.mappings_list(func_hash, lang)
 
     # Should have two mappings
     assert len(mappings) == 2
@@ -289,22 +289,22 @@ def test_mappings_list_v1_multiple_mappings(mock_bb_dir):
     assert "Casual" in comments
 
 
-def test_mappings_list_v1_no_mappings(mock_bb_dir):
-    """Test that mappings_list_v1 returns empty list when no mappings exist"""
+def test_mappings_list_no_mappings(mock_bb_dir):
+    """Test that mappings_list returns empty list when no mappings exist"""
     func_hash = "nomaps12" + "0" * 56
 
     # Create function without any mappings
-    bb.code_save_v1(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
+    bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
 
     # List mappings for a language that doesn't exist
-    mappings = bb.mappings_list_v1(func_hash, "fra")
+    mappings = bb.mappings_list(func_hash, "fra")
 
     # Should be empty
     assert len(mappings) == 0
 
 
-def test_mapping_load_v1_loads_correctly(mock_bb_dir):
-    """Test that mapping_load_v1 loads a specific mapping"""
+def test_mapping_load_loads_correctly(mock_bb_dir):
+    """Test that mapping_load loads a specific mapping"""
     func_hash = "load1234" + "0" * 56
     lang = "eng"
     docstring = "Test docstring"
@@ -313,11 +313,11 @@ def test_mapping_load_v1_loads_correctly(mock_bb_dir):
     comment = "Test variant"
 
     # Create function and mapping
-    bb.code_save_v1(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
-    mapping_hash = bb.mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
+    bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
+    mapping_hash = bb.mapping_save(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
 
     # Load the mapping
-    loaded_doc, loaded_name, loaded_alias, loaded_comment = bb.mapping_load_v1(func_hash, lang, mapping_hash)
+    loaded_doc, loaded_name, loaded_alias, loaded_comment = bb.mapping_load(func_hash, lang, mapping_hash)
 
     # Verify data
     assert loaded_doc == docstring
@@ -326,8 +326,8 @@ def test_mapping_load_v1_loads_correctly(mock_bb_dir):
     assert loaded_comment == comment
 
 
-def test_function_load_v1_integration(mock_bb_dir):
-    """Integration test: write v1, read v1, verify correctness"""
+def test_function_load_integration(mock_bb_dir):
+    """Integration test: write, read, verify correctness"""
     func_hash = "integ123" + "0" * 56
     lang = "eng"
     normalized_code = normalize_code_for_test("def _bb_v_0(_bb_v_1): return _bb_v_1 + 1")
@@ -336,10 +336,10 @@ def test_function_load_v1_integration(mock_bb_dir):
     alias_mapping = {}
     comment = "Simple increment"
 
-    # Write v1 format
+    # Write function
     bb.code_save(func_hash, lang, normalized_code, docstring, name_mapping, alias_mapping, comment)
 
-    # Read back using dispatch (should detect v1)
+    # Read back
     loaded_code, loaded_name, loaded_alias, loaded_doc = bb.code_load(func_hash, lang)
 
     # Verify correctness
@@ -356,9 +356,9 @@ def test_function_load_dispatch_multiple_mappings(mock_bb_dir):
     normalized_code = normalize_code_for_test("def _bb_v_0(): pass")
 
     # Create function with two mappings
-    bb.code_save_v1(func_hash, normalized_code, bb.code_create_metadata())
-    hash1 = bb.mapping_save_v1(func_hash, lang, "Doc 1", {"_bb_v_0": "func1"}, {}, "First")
-    hash2 = bb.mapping_save_v1(func_hash, lang, "Doc 2", {"_bb_v_0": "func2"}, {}, "Second")
+    bb.object_save(func_hash, normalized_code, bb.code_create_metadata())
+    hash1 = bb.mapping_save(func_hash, lang, "Doc 1", {"_bb_v_0": "func1"}, {}, "First")
+    hash2 = bb.mapping_save(func_hash, lang, "Doc 2", {"_bb_v_0": "func2"}, {}, "Second")
 
     # Load without specifying mapping_hash (should return first alphabetically)
     loaded_code, loaded_name, loaded_alias, loaded_doc = bb.code_load(func_hash, lang)
@@ -376,9 +376,9 @@ def test_function_load_dispatch_explicit_mapping(mock_bb_dir):
     normalized_code = normalize_code_for_test("def _bb_v_0(): pass")
 
     # Create function with two mappings
-    bb.code_save_v1(func_hash, normalized_code, bb.code_create_metadata())
-    hash1 = bb.mapping_save_v1(func_hash, lang, "Doc 1", {"_bb_v_0": "func1"}, {}, "First")
-    hash2 = bb.mapping_save_v1(func_hash, lang, "Doc 2", {"_bb_v_0": "func2"}, {}, "Second")
+    bb.object_save(func_hash, normalized_code, bb.code_create_metadata())
+    hash1 = bb.mapping_save(func_hash, lang, "Doc 1", {"_bb_v_0": "func1"}, {}, "First")
+    hash2 = bb.mapping_save(func_hash, lang, "Doc 2", {"_bb_v_0": "func2"}, {}, "Second")
 
     # Load with specific mapping_hash
     loaded_code, loaded_name, loaded_alias, loaded_doc = bb.code_load(func_hash, lang, mapping_hash=hash2)

@@ -1,0 +1,9 @@
+# refusing fog
+
+bb is a mirror that projects the math behind the the society, so that it can see itself. Content-addressing gives every piece of work a unique fingerprint — its hash. Timestamps prove when it was made. Together they make lineage visible: who made what, who built on whom, who absorbed whose work without credit. The mirror doesn't judge. It just shows.
+
+bb.py is a step toward that goal. It's a function pool where the same logic written in different human languages produces the same hash. A date formatter written in French and one written in English, if they do the same thing, share the same identity. No translation layer, no dominant language. Equivalence is structural, not claimed.
+
+What comes next is möbius — a clean-slate language built from roughly twenty primitives and one mechanism. Three surface syntaxes give it familiar entry points: recognizable enough to use, foreign enough to think differently in. Semantic search matches functions across human languages regardless of what tongue they were named in. Identity is opt-in: you prove priority if you want to, stay anonymous if you don't.
+
+Large language models absorbed the commons without preserving who made what. möbius rebuilds the lineage. The mirror doesn't prescribe norms or enforce justice. It refuses amnesia, and fog.

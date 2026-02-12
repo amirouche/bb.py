@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A function pool manager for Python that enables multilingual function sharing through AST normalization"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 authors = [
     {name = "Amirouche Boubekki"}
 ]
@@ -19,10 +19,10 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
@@ -42,3 +42,10 @@ dev = [
 
 [tool.setuptools]
 py-modules = ["bb"]
+
+[dependency-groups]
+dev = [
+    "coverage>=7.10.7",
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+]
