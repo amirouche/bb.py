@@ -1,5 +1,21 @@
 # Skills for Developing bb
 
+## Learning bb Features
+
+Use `bb skills` to generate comprehensive AI-readable reference documentation:
+
+```bash
+bb skills
+```
+
+This command outputs all CLI commands, their arguments, and usage patterns in a structured format optimized for AI assistants (like Claude). The output includes:
+- Complete command reference with all subcommands
+- Argument specifications and constraints
+- Help text and descriptions
+- Current implementation status
+
+**Use case**: When Claude (or another AI assistant) needs to understand what bb can do, run `bb skills` and share the output to provide complete context about available features.
+
 ## Makefile Targets
 
 - `make help` — list all targets
