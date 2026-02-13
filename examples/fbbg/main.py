@@ -1,23 +1,27 @@
 #!/usr/bin/env python3
 """
-Compiled bb function: 239e1a42e5653fb780211f0df5b27df1488c891807b1c7cdad5c64194627b76c
+Compiled bb function: 464cd548bd8788d4a7467e4b57c584d1ccc7c5eee5be207e5a9b1babede82bc9
 """
 
 from datetime import datetime
 from pathlib import Path
 from xml.dom import minidom
 from xml.etree.ElementTree import Element, SubElement, tostring
+import html
 import re
 
 
-def html_markup_fragment_d3f87c4a(text):
+def html_markup_fragment_04bd5cd6(text):
     """Convert simple markdown to HTML with proper paragraph support.
 
 Supports:
 - Headings: # h1, ## h2, ### h3, #### h4, ##### h5
 - Bold: **bold text**
 - Italic: *italic text*
+- Inline code: `code`
+- Code fences: ```code block```
 - Links: [text](url)
+- Horizontal rules: ---
 - Paragraphs: Text blocks separated by blank lines
 
 Args:
@@ -40,12 +44,32 @@ Examples:
     '<h2>Section</h2>\\n<p>Some <strong>important</strong> content.</p>'
 
     >>> html_markup_fragment("First paragraph.\\n\\nSecond paragraph.")
-    '<p>First paragraph.</p>\\n<p>Second paragraph.</p>'"""
+    '<p>First paragraph.</p>\\n<p>Second paragraph.</p>'
+
+    >>> html_markup_fragment("Code:\\n\\n```\\necho hello\\n```")
+    '<p>Code:</p>\\n<pre><code>echo hello</code></pre>'"""
+    code_blocks = {}
+
+    def store_code_block(match):
+        lang = match.group(1) or ''
+        code = match.group(2)
+        placeholder = f'__CODE_FENCE_{len(code_blocks)}__'
+        code_blocks[placeholder] = code
+        return '\n\n' + placeholder + '\n\n'
+    text = re.sub('```([a-z]*)\\n(.*?)\\n```', store_code_block, text, flags=re.DOTALL)
     blocks = text.split('\n\n')
     result = []
     for block in blocks:
         block = block.strip()
         if not block:
+            continue
+        if block.startswith('__CODE_FENCE_') and block in code_blocks:
+            code = code_blocks[block]
+            escaped_code = html.escape(code)
+            result.append(f'<pre><code>{escaped_code}</code></pre>')
+            continue
+        if block == '---':
+            result.append('<hr/>')
             continue
         heading_match = re.match('^(#{1,5})\\s+(.+)$', block, re.DOTALL)
         if heading_match:
@@ -154,7 +178,7 @@ Examples:
     return '\n'.join(lines)
 
 
-def fbbg_239e1a42(www_dir, base_url='https://example.com'):
+def fbbg_464cd548(www_dir, base_url='https://example.com'):
     """Generate HTML files and RSS feeds from markdown files in www directory.
 
 Recursively processes all .md files in www/{{lang}}/{{year}}/{{month}}/
@@ -195,7 +219,7 @@ Examples:
     for md_file in www_path.rglob('*.md'):
         try:
             content = md_file.read_text(encoding='utf-8')
-            html_body = html_markup_fragment_d3f87c4a(content)
+            html_body = html_markup_fragment_04bd5cd6(content)
             title_match = re.search('<h1>([^<]+)</h1>', html_body)
             title = title_match.group(1) if title_match else 'Untitled'
             parts = md_file.parts
@@ -264,7 +288,7 @@ Examples:
 
 if __name__ == "__main__":
     import sys
-    # Entry point: fbbg_239e1a42
+    # Entry point: fbbg_464cd548
     if len(sys.argv) > 1:
         args = []
         for arg in sys.argv[1:]:
@@ -275,7 +299,7 @@ if __name__ == "__main__":
                     args.append(float(arg))
                 except ValueError:
                     args.append(arg)
-        result = fbbg_239e1a42(*args)
+        result = fbbg_464cd548(*args)
         print(result)
     else:
         print(f"Usage: {sys.argv[0]} www_dir base_url")
