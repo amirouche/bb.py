@@ -111,6 +111,13 @@ class ASTNormalizer(ast.NodeTransformer):
         self.generic_visit(node)
         return node
 
+    def visit_ExceptHandler(self, node):
+        """Handle exception variable names in except clauses"""
+        if node.name and node.name in self.name_mapping:
+            node.name = self.name_mapping[node.name]
+        self.generic_visit(node)
+        return node
+
 
 def code_collect_names(tree: ast.Module) -> Set[str]:
     """Collect all names (variables, functions) used in the AST"""
@@ -276,6 +283,10 @@ def code_create_name_mapping(function_def: Union[ast.FunctionDef, ast.AsyncFunct
             if node.arg not in seen_names:
                 seen_names.add(node.arg)
                 all_names.append(node.arg)
+        elif isinstance(node, ast.ExceptHandler) and node.name and node.name not in imported_names and node.name not in PYTHON_BUILTINS and node.name not in bb_aliases:
+            if node.name not in seen_names:
+                seen_names.add(node.name)
+                all_names.append(node.name)
 
     # XXX: all_names: do not sort, keep the order ast traversal
     # discovery.
@@ -903,6 +914,13 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
         def visit_AsyncFunctionDef(self, node):
             # Replace normalized async function name
             if node.name in name_mapping:
+                node.name = name_mapping[node.name]
+            self.generic_visit(node)
+            return node
+
+        def visit_ExceptHandler(self, node):
+            # Replace normalized exception variable name
+            if node.name and node.name in name_mapping:
                 node.name = name_mapping[node.name]
             self.generic_visit(node)
             return node
@@ -4191,6 +4209,12 @@ def code_denormalize(normalized_code: str, name_mapping: dict, alias_mapping: di
 
         def visit_AsyncFunctionDef(self, node):
             if node.name in name_mapping:
+                node.name = name_mapping[node.name]
+            self.generic_visit(node)
+            return node
+
+        def visit_ExceptHandler(self, node):
+            if node.name and node.name in name_mapping:
                 node.name = name_mapping[node.name]
             self.generic_visit(node)
             return node
