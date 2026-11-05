@@ -691,7 +691,7 @@ def command_init():
     else:
         config = {
             'user': {
-                'username': os.environ.get('USER', os.environ.get('USERNAME', '')),
+                'name': os.environ.get('USER', os.environ.get('USERNAME', '')),
                 'email': '',
                 'public_key': '',
                 'languages': ['eng']
