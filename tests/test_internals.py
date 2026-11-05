@@ -1223,24 +1223,16 @@ def test_review_require_refuses_unreviewed_code(mock_bb_dir, capsys):
     bb.review_require(func, "run")  # no exit
 
 
-def test_validate_unreviewed_requires_ci(mock_bb_dir, monkeypatch, capsys):
-    """--unreviewed refuses to run outside CI, and runs everything inside it"""
+def test_validate_dangerously_unreviewed_runs_everything(mock_bb_dir, capsys):
+    """--dangerously-unreviewed runs unapproved checks, warns, and approves nothing"""
     check = _pool_add("def check_one(f):\n    return f() == 1\n")
     func = _pool_add("def one():\n    return 1\n", checks=[check])
 
-    monkeypatch.delenv('CI', raising=False)
-    with pytest.raises(SystemExit):
-        bb.command_validate_checks(unreviewed=True)
-    assert "disposable CI machine" in capsys.readouterr().err
+    bb.command_validate_checks()
+    assert "Not reviewed" in capsys.readouterr().out
 
-    monkeypatch.setenv('CI', 'false')
-    with pytest.raises(SystemExit):
-        bb.command_validate_checks(unreviewed=True)
-    capsys.readouterr()
-
-    monkeypatch.setenv('CI', 'true')
     bb.command_validate_checks(unreviewed=True)
     out = capsys.readouterr()
     assert f"one {func}" in out.out and "PASS check_one" in out.out
-    assert "without review" in out.err
-    assert bb.review_load_state() == set()  # nothing got approved along the way
+    assert "dangerously-unreviewed" in out.err
+    assert bb.review_load_state() == set()

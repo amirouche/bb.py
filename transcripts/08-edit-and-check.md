@@ -532,17 +532,14 @@ Error: 'compute_pi@eng' is ambiguous: it has 2 current versions. Use a hash:
 ### Step 15: CI runs what nobody reviewed yet
 Nobody read the second fork, so its checks do not run on this machine.
 A CI runner is different: it is thrown away after each job, so it may run
-every check. `--unreviewed` does that, but only where the `CI`
-environment variable is set; the job must hold no secrets and no write
-access.
+every check. `--dangerously-unreviewed` does that; the job must hold no
+secrets and no write access.
 
 ```bash
 $ bb validate --checks | tail -2
 Not reviewed, checks not run:
   compute_pi 166d4a9cdf95cc983e6d9bbc77a71512cc5877210d5a4453b2aa89791cba47e3 (1 to approve: bb review 166d4a9cdf95cc983e6d9bbc77a71512cc5877210d5a4453b2aa89791cba47e3)
-$ (env -u CI bb validate --checks --unreviewed 2>&1 || true) | head -1
-Error: --unreviewed runs code nobody approved. Only use it on a disposable CI machine,
-$ CI=true bb validate --checks --unreviewed 2>/dev/null | grep -c "5 checks: 5 passed"
+$ bb validate --checks --dangerously-unreviewed | grep -c "5 checks: 5 passed"
 3
 ```
 
@@ -556,7 +553,7 @@ $ CI=true bb validate --checks --unreviewed 2>/dev/null | grep -c "5 checks: 5 p
 | `bb edit ... -m "comment"` | Give the comment up front instead of being asked |
 | `bb review (name\|hash)@lang` | Read dependencies and checks first, then each function with its checks; run them, then approve |
 | `bb validate --checks [name\|hash]` | Run the checks of reviewed functions, one or the whole pool |
-| `bb validate --checks --unreviewed` | On a disposable CI machine (`CI=true`): run every check |
+| `bb validate --checks --dangerously-unreviewed` | On a disposable machine such as CI: run every check |
 
 ## Key Insights
 

@@ -3498,11 +3498,6 @@ def check_run_reviewed(func_hash: str, reviewed: set) -> Tuple[Optional[List[Tup
     return results, []
 
 
-def helper_is_ci() -> bool:
-    """True when the CI environment variable says we run on a CI machine."""
-    return os.environ.get('CI', '').strip().lower() not in ('', '0', 'false', 'no')
-
-
 def command_validate_checks(identifier: str = None, unreviewed: bool = False):
     """
     Run the checks of reviewed functions: one function, or the whole pool.
@@ -3512,18 +3507,12 @@ def command_validate_checks(identifier: str = None, unreviewed: bool = False):
     reviewed. Exits with status 1 when a check fails (or, for a single
     function, when it is not reviewed).
 
-    With --unreviewed, every check runs, approved or not. That is only
-    safe on a disposable machine with nothing worth stealing (no secrets,
-    no write access, a fresh runner), so it requires the CI environment
-    variable to be set.
+    With --dangerously-unreviewed, every check runs, approved or not. That
+    is only safe on a disposable machine with nothing worth stealing (no
+    secrets, no write access, a fresh runner), such as a CI job.
     """
-    if unreviewed and not helper_is_ci():
-        print("Error: --unreviewed runs code nobody approved. Only use it on a disposable CI machine,",
-              file=sys.stderr)
-        print("where the CI environment variable is set (CI=true).", file=sys.stderr)
-        sys.exit(1)
     if unreviewed:
-        print("Warning: running checks without review (--unreviewed). "
+        print("Warning: running checks nobody reviewed (--dangerously-unreviewed). "
               "This machine must have no secrets and no write access.", file=sys.stderr)
 
     reviewed = review_load_state()
@@ -4977,8 +4966,9 @@ def _build_parser():
     validate_parser.add_argument('identifier', nargs='?', help='Hash or name to validate (omit for whole directory)')
     validate_parser.add_argument('--checks', action='store_true',
                                  help='Run the checks of functions you approved with bb review')
-    validate_parser.add_argument('--unreviewed', action='store_true',
-                                 help='With --checks: run every check, approved or not (CI machines only, needs CI=true)')
+    validate_parser.add_argument('--dangerously-unreviewed', action='store_true',
+                                 help='With --checks: run every check, approved or not. Only on a disposable '
+                                      'machine without secrets, such as CI')
     validate_parser.add_argument('--all', '-a', action='store_true',
                                  help='Validate entire bb directory including pool and config')
 
@@ -5052,11 +5042,11 @@ def main():
         else:
             parser.parse_args([args.command, '--help'])
     elif args.command == 'validate':
-        if args.unreviewed and not args.checks:
-            print("Error: --unreviewed only applies to --checks", file=sys.stderr)
+        if args.dangerously_unreviewed and not args.checks:
+            print("Error: --dangerously-unreviewed only applies to --checks", file=sys.stderr)
             sys.exit(1)
         if args.checks:
-            command_validate_checks(args.identifier, unreviewed=args.unreviewed)
+            command_validate_checks(args.identifier, unreviewed=args.dangerously_unreviewed)
         elif args.all or not args.identifier:
             # Validate entire directory
             is_valid, errors, stats = schema_validate_directory()
