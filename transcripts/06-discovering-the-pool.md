@@ -298,7 +298,7 @@ def split_words(sentence):
 ```bash
 $ (bb add split_words_eng.py@eng 2>&1) | grep -v "^Hash\|^Mapping"
 Note: similar functions already exist; consider reusing or forking one:
-  80%  $TOK_HASH  tokenize
+  55%  $TOK_HASH  tokenize
 ```
 
 ---
@@ -314,7 +314,7 @@ Note: similar functions already exist; consider reusing or forking one:
 | `bb caller <hash>` | Find reverse dependencies | `tokenize` → 1 caller, `count_words` → 1 caller, `summarize_text` → 0 callers |
 | `bb search --untested/--unreviewed/--unused/--uses X/--diverged` | Architecture questions | 3 untested, `summarize_text` unused, `count_words` uses `tokenize` |
 | `... --json` | Output for agents | Names and dependency trees as JSON |
-| `bb add` near-copy note | Reuse before rewriting | `split_words` is 80% `tokenize` |
+| `bb add` near-copy note | Reuse before rewriting | `split_words` is 55% `tokenize` |
 
 ## Key Insights
 

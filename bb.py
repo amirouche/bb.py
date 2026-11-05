@@ -2797,30 +2797,70 @@ def code_add(file_path_with_lang: str, comment: str = ""):
     helper_report_similar(prepared['hash'])
 
 
+def code_shape_tokens(normalized_code: str) -> List[str]:
+    """
+    The shape of normalized code, as a sequence of tokens for comparison.
+
+    A pre-order walk of the AST emits node types (For, BinOp, Call,
+    Constant:int, Attribute.append...). Built-ins and imported names keep
+    their names: they carry meaning. Each use of a local variable becomes
+    the distance back to its previous use (var0 for a first use), in the
+    spirit of de Bruijn indices and Baker's parameterized matching: adding
+    a variable early does not shift every later one, as _bb_v_N numbering
+    would.
+    """
+    try:
+        tree = ast.parse(normalized_code)
+    except SyntaxError:
+        return []
+    tokens: List[str] = []
+    last_use: Dict[str, int] = {}
+
+    def visit(node):
+        if isinstance(node, ast.Name) and node.id.startswith('_bb_v_'):
+            position = len(tokens)
+            tokens.append(f"var{position - last_use[node.id]}" if node.id in last_use else "var0")
+            last_use[node.id] = position
+            return
+        if isinstance(node, ast.arg):
+            last_use[node.arg] = len(tokens)
+            tokens.append("arg")
+            return
+        label = type(node).__name__
+        if isinstance(node, ast.Constant):
+            label += f":{type(node.value).__name__}"
+        elif isinstance(node, ast.Name):
+            label += f":{node.id}"
+        elif isinstance(node, ast.Attribute):
+            label += f".{node.attr}"
+        tokens.append(label)
+        for child in ast.iter_child_nodes(node):
+            if not isinstance(child, ast.expr_context):
+                visit(child)
+
+    visit(tree)
+    return tokens
+
+
 def code_shingles(normalized_code: str, size: int = 3) -> Set[Tuple[str, ...]]:
     """
-    The token n-grams of normalized code, used to compare structure.
-
-    Names are already normalized (_bb_v_N), so two functions that differ
-    only in naming or language are identical here.
+    The n-grams of a function's shape (see code_shape_tokens), used to
+    compare structure. Names are normalized and variables are encoded by
+    distance, so naming, language and variable order do not matter.
     """
-    import tokenize as py_tokenize
-    skip = {py_tokenize.NEWLINE, py_tokenize.NL, py_tokenize.INDENT, py_tokenize.DEDENT,
-            py_tokenize.ENDMARKER, py_tokenize.COMMENT}
-    try:
-        tokens = [t.string for t in py_tokenize.generate_tokens(io.StringIO(normalized_code).readline)
-                  if t.type not in skip]
-    except (py_tokenize.TokenError, SyntaxError):
-        return set()
+    tokens = code_shape_tokens(normalized_code)
     return {tuple(tokens[i:i + size]) for i in range(max(1, len(tokens) - size + 1))}
 
 
 def code_find_similar(func_hash: str, exclude: Set[str] = None,
-                      threshold: float = 0.8, min_size: int = 10) -> List[Tuple[float, str]]:
+                      threshold: float = 0.4, min_size: int = 10) -> List[Tuple[float, str]]:
     """
     Find current functions whose structure is close to func_hash.
 
-    Similarity is the Jaccard index of token 3-grams of normalized code.
+    Similarity is the Jaccard index of 3-grams of the code's shape: AST
+    node types, with variables encoded by distance (see code_shape_tokens).
+    On the transcripts, small edits of a function score 0.48 to 0.88 and
+    unrelated functions or real rewrites at most 0.31, hence 0.4.
     Tiny functions (under min_size 3-grams) are never reported: they look
     alike by nature. Checks are left out on both sides for the same reason.
 

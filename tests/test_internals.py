@@ -1403,3 +1403,23 @@ def test_find_similar_reports_near_copies_only(mock_bb_dir):
     assert rewrite not in [h for _, h in bb.code_find_similar(original, {near_copy})]
     assert bb.code_find_similar(tiny_two) == []
     assert bb.code_find_similar(near_copy, exclude={original}) == []
+
+
+def test_shape_tokens_encode_variables_by_distance():
+    """Variables become distances to their previous use; built-ins keep their names"""
+    code = bb.code_normalize(ast.parse("def f(x):\n    y = len(x)\n    return y\n"), 'eng')[1]
+    tokens = bb.code_shape_tokens(code)
+    assert 'Name:len' in tokens
+    assert not any(t.startswith('_bb_v_') for t in tokens)
+    assert tokens.count('var0') == 1          # y's first use; x was bound as an argument
+    assert [t for t in tokens if t.startswith('var') and t != 'var0']   # later uses are distances
+
+
+def test_find_similar_survives_an_extra_early_variable(mock_bb_dir):
+    """Adding a variable at the top renumbers every _bb_v_N, but the shape stays close"""
+    loop = ("def compute_pi(n):\n    n = int(n)\n    result = 0.0\n    for i in range(n):\n"
+            "        result += ((-1) ** i) / (2 * i + 1)\n    return result * 4\n")
+    original = _pool_add(loop)
+    shifted = _pool_add(loop.replace("    n = int(n)\n", "    sign = 1\n    n = int(n)\n"))
+    [(score, found)] = bb.code_find_similar(shifted)
+    assert found == original and score >= 0.75
