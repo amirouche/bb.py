@@ -157,6 +157,8 @@ All hashes match!
 
 ### Step 7: Run with French identifiers
 ```bash
+# bb only runs or compiles code you have reviewed
+$ yes | bb review afficher_langue_du_feu@fra > /dev/null
 $ bb run afficher_langue_du_feu@fra bonjour
 bofonjofoufur
 ```
@@ -169,12 +171,16 @@ mefercifi befeafaufucofoufup
 
 ### Step 9: Run with Japanese identifiers (same French input!)
 ```bash
+# bb only runs or compiles code you have reviewed
+$ yes | bb review 火の言葉を表示@jpn > /dev/null
 $ bb run 火の言葉を表示@jpn bonjour
 bofonjofoufur
 ```
 
 ### Step 10: Run with Arabic identifiers (same French input!)
 ```bash
+# bb only runs or compiles code you have reviewed
+$ yes | bb review عرض_لغة_النار@ara > /dev/null
 $ bb run عرض_لغة_النار@ara salut
 safalufut
 ```

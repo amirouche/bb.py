@@ -1154,6 +1154,213 @@ def review_closure(func_hash: str) -> List[str]:
     return order
 
 
+def review_order(func_hash: str) -> List[List[str]]:
+    """
+    Order a review: breadth-first levels of the dependency order.
+
+    A function depends on what it imports and on its checks, so the
+    functions it imports, and each of its checks, are reviewed before it.
+    This holds for every function reached, dependencies included.
+
+    Returns:
+        Levels of hashes; every function comes after all it depends on.
+        Each level is sorted by hash so the order is stable.
+
+    Raises:
+        ValueError: If a function is missing from the pool, or on a cycle
+    """
+    requires: Dict[str, Set[str]] = {}
+    stack = [func_hash]
+    while stack:
+        current = stack.pop()
+        if current in requires:
+            continue
+        if code_detect_schema(current) is None:
+            raise ValueError(f"Function not in the local pool: {current}")
+        data = object_load(current)
+        requires[current] = set(code_extract_dependencies(data['normalized_code'])) | set(data.get('checks', []))
+        stack.extend(requires[current])
+
+    levels: List[List[str]] = []
+    done: Set[str] = set()
+    while len(done) < len(requires):
+        level = sorted(h for h, needed in requires.items() if h not in done and needed <= done)
+        if not level:
+            raise ValueError("Dependency cycle between functions and their checks: "
+                             + ', '.join(sorted(h[:12] for h in requires if h not in done)))
+        levels.append(level)
+        done.update(level)
+    return levels
+
+
+def review_render(func_hash: str, preferred_langs: List[str]) -> Optional[Tuple[str, str, str]]:
+    """
+    Render a function for reading, in the first preferred language it has,
+    otherwise in the first language it has: the code is readable either way.
+
+    Returns:
+        (name, lang, source), or None when the function has no mapping at all
+    """
+    available = storage_list_languages(func_hash)
+    for lang in [l for l in preferred_langs if l in available] + available:
+        if lang not in available:
+            continue
+        normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, lang)
+        source = code_denormalize(code_replace_docstring(normalized_code, docstring), name_mapping, alias_mapping)
+        return name_mapping.get('_bb_v_0', 'unknown'), lang, source
+    return None
+
+
+def review_ask(question: str) -> Optional[str]:
+    """Ask y/n/q; returns 'y', 'n', 'q', or None without input (EOF)."""
+    while True:
+        try:
+            response = input(f"{question} [y/n/q]: ").strip().lower()
+        except EOFError:
+            print()
+            return None
+        if response in ('y', 'n', 'q'):
+            return response
+        print("Invalid input. Please enter 'y', 'n', or 'q'.")
+
+
+def review_require(func_hash: str, action: str):
+    """
+    Exit with an error unless you approved a function and all its dependencies.
+
+    Used before running or compiling pool code: nothing runs unread.
+    """
+    missing = [h for h in code_resolve_dependencies(func_hash) if h not in review_load_state()]
+    if missing:
+        print(f"Error: Refusing to {action} code you have not reviewed "
+              f"({len(missing)} function(s) to approve).", file=sys.stderr)
+        print(f"Review it first: bb review {func_hash}", file=sys.stderr)
+        sys.exit(1)
+
+
+def command_review(identifier: str):
+    """
+    Read and approve a function, its dependencies and its checks.
+
+    Functions come in breadth-first levels of the dependency order: what a
+    function imports and its checks come before it, so each check that is
+    not approved yet is reviewed on its own first.
+
+    For each function: read its code and its checks' code, run the checks
+    if you want to (once everything they run is approved, except the
+    function you are reading), then approve the hash or not. Approvals are
+    remembered in a private state directory, outside the shared
+    $BB_DIRECTORY. Exits with status 1 when a check fails.
+    """
+    hash_value = helper_resolve_to_hash(identifier)
+
+    config = storage_read_config()
+    preferred_langs = config['user'].get('languages') or ['eng']
+
+    reviewed = review_load_state()
+
+    try:
+        order = [h for level in review_order(hash_value) for h in level]
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    to_review = [h for h in order if h not in reviewed]
+    failed = False
+
+    if not to_review:
+        print("Everything here is already reviewed.")
+        print(f"To reset review state, delete: {review_state_path()}")
+        print()
+        if not review_run_checks(hash_value, reviewed):
+            sys.exit(1)
+        return
+
+    print("Interactive Function Review")
+    print("=" * 80)
+    print(f"Functions to review: {len(to_review)}")
+    print(f"Already reviewed: {len(order) - len(to_review)}")
+    print()
+    print("Dependencies and checks come first. For each function, read the code")
+    print("and its checks, run the checks if you want to, then approve or not.")
+    print("Press 'y' for yes, 'n' for no, 'q' to quit.")
+    print("=" * 80)
+    print()
+
+    for i, current_hash in enumerate(to_review):
+        rendered = review_render(current_hash, preferred_langs)
+        if rendered is None:
+            print(f"Warning: {current_hash} has no language mapping to show; skipped.", file=sys.stderr)
+            print()
+            continue
+        name, lang, source = rendered
+
+        print(f"[{i+1}/{len(to_review)}] Function: {name} ({lang})")
+        print(f"Hash: {current_hash}")
+        print("-" * 80)
+        print(source)
+        print("-" * 80)
+
+        data = object_load(current_hash)
+        deps = code_extract_dependencies(data['normalized_code'])
+        if deps:
+            print(f"Dependencies: {len(deps)}")
+            for dep in deps:
+                status = "✓" if dep in reviewed else "not approved"
+                print(f"  - {dep[:12]}... [{status}]")
+        else:
+            print("Dependencies: None")
+
+        checks = data.get('checks', [])
+        if checks:
+            print(f"Checks: {len(checks)}")
+            for check_hash in checks:
+                status = "✓" if check_hash in reviewed else "not approved"
+                check_rendered = review_render(check_hash, preferred_langs)
+                print(f"  - {check_hash[:12]}... [{status}]")
+                if check_rendered:
+                    print('\n'.join(f"      {line}".rstrip() for line in check_rendered[2].split('\n')))
+        print()
+
+        if checks:
+            # You just read this function: everything else must already be approved
+            results, missing = check_run_reviewed(current_hash, reviewed | {current_hash})
+            if missing:
+                print(f"Checks cannot run yet: {len(missing)} other function(s) are not approved.")
+            else:
+                answer = review_ask("Run its checks?")
+                if answer is None or answer == 'q':
+                    print("Review paused. Approvals so far are saved.")
+                    return
+                if answer == 'y':
+                    if not check_report(results):
+                        failed = True
+            print()
+
+        answer = review_ask("Approve this function?")
+        if answer is None:
+            print("Non-interactive mode - stopping here. Approvals so far are saved.")
+            return
+        if answer == 'q':
+            print(f"Review paused. Progress saved ({len(reviewed)} functions reviewed).")
+            print("Run the command again to continue from where you left off.")
+            return
+        if answer == 'y':
+            reviewed.add(current_hash)
+            review_save_state(reviewed)
+            print("✓ Function approved and saved to review state.")
+        else:
+            print("✗ Function not approved.")
+
+        print("=" * 80)
+        print()
+
+    print("Review complete!")
+    print(f"Total reviewed: {len(reviewed)} function(s)")
+    if failed:
+        sys.exit(1)
+
+
 def review_run_checks(func_hash: str, reviewed: set) -> bool:
     """
     Run a function's checks if you approved everything they would run.
@@ -1169,149 +1376,6 @@ def review_run_checks(func_hash: str, reviewed: set) -> bool:
         print(f"Checks not run: {len(missing)} function(s) still need your approval.")
         return True
     return check_report(results)
-
-
-def command_review(identifier: str):
-    """
-    Interactively review a function, its dependencies and its checks.
-
-    Accepts a hash or function name (with optional @lang suffix).
-    Reviews functions one at a time starting from lowest-level dependencies,
-    then the checks and theirs. Requires explicit acknowledgment for
-    security/correctness. Approvals are remembered in a private state
-    directory, outside the shared $BB_DIRECTORY.
-
-    Once everything is approved, the checks run on the exact code that
-    was reviewed.
-    """
-    hash_value = helper_resolve_to_hash(identifier)
-
-    # Get user's preferred languages
-    config = storage_read_config()
-    preferred_langs = config['user'].get('languages', ['eng'])
-
-    if not preferred_langs:
-        preferred_langs = ['eng']
-
-    # Load previously reviewed functions
-    reviewed = review_load_state()
-
-    # Everything that runs with the checks, dependencies first
-    try:
-        all_deps = review_closure(hash_value)
-    except ValueError as e:
-        print(f"Error resolving dependencies: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # Filter out already reviewed functions
-    to_review = [h for h in all_deps if h not in reviewed]
-
-    if not to_review:
-        print("All functions in this dependency tree have already been reviewed.")
-        print(f"Total reviewed: {len(reviewed)} function(s)")
-        print(f"To reset review state, delete: {review_state_path()}")
-        print()
-        if not review_run_checks(hash_value, reviewed):
-            sys.exit(1)
-        return
-
-    print("Interactive Function Review")
-    print("=" * 80)
-    print(f"Functions to review: {len(to_review)}")
-    print(f"Already reviewed: {len(all_deps) - len(to_review)}")
-    print()
-    print("For each function, review the code for security and correctness.")
-    print("Press 'y' to approve, 'n' to skip, 'q' to quit.")
-    print("=" * 80)
-    print()
-
-    for i, current_hash in enumerate(to_review):
-        # Detect schema version
-        version = code_detect_schema(current_hash)
-        if version is None:
-            print(f"Warning: Function {current_hash} not found in local pool", file=sys.stderr)
-            continue
-
-        # Try to load in user's preferred languages
-        loaded = False
-        for lang in preferred_langs:
-            try:
-                normalized_code, name_mapping, alias_mapping, docstring = code_load(current_hash, lang)
-                func_name = name_mapping.get('_bb_v_0', 'unknown')
-
-                # Show function header
-                print(f"[{i+1}/{len(to_review)}] Function: {func_name} ({lang})")
-                print(f"Hash: {current_hash}")
-                print("-" * 80)
-
-                # Denormalize and show code
-                normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
-                original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
-                print(original_code)
-                print("-" * 80)
-
-                # Extract dependencies
-                deps = code_extract_dependencies(normalized_code)
-                if deps:
-                    print(f"Dependencies: {len(deps)}")
-                    for dep in deps:
-                        status = "✓" if dep in reviewed else "pending"
-                        print(f"  - {dep[:12]}... [{status}]")
-                else:
-                    print("Dependencies: None")
-
-                checks = object_load_checks(current_hash)
-                if checks:
-                    print(f"Checks: {len(checks)}")
-                    for check_hash in checks:
-                        status = "✓" if check_hash in reviewed else "pending"
-                        print(f"  - {check_hash[:12]}... [{status}]")
-
-                print()
-                loaded = True
-                break
-            except SystemExit:
-                # Language not available, try next one
-                continue
-
-        if not loaded:
-            print(f"Warning: Function {current_hash} not available in any preferred language", file=sys.stderr)
-            print(f"Preferred languages: {', '.join(preferred_langs)}", file=sys.stderr)
-            print()
-            continue
-
-        # Interactive prompt
-        while True:
-            try:
-                response = input("Approve this function? [y/n/q]: ").strip().lower()
-            except EOFError:
-                print("\nNon-interactive mode - skipping remaining reviews.")
-                review_save_state(reviewed)
-                return
-
-            if response == 'y':
-                reviewed.add(current_hash)
-                review_save_state(reviewed)
-                print(f"✓ Function approved and saved to review state.\n")
-                break
-            elif response == 'n':
-                print(f"✗ Function skipped.\n")
-                break
-            elif response == 'q':
-                print(f"\nReview paused. Progress saved ({len(reviewed)} functions reviewed).")
-                print("Run the command again to continue from where you left off.")
-                return
-            else:
-                print("Invalid input. Please enter 'y', 'n', or 'q'.")
-
-        print("=" * 80)
-        print()
-
-    print("Review complete!")
-    print(f"Total reviewed: {len(reviewed)} function(s)")
-    print()
-    if not review_run_checks(hash_value, reviewed):
-        sys.exit(1)
 
 
 def command_log():
@@ -1988,87 +2052,6 @@ def code_strip_bb_imports(code: str) -> str:
     return ast.unparse(tree)
 
 
-def code_load_dependencies_recursive(func_hash: str, lang: str, namespace: dict, loaded: set = None):
-    """
-    Recursively load a function and all its dependencies into a namespace.
-
-    Creates a module-like object for each dependency that can be accessed as:
-    object_HASH._bb_v_0(args) -> alias(args)
-
-    Args:
-        func_hash: Actual function hash (without object_ prefix) to load
-        lang: Language code
-        namespace: Dictionary to populate with loaded functions
-        loaded: Set of already loaded hashes (to avoid cycles)
-
-    Returns:
-        The function object
-    """
-    if loaded is None:
-        loaded = set()
-
-    if func_hash in loaded:
-        # Already loaded, return the existing module (stored with prefix)
-        prefixed_name = BB_IMPORT_PREFIX + func_hash
-        return namespace.get(prefixed_name)
-
-    loaded.add(func_hash)
-
-    # Load the function
-    try:
-        normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, lang)
-    except SystemExit:
-        print(f"Error: Could not load dependency {func_hash}@{lang}", file=sys.stderr)
-        sys.exit(1)
-
-    # First, recursively load all dependencies (deps are actual hashes without prefix)
-    deps = code_extract_dependencies(normalized_code)
-    for dep_hash in deps:
-        code_load_dependencies_recursive(dep_hash, lang, namespace, loaded)
-
-    # Denormalize the code
-    normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
-    original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
-
-    # Strip bb imports (dependencies are already in namespace)
-    executable_code = code_strip_bb_imports(original_code)
-
-    # For each alias in alias_mapping, add the dependency function to namespace with that name
-    # alias_mapping maps actual_hash -> alias
-    for dep_hash, alias in alias_mapping.items():
-        prefixed_dep_name = BB_IMPORT_PREFIX + dep_hash
-        if prefixed_dep_name in namespace:
-            # The dependency's function is already loaded, make alias point to it
-            dep_module = namespace[prefixed_dep_name]
-            if hasattr(dep_module, '_bb_v_0'):
-                namespace[alias] = dep_module._bb_v_0
-
-    # Execute the code in the namespace (dependencies are already loaded)
-    try:
-        exec(executable_code, namespace)
-    except Exception as e:
-        print(f"Error executing dependency {func_hash}: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-    # Get function name and create a module-like object for this hash
-    func_name = name_mapping.get('_bb_v_0', 'unknown')
-
-    if func_name in namespace:
-        # Create a simple namespace object that has _bb_v_0 attribute
-        # Store it under the prefixed name (object_<hash>) for lookup
-        class BBModule:
-            pass
-
-        module = BBModule()
-        module._bb_v_0 = namespace[func_name]
-        prefixed_name = BB_IMPORT_PREFIX + func_hash
-        namespace[prefixed_name] = module
-
-    return namespace.get(func_name)
-
-
 def storage_list_languages(func_hash: str) -> list:
     """
     List available languages for a function hash.
@@ -2098,75 +2081,20 @@ def command_run(identifier: str, func_args: list = None):
     Execute a function from the pool.
 
     Accepts a hash or function name (with optional @lang suffix).
-    Loads the function, resolves dependencies, and executes it with provided arguments.
+    Refuses unless you approved the function and its dependencies with
+    bb review, then runs the exact code that was reviewed, with the
+    provided arguments (passed as strings). The return value is not
+    printed: functions do their own output.
     """
-    if func_args is None:
-        func_args = []
+    hash_value, _ = helper_parse_identifier(identifier)
+    review_require(hash_value, "run")
 
-    hash_value, lang = helper_parse_identifier(identifier)
-
-    # If no language specified, pick the first available
-    if not lang:
-        langs = storage_list_languages(hash_value)
-        if not langs:
-            print(f"Error: No languages found for: {hash_value}", file=sys.stderr)
-            sys.exit(1)
-        lang = langs[0]
-
-    # Load function from pool
     try:
-        normalized_code, name_mapping, alias_mapping, docstring = code_load(hash_value, lang)
-    except SystemExit:
-        print(f"Error: Could not load function {hash_value}@{lang}", file=sys.stderr)
-        sys.exit(1)
-
-    # Verify the function name matches (should always be true)
-    loaded_func_name = name_mapping.get('_bb_v_0', 'unknown_function')
-
-    # Create execution namespace
-    namespace = {}
-
-    # Load all dependencies recursively
-    deps = code_extract_dependencies(normalized_code)
-    if deps:
-        for dep_hash in deps:
-            code_load_dependencies_recursive(dep_hash, lang, namespace, set())
-
-    # Denormalize to original language
-    normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
-    original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
-
-    # Strip bb imports (dependencies are already in namespace)
-    executable_code = code_strip_bb_imports(original_code)
-
-    # For each alias in alias_mapping, add the dependency function to namespace with that name
-    # alias_mapping maps actual_hash (without prefix) -> alias
-    for dep_hash, alias in alias_mapping.items():
-        prefixed_dep_name = BB_IMPORT_PREFIX + dep_hash
-        if prefixed_dep_name in namespace:
-            # The dependency's function is already loaded, make alias point to it
-            dep_module = namespace[prefixed_dep_name]
-            if hasattr(dep_module, '_bb_v_0'):
-                namespace[alias] = dep_module._bb_v_0
-
-    # Execute the code
-    try:
-        exec(executable_code, namespace)
-    except Exception as e:
+        func = code_load_normalized(hash_value)
+    except ValueError as e:
         print(f"Error executing function: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
         sys.exit(1)
 
-    # Get the function object
-    if loaded_func_name not in namespace:
-        print(f"Error: Function '{loaded_func_name}' not found in namespace", file=sys.stderr)
-        sys.exit(1)
-
-    func = namespace[loaded_func_name]
-
-    # Call the function with the provided arguments (all passed as strings).
-    # The return value is not printed: functions do their own output.
     try:
         func(*(func_args or []))
     except Exception as e:
@@ -4679,7 +4607,8 @@ def command_compile(identifier: str, debug_mode: bool = False, output_path: Opti
     Compile a function into a standalone Python file.
 
     Accepts a hash or function name (with optional @lang suffix).
-    When a name is provided with @lang, debug mode is implicit.
+    Refuses unless you approved the function and its dependencies with
+    bb review. When a name is provided with @lang, debug mode is implicit.
     The generated file can be run directly with Python or compiled separately
     with tools like Nuitka, PyInstaller, or PyOxidizer.
     """
@@ -4694,6 +4623,9 @@ def command_compile(identifier: str, debug_mode: bool = False, output_path: Opti
         debug_mode = True
 
     func_hash, lang = helper_parse_identifier(identifier)
+
+    # A compiled file runs anywhere: only package code you have read
+    review_require(func_hash, "compile")
 
     # Debug mode requires language
     if debug_mode and lang is None:

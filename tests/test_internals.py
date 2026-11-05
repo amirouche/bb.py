@@ -1192,3 +1192,32 @@ def test_edit_refuses_unreviewed_imports(mock_bb_dir):
 
     bb.review_save_state({helper})
     assert bb.edit_prepare(text, 'eng')['results'] == []
+
+
+def test_review_order_puts_dependencies_and_checks_first(mock_bb_dir):
+    """Levels follow the dependency order; a function's checks come before it"""
+    helper = _pool_add("def six():\n    return 6\n")
+    check = _pool_add(f"from bb.pool import object_{helper} as six\n\n"
+                      f"def check_double(f):\n    return f(3) == six()\n")
+    leaf = _pool_add("def two():\n    return 2\n")
+    func = _pool_add(f"from bb.pool import object_{leaf} as two\n\n"
+                     f"def double(x):\n    return x * two()\n", checks=[check])
+
+    levels = bb.review_order(func)
+    assert levels[0] == sorted([helper, leaf])
+    assert levels[1] == [check]
+    assert levels[2] == [func]
+
+
+def test_review_require_refuses_unreviewed_code(mock_bb_dir, capsys):
+    """bb run and bb compile stop unless the function and its dependencies are approved"""
+    leaf = _pool_add("def two():\n    return 2\n")
+    func = _pool_add(f"from bb.pool import object_{leaf} as two\n\ndef four():\n    return two() * 2\n")
+
+    bb.review_save_state({func})
+    with pytest.raises(SystemExit):
+        bb.review_require(func, "run")
+    assert f"bb review {func}" in capsys.readouterr().err
+
+    bb.review_save_state({func, leaf})
+    bb.review_require(func, "run")  # no exit

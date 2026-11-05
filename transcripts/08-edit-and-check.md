@@ -174,19 +174,28 @@ Not reviewed, checks not run:
   compute_pi 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885 (6 to approve: bb review 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885)
 ```
 
-`bb review` shows each function and asks for approval (`yes` answers for
-us here), then runs the checks on the exact code that was reviewed.
+`bb review` goes through the dependency order level by level. A
+function's checks count as its dependencies, so each check is read and
+approved on its own first. Then comes `compute_pi`: you read it with its
+checks, bb asks whether to run them on the exact code shown, and only
+after the results does it ask you to approve the new hash. Here `yes`
+answers every question; the `grep` keeps the headings and results.
 
 ```bash
-$ yes | bb review compute_pi@eng | tail -8
-Total reviewed: 6 function(s)
-
-PASS check_pi_n1
+$ yes | bb review compute_pi@eng | grep -E '^\[|PASS|checks:|^Total'
+[1/6] Function: check_pi_n1 (eng)
+[2/6] Function: check_pi_n5 (eng)
+[3/6] Function: check_pi_n8 (eng)
+[4/6] Function: check_pi_n3 (eng)
+[5/6] Function: check_pi_n2 (eng)
+[6/6] Function: compute_pi (eng)
+Run its checks? [y/n/q]: PASS check_pi_n1
 PASS check_pi_n2
 PASS check_pi_n3
 PASS check_pi_n5
 PASS check_pi_n8
 5 checks: 5 passed
+Total reviewed: 6 function(s)
 ```
 
 ### Step 5: Run every reviewed check in the pool
@@ -410,15 +419,15 @@ needs reading before the checks run again.
 $ (bb validate --checks compute_pi@eng || true)
 Not reviewed, checks not run:
   compute_pi 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670 (1 to approve: bb review 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670)
-$ yes | bb review compute_pi@eng | tail -8
-Total reviewed: 7 function(s)
-
-PASS check_pi_n1
+$ yes | bb review compute_pi@eng | grep -E '^\[|PASS|checks:|^Total'
+[1/1] Function: compute_pi (eng)
+Run its checks? [y/n/q]: PASS check_pi_n1
 PASS check_pi_n2
 PASS check_pi_n3
 PASS check_pi_n5
 PASS check_pi_n8
 5 checks: 5 passed
+Total reviewed: 7 function(s)
 ```
 
 ### Step 10: Rewording the documentation is not a fork
@@ -528,7 +537,7 @@ Error: 'compute_pi@eng' is ambiguous: it has 2 current versions. Use a hash:
 |---------|---------|
 | `bb edit (name\|hash)@lang` | Edit a function and its checks in one markdown file, save a fork when all checks pass |
 | `bb edit ... -m "comment"` | Give the comment up front instead of being asked |
-| `bb review (name\|hash)@lang` | Read and approve a function, its checks and their dependencies, then run the checks |
+| `bb review (name\|hash)@lang` | Read dependencies and checks first, then each function with its checks; run them, then approve |
 | `bb validate --checks [name\|hash]` | Run the checks of reviewed functions, one or the whole pool |
 
 ## Key Insights
