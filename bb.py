@@ -21,6 +21,22 @@ Typical single-user workflow:
     bb refactor <what> <from> <to>  # swap a dependency for a new version
     bb compile <hash> -o main.py    # flatten into a standalone script
 
+Writing functions for the pool:
+
+- One function per file (def or async def), with its imports and, if
+  you like, a module docstring. Anything else at module level (classes,
+  constants, variables, code) is refused: put data in functions.
+- Use another pool function by importing it by hash, under any name:
+
+      from bb.pool import object_<hash> as parse_amount
+
+  The hash is printed by `bb add` (later: `bb search name`). So add
+  helpers before the functions that use them.
+- A function is named by `name@lang` (or its hash). Changing it with
+  `bb add` or `bb edit` stores a new function with a new hash; functions
+  importing the old one keep using it until they are added again with
+  the new hash, or switched with `bb refactor`.
+
 Functions are stored in $BB_DIRECTORY/pool/ (default: ~/.local/bb/pool/)
 as JSON objects containing normalized code and per-language name mappings.
 Each language mapping preserves the original variable names, docstring,
