@@ -913,8 +913,7 @@ def test_metadata_create_reads_from_config(mock_bb_dir):
             'email': 'test@example.com',
             'public_key': '',
             'languages': []
-        },
-        'remotes': {}
+        }
     }
     config_path = bb.storage_get_bb_directory() / 'config.json'
     config_path.parent.mkdir(parents=True, exist_ok=True)

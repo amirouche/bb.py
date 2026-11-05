@@ -563,14 +563,6 @@ def storage_get_pool_directory() -> Path:
     return storage_get_bb_directory() / 'pool'
 
 
-def storage_get_git_directory() -> Path:
-    """
-    Get the git directory where published functions are stored.
-    Returns: $BB_DIRECTORY/git/
-    """
-    return storage_get_bb_directory() / 'git'
-
-
 def storage_get_config_path() -> Path:
     """
     Get the path to the config file.
@@ -597,8 +589,7 @@ def storage_read_config() -> Dict[str, any]:
                 'email': '',
                 'public_key': '',
                 'languages': []
-            },
-            'remotes': {}
+            }
         }
 
     try:
@@ -649,8 +640,7 @@ def command_init():
                 'email': '',
                 'public_key': '',
                 'languages': ['eng']
-            },
-            'remotes': {}
+            }
         }
         storage_write_config(config)
         print(f"Created config file: {config_path}")
@@ -928,811 +918,6 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
     tree = denormalizer.visit(tree)
 
     return ast.unparse(tree)
-
-
-# =============================================================================
-# Git Remote Functions
-# =============================================================================
-
-def git_run(args: List[str], cwd: str = None, timeout: int = 60) -> subprocess.CompletedProcess:
-    """
-    Execute a git command via subprocess.run().
-
-    Args:
-        args: List of arguments to pass to git (without 'git' prefix)
-        cwd: Working directory for the command
-        timeout: Timeout in seconds (default 60)
-
-    Returns:
-        subprocess.CompletedProcess with stdout/stderr captured
-
-    Raises:
-        subprocess.CalledProcessError: If git command fails
-        subprocess.TimeoutExpired: If command times out
-    """
-    cmd = ['git'] + args
-    result = subprocess.run(
-        cmd,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=timeout
-    )
-    return result
-
-
-def git_url_parse(url: str) -> Dict[str, str]:
-    """
-    Parse a Git URL into components.
-
-    Supports formats:
-    - git@host:user/repo.git (SSH)
-    - git+https://host/user/repo.git (HTTPS)
-    - git+file:///path/to/repo (Local file)
-
-    Args:
-        url: Git URL to parse
-
-    Returns:
-        Dictionary with keys: protocol, host, path, original_url
-        protocol: 'ssh', 'https', or 'file'
-    """
-    result = {'original_url': url}
-
-    if url.startswith('git@'):
-        # SSH format: git@host:user/repo.git
-        result['protocol'] = 'ssh'
-        # Split on : to get host and path
-        parts = url[4:].split(':', 1)
-        result['host'] = parts[0]
-        result['path'] = parts[1] if len(parts) > 1 else ''
-        result['git_url'] = url  # Already in git format
-
-    elif url.startswith('git+https://'):
-        # HTTPS format: git+https://host/path/repo.git
-        result['protocol'] = 'https'
-        # Remove git+ prefix for actual git URL
-        actual_url = url[4:]  # Remove 'git+' prefix
-        from urllib.parse import urlparse
-        parsed = urlparse(actual_url)
-        result['host'] = parsed.netloc
-        result['path'] = parsed.path.lstrip('/')
-        result['git_url'] = actual_url
-
-    elif url.startswith('git+file://'):
-        # Local file format: git+file:///path/to/repo
-        result['protocol'] = 'file'
-        result['host'] = ''
-        result['path'] = url[11:]  # Remove 'git+file://' prefix
-        result['git_url'] = 'file://' + result['path']
-
-    else:
-        raise ValueError(f"Unsupported Git URL format: {url}")
-
-    return result
-
-
-def git_detect_remote_type(url: str) -> str:
-    """
-    Detect the type of remote from URL.
-
-    Args:
-        url: Remote URL
-
-    Returns:
-        Remote type: 'file', 'git-ssh', 'git-https', 'git-file', 'http', 'https'
-    """
-    if url.startswith('file://'):
-        return 'file'
-    elif url.startswith('git@'):
-        return 'git-ssh'
-    elif url.startswith('git+https://'):
-        return 'git-https'
-    elif url.startswith('git+file://'):
-        return 'git-file'
-    elif url.startswith('https://'):
-        return 'https'
-    elif url.startswith('http://'):
-        return 'http'
-    else:
-        return 'unknown'
-
-
-def git_cache_path(remote_name: str) -> Path:
-    """
-    Get the cache path for a Git remote repository.
-
-    Args:
-        remote_name: Name of the remote
-
-    Returns:
-        Path to the cached repository directory
-    """
-    bb_dir = storage_get_bb_directory()
-    return bb_dir / 'cache' / 'git' / remote_name
-
-
-def git_clone_or_fetch(git_url: str, local_path: Path) -> bool:
-    """
-    Clone a Git repository if it doesn't exist, or fetch if it does.
-
-    Args:
-        git_url: Git URL (SSH, HTTPS, or file://)
-        local_path: Local path to clone/fetch to
-
-    Returns:
-        True if successful, False otherwise
-    """
-    if local_path.exists() and (local_path / '.git').exists():
-        # Repository exists, fetch updates
-        result = git_run(['fetch', 'origin'], cwd=str(local_path))
-        if result.returncode != 0:
-            print(f"Warning: git fetch failed: {result.stderr}", file=sys.stderr)
-            return False
-
-        # Pull changes (fast-forward only)
-        result = git_run(['pull', '--ff-only', 'origin', 'main'], cwd=str(local_path))
-        if result.returncode != 0:
-            # Try 'master' branch if 'main' fails
-            result = git_run(['pull', '--ff-only', 'origin', 'master'], cwd=str(local_path))
-            if result.returncode != 0:
-                print(f"Warning: git pull failed: {result.stderr}", file=sys.stderr)
-                return False
-        return True
-    else:
-        # Clone repository
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        result = git_run(['clone', git_url, str(local_path)])
-        if result.returncode != 0:
-            print(f"Error: git clone failed: {result.stderr}", file=sys.stderr)
-            return False
-        return True
-
-
-def git_commit_and_push(local_path: Path, message: str) -> bool:
-    """
-    Stage all changes, commit, and push to remote.
-
-    Args:
-        local_path: Path to the Git repository
-        message: Commit message
-
-    Returns:
-        True if successful, False otherwise
-    """
-    cwd = str(local_path)
-
-    # Stage all changes
-    result = git_run(['add', '.'], cwd=cwd)
-    if result.returncode != 0:
-        print(f"Error: git add failed: {result.stderr}", file=sys.stderr)
-        return False
-
-    # Check if there are changes to commit
-    result = git_run(['diff', '--cached', '--quiet'], cwd=cwd)
-    if result.returncode == 0:
-        # No changes to commit
-        print("No changes to commit")
-        return True
-
-    # Commit changes
-    result = git_run(['commit', '-m', message], cwd=cwd)
-    if result.returncode != 0:
-        print(f"Error: git commit failed: {result.stderr}", file=sys.stderr)
-        return False
-
-    # Push to remote
-    result = git_run(['push', 'origin', 'HEAD'], cwd=cwd)
-    if result.returncode != 0:
-        print(f"Error: git push failed: {result.stderr}", file=sys.stderr)
-        return False
-
-    return True
-
-
-# =============================================================================
-# Commit Functions
-# =============================================================================
-
-def git_init_commit_repo() -> Path:
-    """
-    Initialize the git repository for committing if it doesn't exist.
-
-    Configures git user.name and user.email from bb config.
-
-    Returns:
-        Path to the git directory
-    """
-    git_dir = storage_get_git_directory()
-
-    if not git_dir.exists():
-        git_dir.mkdir(parents=True, exist_ok=True)
-
-    # Check if it's already a git repo
-    git_metadata = git_dir / '.git'
-    if not git_metadata.exists():
-        result = git_run(['init'], cwd=str(git_dir))
-        if result.returncode != 0:
-            print(f"Error: Failed to initialize git repository: {result.stderr}", file=sys.stderr)
-            sys.exit(1)
-
-        # Configure git user from bb config
-        config = storage_read_config()
-        name = config['user'].get('name', '') or 'bb'
-        email = config['user'].get('email', '') or 'bb@localhost'
-
-        git_run(['config', 'user.name', name], cwd=str(git_dir))
-        git_run(['config', 'user.email', email], cwd=str(git_dir))
-        # Disable commit signing for this repository
-        git_run(['config', 'commit.gpgsign', 'false'], cwd=str(git_dir))
-
-        print(f"Initialized git repository at {git_dir}")
-
-    return git_dir
-
-
-def helper_open_editor_for_message() -> str:
-    """
-    Open the user's editor to write a commit message.
-
-    Returns:
-        The commit message entered by the user
-    """
-    import tempfile
-
-    editor = os.environ.get('EDITOR', os.environ.get('VISUAL', 'vi'))
-
-    # Create a temporary file for the commit message
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-        f.write('\n')
-        f.write('# Enter commit message above.\n')
-        f.write('# Lines starting with # will be ignored.\n')
-        temp_path = f.name
-
-    try:
-        # Open editor
-        result = subprocess.run([editor, temp_path])
-        if result.returncode != 0:
-            print("Error: Editor exited with non-zero status", file=sys.stderr)
-            sys.exit(1)
-
-        # Read the message
-        with open(temp_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-
-        # Filter out comment lines and strip
-        message_lines = [line.rstrip() for line in lines if not line.startswith('#')]
-        message = '\n'.join(message_lines).strip()
-
-        if not message:
-            print("Error: Empty commit message, aborting", file=sys.stderr)
-            sys.exit(1)
-
-        return message
-    finally:
-        os.unlink(temp_path)
-
-
-def command_commit(identifier: str, comment: str = None):
-    """
-    Commit a function and its dependencies to the git repository.
-
-    Accepts a hash or function name (with optional @lang suffix).
-    Copies the function, all its mappings, and all recursive dependencies
-    (with their mappings) to $BB_DIRECTORY/git/ and creates a git commit.
-    """
-    import shutil
-
-    hash_value = helper_resolve_to_hash(identifier)
-
-    # Resolve all dependencies
-    print(f"Resolving dependencies for {hash_value}...")
-    try:
-        all_hashes = code_resolve_dependencies(hash_value)
-    except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Found {len(all_hashes)} function(s) to commit")
-
-    # Initialize git repo
-    git_dir = git_init_commit_repo()
-    pool_dir = storage_get_pool_directory()
-
-    # Copy all functions with their mappings
-    for func_hash in all_hashes:
-        src_dir = pool_dir / func_hash[:2] / func_hash[2:]
-        dst_dir = git_dir / func_hash[:2] / func_hash[2:]
-
-        if src_dir.exists():
-            # Copy entire function directory (includes object.json and all language mappings)
-            shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
-            print(f"  Copied {func_hash[:12]}...")
-
-    # Stage all changes
-    result = git_run(['add', '-A'], cwd=str(git_dir))
-    if result.returncode != 0:
-        print(f"Error: git add failed: {result.stderr}", file=sys.stderr)
-        sys.exit(1)
-
-    # Check if there are changes to commit
-    result = git_run(['diff', '--cached', '--quiet'], cwd=str(git_dir))
-    if result.returncode == 0:
-        print("No new changes to commit")
-        return
-
-    # Get commit message
-    if comment:
-        message = comment
-    else:
-        message = helper_open_editor_for_message()
-
-    # Commit
-    result = git_run(['commit', '-m', message], cwd=str(git_dir))
-    if result.returncode != 0:
-        print(f"Error: git commit failed: {result.stderr}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Committed {len(all_hashes)} function(s)")
-    print(f"Commit message: {message}")
-
-
-def command_remote_add(name: str, url: str, read_only: bool = False):
-    """
-    Add a remote repository.
-
-    Args:
-        name: Remote name
-        url: Remote URL. Supported formats:
-            - file:///path/to/pool (direct file copy)
-            - git@host:user/repo.git (Git SSH)
-            - git+https://host/user/repo.git (Git HTTPS)
-            - git+file:///path/to/repo (Local Git repository)
-        read_only: If True, remote is read-only (push will be rejected)
-    """
-    config = storage_read_config()
-
-    if name in config['remotes']:
-        print(f"Error: Remote '{name}' already exists", file=sys.stderr)
-        sys.exit(1)
-
-    # Detect remote type
-    remote_type = git_detect_remote_type(url)
-
-    if remote_type == 'unknown':
-        print(f"Error: Invalid URL format: {url}", file=sys.stderr)
-        print("Supported formats:", file=sys.stderr)
-        print("  file:///path/to/pool          - Direct file copy", file=sys.stderr)
-        print("  git@host:user/repo.git        - Git SSH", file=sys.stderr)
-        print("  git+https://host/user/repo    - Git HTTPS", file=sys.stderr)
-        print("  git+file:///path/to/repo      - Local Git repository", file=sys.stderr)
-        sys.exit(1)
-
-    remote_config = {
-        'url': url,
-        'type': remote_type
-    }
-    if read_only:
-        remote_config['read_only'] = True
-
-    config['remotes'][name] = remote_config
-
-    storage_write_config(config)
-    ro_suffix = " (read-only)" if read_only else ""
-    print(f"Added remote '{name}': {url} (type: {remote_type}){ro_suffix}")
-
-
-def command_remote_remove(name: str):
-    """
-    Remove a remote repository.
-
-    Args:
-        name: Remote name to remove
-    """
-    config = storage_read_config()
-
-    if name not in config['remotes']:
-        print(f"Error: Remote '{name}' not found", file=sys.stderr)
-        sys.exit(1)
-
-    del config['remotes'][name]
-    storage_write_config(config)
-    print(f"Removed remote '{name}'")
-
-
-def command_remote_list():
-    """
-    List all configured remotes.
-    """
-    config = storage_read_config()
-
-    if not config['remotes']:
-        print("No remotes configured")
-        return
-
-    print("Configured remotes:")
-    for name, remote in config['remotes'].items():
-        print(f"  {name}: {remote['url']}")
-
-
-def command_remote_pull(name: str):
-    """
-    Fetch functions from a remote repository.
-
-    Fetches into $BB_DIRECTORY/git/ then copies new functions to pool.
-
-    Args:
-        name: Remote name to pull from
-    """
-    import shutil
-
-    config = storage_read_config()
-
-    if name not in config['remotes']:
-        print(f"Error: Remote '{name}' not found", file=sys.stderr)
-        sys.exit(1)
-
-    remote = config['remotes'][name]
-    url = remote['url']
-    remote_type = remote.get('type', git_detect_remote_type(url))
-
-    # Get local directories
-    git_dir = storage_get_git_directory()
-    pool_dir = storage_get_pool_directory()
-
-    print(f"Pulling from remote '{name}': {url}")
-    print()
-
-    if remote_type == 'file':
-        # Local file system remote (direct copy)
-        remote_path = Path(url[7:])  # Remove file:// prefix
-
-        if not remote_path.exists():
-            print(f"Error: Remote path does not exist: {remote_path}", file=sys.stderr)
-            sys.exit(1)
-
-        # Validate remote is a valid bb pool before pulling
-        print("Validating remote pool structure...")
-        is_valid, errors = storage_validate_pool(remote_path)
-        if not is_valid:
-            print(f"Error: Remote is not a valid bb pool:", file=sys.stderr)
-            for err in errors[:5]:  # Show first 5 errors
-                print(f"  - {err}", file=sys.stderr)
-            if len(errors) > 5:
-                print(f"  ... and {len(errors) - 5} more errors", file=sys.stderr)
-            sys.exit(1)
-
-        # First copy to git directory, then to pool
-        git_dir.mkdir(parents=True, exist_ok=True)
-
-        pulled_to_git = 0
-        pulled_to_pool = 0
-
-        for item in remote_path.rglob('*.json'):
-            rel_path = item.relative_to(remote_path)
-
-            # Copy to git directory
-            git_item = git_dir / rel_path
-            if not git_item.exists():
-                git_item.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, git_item)
-                pulled_to_git += 1
-
-            # Copy to pool directory
-            pool_item = pool_dir / rel_path
-            if not pool_item.exists():
-                pool_item.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, pool_item)
-                pulled_to_pool += 1
-
-        print(f"Pulled {pulled_to_pool} new functions from '{name}'")
-
-    elif remote_type in ('git-ssh', 'git-https', 'git-file'):
-        # Git remote - fetch into local git dir then copy to pool
-        parsed = git_url_parse(url)
-
-        # Initialize git dir if needed
-        git_dir = git_init_commit_repo()
-
-        # Check if remote exists in git config, add if not
-        result = git_run(['remote', 'get-url', name], cwd=str(git_dir))
-        if result.returncode != 0:
-            result = git_run(['remote', 'add', name, parsed['git_url']], cwd=str(git_dir))
-            if result.returncode != 0:
-                print(f"Error: Failed to add git remote: {result.stderr}", file=sys.stderr)
-                sys.exit(1)
-            print(f"Added git remote '{name}'")
-
-        # Fetch from remote
-        print(f"Fetching from {parsed['git_url']}...")
-        result = git_run(['fetch', name], cwd=str(git_dir))
-        if result.returncode != 0:
-            print(f"Error: git fetch failed: {result.stderr}", file=sys.stderr)
-            sys.exit(1)
-
-        # Determine which branch exists (main or master)
-        remote_branch = None
-        result = git_run(['rev-parse', '--verify', f'{name}/main'], cwd=str(git_dir))
-        if result.returncode == 0:
-            remote_branch = f'{name}/main'
-        else:
-            result = git_run(['rev-parse', '--verify', f'{name}/master'], cwd=str(git_dir))
-            if result.returncode == 0:
-                remote_branch = f'{name}/master'
-
-        if remote_branch:
-            # Validate remote branch content before rebase using temp worktree
-            import tempfile
-            print("Validating remote pool structure...")
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_path = Path(temp_dir) / 'validate'
-                result = git_run(['worktree', 'add', '--detach', str(temp_path), remote_branch], cwd=str(git_dir))
-                if result.returncode == 0:
-                    is_valid, errors = storage_validate_pool(temp_path)
-                    # Clean up worktree
-                    git_run(['worktree', 'remove', str(temp_path)], cwd=str(git_dir))
-                    if not is_valid:
-                        print(f"Error: Remote is not a valid bb pool:", file=sys.stderr)
-                        for err in errors[:5]:  # Show first 5 errors
-                            print(f"  - {err}", file=sys.stderr)
-                        if len(errors) > 5:
-                            print(f"  ... and {len(errors) - 5} more errors", file=sys.stderr)
-                        sys.exit(1)
-
-        # Rebase onto remote changes (try main, then master)
-        # Use rebase since content-addressed storage is append-only with zero conflicts
-        result = git_run(['rebase', f'{name}/main'], cwd=str(git_dir))
-        if result.returncode != 0:
-            result = git_run(['rebase', f'{name}/master'], cwd=str(git_dir))
-            if result.returncode != 0:
-                # May fail if no common history, which is fine for initial pull
-                pass
-
-        # Copy new functions from git dir to pool
-        pool_dir.mkdir(parents=True, exist_ok=True)
-        pulled_count = 0
-
-        for item in git_dir.rglob('*.json'):
-            rel_path = item.relative_to(git_dir)
-            pool_item = pool_dir / rel_path
-
-            if not pool_item.exists():
-                pool_item.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, pool_item)
-                pulled_count += 1
-
-        print(f"Pulled {pulled_count} new functions from '{name}'")
-
-    else:
-        print(f"Error: Remote type '{remote_type}' not supported", file=sys.stderr)
-        sys.exit(1)
-
-
-def command_remote_push(name: str):
-    """
-    Push committed functions to a remote repository.
-
-    Uses $BB_DIRECTORY/git/ as the source of truth. Only functions that have
-    been committed with 'bb commit' will be pushed.
-
-    Args:
-        name: Remote name to push to
-    """
-    config = storage_read_config()
-
-    if name not in config['remotes']:
-        print(f"Error: Remote '{name}' not found", file=sys.stderr)
-        sys.exit(1)
-
-    remote = config['remotes'][name]
-
-    # Check if remote is read-only
-    if remote.get('read_only', False):
-        print(f"Error: Remote '{name}' is read-only", file=sys.stderr)
-        sys.exit(1)
-
-    url = remote['url']
-    remote_type = remote.get('type', git_detect_remote_type(url))
-
-    # Get local git directory
-    git_dir = storage_get_git_directory()
-
-    if not git_dir.exists() or not (git_dir / '.git').exists():
-        print("Error: No committed functions. Use 'bb commit HASH' first.", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Pushing to remote '{name}': {url}")
-    print()
-
-    if remote_type == 'file':
-        # Local file system remote (direct copy from git dir)
-        import shutil
-        remote_path = Path(url[7:])  # Remove file:// prefix
-
-        # Create remote directory if it doesn't exist
-        remote_path.mkdir(parents=True, exist_ok=True)
-
-        # Copy functions from git directory to remote
-        pushed_count = 0
-        for item in git_dir.rglob('*.json'):
-            rel_path = item.relative_to(git_dir)
-            remote_item = remote_path / rel_path
-
-            if not remote_item.exists():
-                remote_item.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, remote_item)
-                pushed_count += 1
-
-        print(f"Pushed {pushed_count} new functions to '{name}'")
-
-    elif remote_type in ('git-ssh', 'git-https', 'git-file'):
-        # Git remote - add remote to local git dir and push
-        parsed = git_url_parse(url)
-
-        # Check if remote exists in git config, add if not
-        result = git_run(['remote', 'get-url', name], cwd=str(git_dir))
-        if result.returncode != 0:
-            # Remote doesn't exist, add it
-            result = git_run(['remote', 'add', name, parsed['git_url']], cwd=str(git_dir))
-            if result.returncode != 0:
-                print(f"Error: Failed to add git remote: {result.stderr}", file=sys.stderr)
-                sys.exit(1)
-            print(f"Added git remote '{name}'")
-
-        # Push to remote
-        print(f"Pushing to {parsed['git_url']}...")
-        result = git_run(['push', name, 'HEAD:main'], cwd=str(git_dir))
-        if result.returncode != 0:
-            # Try master if main fails
-            result = git_run(['push', name, 'HEAD:master'], cwd=str(git_dir))
-            if result.returncode != 0:
-                print(f"Error: git push failed: {result.stderr}", file=sys.stderr)
-                sys.exit(1)
-
-        print(f"Pushed to '{name}'")
-
-    else:
-        print(f"Error: Remote type '{remote_type}' not supported", file=sys.stderr)
-        sys.exit(1)
-
-
-def command_remote_sync():
-    """
-    Sync with all remotes: pull rebase from each, then push to all.
-
-    This command:
-    1. For each remote: fetch and rebase local changes on top
-    2. For each remote: push local commits
-
-    Uses $BB_DIRECTORY/git/ as the local repository.
-    """
-    import shutil
-
-    config = storage_read_config()
-
-    if not config['remotes']:
-        print("No remotes configured. Use 'bb remote add' first.")
-        return
-
-    git_dir = storage_get_git_directory()
-    pool_dir = storage_get_pool_directory()
-
-    if not git_dir.exists() or not (git_dir / '.git').exists():
-        print("Error: No committed functions. Use 'bb commit HASH' first.", file=sys.stderr)
-        sys.exit(1)
-
-    print("Syncing with all remotes...")
-    print()
-
-    # Phase 1: Pull rebase from all remotes
-    for name, remote in config['remotes'].items():
-        url = remote['url']
-        remote_type = remote.get('type', git_detect_remote_type(url))
-
-        if remote_type not in ('git-ssh', 'git-https', 'git-file'):
-            print(f"Skipping '{name}': only git remotes supported for sync")
-            continue
-
-        parsed = git_url_parse(url)
-
-        # Ensure remote is configured
-        result = git_run(['remote', 'get-url', name], cwd=str(git_dir))
-        if result.returncode != 0:
-            result = git_run(['remote', 'add', name, parsed['git_url']], cwd=str(git_dir))
-            if result.returncode != 0:
-                print(f"Warning: Failed to add remote '{name}': {result.stderr}")
-                continue
-
-        # Fetch
-        print(f"Fetching from '{name}'...")
-        result = git_run(['fetch', name], cwd=str(git_dir))
-        if result.returncode != 0:
-            print(f"Warning: Failed to fetch from '{name}': {result.stderr}")
-            continue
-
-        # Determine which branch exists (main or master)
-        remote_branch = None
-        result = git_run(['rev-parse', '--verify', f'{name}/main'], cwd=str(git_dir))
-        if result.returncode == 0:
-            remote_branch = f'{name}/main'
-        else:
-            result = git_run(['rev-parse', '--verify', f'{name}/master'], cwd=str(git_dir))
-            if result.returncode == 0:
-                remote_branch = f'{name}/master'
-
-        if remote_branch:
-            # Validate remote branch content before rebase using temp worktree
-            import tempfile
-            print(f"  Validating '{name}' pool structure...")
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_path = Path(temp_dir) / 'validate'
-                result = git_run(['worktree', 'add', '--detach', str(temp_path), remote_branch], cwd=str(git_dir))
-                if result.returncode == 0:
-                    is_valid, errors = storage_validate_pool(temp_path)
-                    # Clean up worktree
-                    git_run(['worktree', 'remove', str(temp_path)], cwd=str(git_dir))
-                    if not is_valid:
-                        print(f"Warning: Remote '{name}' is not a valid bb pool, skipping:")
-                        for err in errors[:3]:  # Show first 3 errors
-                            print(f"    - {err}")
-                        if len(errors) > 3:
-                            print(f"    ... and {len(errors) - 3} more errors")
-                        continue
-
-        # Rebase on remote (try main, then master)
-        result = git_run(['rebase', f'{name}/main'], cwd=str(git_dir))
-        if result.returncode != 0:
-            result = git_run(['rebase', f'{name}/master'], cwd=str(git_dir))
-            if result.returncode != 0:
-                # Abort rebase if it failed
-                git_run(['rebase', '--abort'], cwd=str(git_dir))
-                print(f"Warning: Rebase from '{name}' failed, skipping")
-                continue
-
-        print(f"  Rebased on '{name}'")
-
-    # Copy any new functions from git dir to pool
-    pulled_count = 0
-    for item in git_dir.rglob('*.json'):
-        rel_path = item.relative_to(git_dir)
-        pool_item = pool_dir / rel_path
-
-        if not pool_item.exists():
-            pool_item.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(item, pool_item)
-            pulled_count += 1
-
-    if pulled_count > 0:
-        print(f"  Copied {pulled_count} new functions to pool")
-
-    print()
-
-    # Phase 2: Push to all remotes
-    for name, remote in config['remotes'].items():
-        url = remote['url']
-        remote_type = remote.get('type', git_detect_remote_type(url))
-
-        if remote_type not in ('git-ssh', 'git-https', 'git-file'):
-            continue
-
-        # Skip read-only remotes
-        if remote.get('read_only', False):
-            continue
-
-        parsed = git_url_parse(url)
-
-        print(f"Pushing to '{name}'...")
-        result = git_run(['push', name, 'HEAD:main'], cwd=str(git_dir))
-        if result.returncode != 0:
-            result = git_run(['push', name, 'HEAD:master'], cwd=str(git_dir))
-            if result.returncode != 0:
-                print(f"Warning: Failed to push to '{name}': {result.stderr}")
-                continue
-
-        print(f"  Pushed to '{name}'")
-
-    print()
-    print("Sync complete.")
 
 
 def code_extract_dependencies(normalized_code: str) -> List[str]:
@@ -3075,7 +2260,7 @@ def code_prepare_source(source_code: str, lang: str, where: str = None) -> Dict[
     if missing_deps:
         lines = ["The following bb imports do not exist in the local pool:"]
         lines += [f"  - {alias} (hash: {dep_hash[:12]}...)" for dep_hash, alias in missing_deps]
-        lines += ["", "Please add these functions to the pool first, or pull them from a remote."]
+        lines += ["", "Please add these functions to the pool first, or fetch them with git."]
         raise ValueError('\n'.join(lines))
 
     return {
@@ -3820,91 +3005,6 @@ def schema_validate_directory() -> tuple:
     return is_valid, errors, stats
 
 
-def storage_validate_pool(pool_path: Path) -> tuple:
-    """
-    Validate a directory as a valid bb pool structure.
-
-    This is a parameterized version of schema_validate_directory that works
-    on any directory path, used to validate remote repositories before sync.
-
-    Handles two cases:
-    - Directory IS a pool (contains XX/YYYY.../object.json)
-    - Directory CONTAINS a 'pool' subdirectory
-
-    Args:
-        pool_path: Path to the directory to validate as a bb pool
-
-    Returns:
-        Tuple of (is_valid, errors) where errors is a list of error messages
-    """
-    errors = []
-
-    if not pool_path.exists():
-        errors.append(f"Pool path does not exist: {pool_path}")
-        return False, errors
-
-    if not pool_path.is_dir():
-        errors.append(f"Pool path is not a directory: {pool_path}")
-        return False, errors
-
-    # Check for bb pool structure: XX/YYYYYY.../object.json
-    functions_found = 0
-    for prefix_dir in pool_path.iterdir():
-        if not prefix_dir.is_dir():
-            continue
-        # Skip .git directory and other non-hex directories
-        if prefix_dir.name == '.git':
-            continue
-        # Check if it's a 2-char hex prefix
-        if len(prefix_dir.name) != 2:
-            continue  # Skip non-prefix directories silently
-        if not all(c in '0123456789abcdef' for c in prefix_dir.name.lower()):
-            continue  # Skip non-hex directories silently
-
-        for func_dir in prefix_dir.iterdir():
-            if not func_dir.is_dir():
-                continue
-
-            # Reconstruct and validate hash
-            func_hash = prefix_dir.name + func_dir.name
-            if len(func_hash) != 64:
-                errors.append(f"Invalid hash length in {prefix_dir.name}/{func_dir.name}")
-                continue
-            if not all(c in '0123456789abcdef' for c in func_hash.lower()):
-                errors.append(f"Invalid hash format: {func_hash}")
-                continue
-
-            # Check object.json exists and is valid
-            object_json = func_dir / 'object.json'
-            if not object_json.exists():
-                errors.append(f"Missing object.json for {func_hash[:12]}...")
-                continue
-
-            try:
-                with open(object_json, 'r', encoding='utf-8') as f:
-                    func_data = json.load(f)
-
-                # Check required fields
-                required_fields = ['schema_version', 'hash', 'normalized_code', 'metadata']
-                for field in required_fields:
-                    if field not in func_data:
-                        errors.append(f"Missing field '{field}' in {func_hash[:12]}...")
-
-                if func_data.get('schema_version') != 1:
-                    errors.append(f"Invalid schema version in {func_hash[:12]}...")
-
-            except (IOError, json.JSONDecodeError) as e:
-                errors.append(f"Invalid JSON in {func_hash[:12]}...: {e}")
-                continue
-
-            functions_found += 1
-
-    # A valid pool should have at least some structure or be empty
-    # Empty pools are valid (nothing to pull)
-    is_valid = len(errors) == 0
-    return is_valid, errors
-
-
 def command_caller(identifier: str):
     """
     Find all functions that depend on the given function.
@@ -4447,7 +3547,7 @@ def command_edit(identifier: str, comment: str = None):
     for check_hash in object_load(hash_value)['metadata'].get('checks', []):
         if code_detect_schema(check_hash) is None:
             print(f"Error: Check {check_hash[:12]}... is attached to this function "
-                  f"but missing from the local pool. Pull it from a remote first.", file=sys.stderr)
+                  f"but missing from the local pool. Fetch it with git first.", file=sys.stderr)
             sys.exit(1)
         original_checks.append(edit_load_section(check_hash, lang))
 
@@ -5418,19 +4518,9 @@ def command_skills():
         'tree': command_tree,
         'refactor': command_refactor,
         'compile': command_compile,
-        'commit': command_commit,
     }
 
-    # Map remote subcommand names to handler functions
-    remote_handler_map = {
-        'add': command_remote_add,
-        'remove': command_remote_remove,
-        'list': command_remote_list,
-        'pull': command_remote_pull,
-        'push': command_remote_push,
-        'sync': command_remote_sync,
-    }
-
+    # Map worklog subcommand names to handler functions
     worklog_handler_map = {
         'new': command_worklog_new,
         'translate': command_worklog_translate,
@@ -5439,7 +4529,6 @@ def command_skills():
     }
 
     nested_handler_maps = {
-        'remote': remote_handler_map,
         'worklog': worklog_handler_map,
     }
 
@@ -5513,7 +4602,7 @@ def command_skills():
             lines.append(body)
             lines.append("")
 
-        # Handle nested subcommands (e.g., remote add/remove/list/pull/push/sync)
+        # Handle nested subcommands (e.g., worklog new/translate/list/show)
         if nested_action:
             for sub_name, sub_parser in nested_action.choices.items():
                 sub_handler = nested_handler_maps.get(cmd_name, {}).get(sub_name)
@@ -5612,7 +4701,7 @@ def _build_parser():
     review_parser.add_argument('identifier', help='Hash or name, with optional @lang')
 
     # Log command
-    log_parser = subparsers.add_parser('log', help='Show git-like commit log of pool')
+    log_parser = subparsers.add_parser('log', help='Show functions and worklogs, newest first')
 
     # Search command
     search_parser = subparsers.add_parser('search', help='Search and list functions by query')
@@ -5622,34 +4711,6 @@ def _build_parser():
     latest_parser = subparsers.add_parser('latest', help='Find most recent version of function by name')
     latest_parser.add_argument('name', help='Function name to find')
     latest_parser.add_argument('lang', nargs='?', help='Optional language code to filter (e.g., eng, fra)')
-
-    # Remote command
-    remote_parser = subparsers.add_parser('remote', help='Manage remote repositories')
-    remote_subparsers = remote_parser.add_subparsers(dest='remote_command', help='Remote subcommands')
-
-    # Remote add
-    remote_add_parser = remote_subparsers.add_parser('add', help='Add remote repository')
-    remote_add_parser.add_argument('name', help='Remote name')
-    remote_add_parser.add_argument('url', help='Remote URL (http://, https://, or file://)')
-    remote_add_parser.add_argument('--read-only', action='store_true', help='Mark remote as read-only (push will be rejected)')
-
-    # Remote remove
-    remote_remove_parser = remote_subparsers.add_parser('remove', help='Remove remote repository')
-    remote_remove_parser.add_argument('name', help='Remote name to remove')
-
-    # Remote list
-    remote_list_parser = remote_subparsers.add_parser('list', help='List configured remotes')
-
-    # Remote pull
-    remote_pull_parser = remote_subparsers.add_parser('pull', help='Fetch functions from remote')
-    remote_pull_parser.add_argument('name', help='Remote name to pull from')
-
-    # Remote push
-    remote_push_parser = remote_subparsers.add_parser('push', help='Publish functions to remote')
-    remote_push_parser.add_argument('name', help='Remote name to push to')
-
-    # Remote sync
-    remote_sync_parser = remote_subparsers.add_parser('sync', help='Pull rebase then push to all remotes')
 
     # Worklog command with subcommands
     worklog_parser = subparsers.add_parser('worklog', help='Write, translate and list worklogs')
@@ -5699,11 +4760,6 @@ def _build_parser():
     compile_parser.add_argument('--debug', action='store_true',
                                 help='Use human-readable names (requires @lang and all translations)')
 
-    # Commit command
-    commit_parser = subparsers.add_parser('commit', help='Commit function and dependencies to git repository')
-    commit_parser.add_argument('identifier', help='Hash or name, with optional @lang')
-    commit_parser.add_argument('--comment', '-c', help='Commit message (opens editor if not provided)')
-
     # Skills command
     skills_parser = subparsers.add_parser('skills', help='Generate skills reference for AI agents')
 
@@ -5740,21 +4796,6 @@ def main():
         command_search(args.query)
     elif args.command == 'latest':
         command_latest(args.name, args.lang)
-    elif args.command == 'remote':
-        if args.remote_command == 'add':
-            command_remote_add(args.name, args.url, read_only=args.read_only)
-        elif args.remote_command == 'remove':
-            command_remote_remove(args.name)
-        elif args.remote_command == 'list':
-            command_remote_list()
-        elif args.remote_command == 'pull':
-            command_remote_pull(args.name)
-        elif args.remote_command == 'push':
-            command_remote_push(args.name)
-        elif args.remote_command == 'sync':
-            command_remote_sync()
-        else:
-            parser.parse_args([args.command, '--help'])
     elif args.command == 'worklog':
         if args.worklog_command == 'new':
             command_worklog_new(args.references, message=args.message)
@@ -5807,8 +4848,6 @@ def main():
         command_refactor(args.what, args.from_hash, args.to_hash, args.at_hash if hasattr(args, 'at_hash') else None)
     elif args.command == 'compile':
         command_compile(args.identifier, debug_mode=args.debug, output_path=args.output)
-    elif args.command == 'commit':
-        command_commit(args.identifier, comment=args.comment)
     elif args.command == 'skills':
         command_skills()
     else:

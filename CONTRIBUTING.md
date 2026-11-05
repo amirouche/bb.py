@@ -201,13 +201,13 @@ Common pitfalls:
 
 Pattern: `type_name_verb_complement`
 
-Preferred type prefixes: `code_`, `command_`, `compile_`, `git_`, `helper_`, `storage_`, `hash_`
+Preferred type prefixes: `code_`, `command_`, `compile_`, `helper_`, `storage_`, `hash_`
 
 Examples:
 - `code_add()` — add code to the pool
 - `command_compile()` — CLI handler for compile
 - `hash_compute()` — compute a hash
-- `helper_open_editor_for_message()` — utility that doesn't fit other categories
+- `helper_run_editor()` — utility that doesn't fit other categories
 
 ## Single-File Architecture
 
@@ -309,14 +309,14 @@ Transcripts serve dual purposes: **integration tests** AND **living documentatio
 
 4. **Show realistic mistakes** - Real developers make errors
    ```markdown
-   ### Step 8: Try to push (fails - forgot to commit)
-   $ bb remote push origin
-   No commits to push
+   ### Step 8: Save a faster version (fails - a check catches a bug)
+   $ EDITOR="cp tokenizer_fast.md" bb edit tokenize@eng
+   FAIL check_empty_string
 
-   Oops! We need to commit first. Let's fix that.
+   Oops! The empty string now crashes. Let's fix that.
 
-   ### Step 9: Commit the function
-   $ bb commit $HASH -c "Add tokenizer"
+   ### Step 9: Save the fixed version
+   $ EDITOR="cp tokenizer_fixed.md" bb edit tokenize@eng
    ```
 
 5. **Use rich domain examples** - Not `foo`/`bar`, but dice games, blog engines, text processors
@@ -339,7 +339,7 @@ Transcripts serve dual purposes: **integration tests** AND **living documentatio
 
 Transcripts are integration tests. Improve coverage by:
 
-- **Testing error paths**: Try to push to read-only remote (show error message)
+- **Testing error paths**: Save an edit whose checks fail (show the refusal)
 - **Exercising variants**: Show commands by name AND by hash
 - **Natural edge cases**: Empty pools, missing dependencies, conflicts
 
