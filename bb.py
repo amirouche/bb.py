@@ -32,6 +32,11 @@ Writing functions for the pool:
 
   The hash is printed by `bb add` (later: `bb search name`). So add
   helpers before the functions that use them.
+- Arguments are positional: bb stores parameters as placeholders
+  (_bb_v_0, ...), so a keyword cannot reach them. Call pool functions,
+  the function itself and functions defined inside it without keywords
+  (several options go in one dict), and define no keyword-only
+  parameters or **kwargs. `bb add` and `bb edit` refuse such code.
 - A function is named by `name@lang` (or its hash). Changing it with
   `bb add` or `bb edit` stores a new function with a new hash; functions
   importing the old one keep using it until they are added again with
@@ -2947,6 +2952,61 @@ def helper_lineage(func_hash: str) -> Set[str]:
     return seen
 
 
+def code_check_positional(source_code: str, tree: ast.Module, where: str):
+    """
+    Refuse keyword arguments where bb's renaming would break them.
+
+    bb stores parameters under positional placeholders (_bb_v_N), so that
+    the same logic in any human language has one hash. A keyword names a
+    parameter in one language at the call site: it cannot reach a pool
+    function, the function itself or a function defined inside it. So
+    calls to those take positional arguments only, and no definition in
+    the file has keyword-only parameters or **kwargs (a pool caller could
+    never fill them). Calls to anything else (the standard library,
+    other packages) keep their keywords.
+
+    Raises:
+        ValueError: listing each offending call or definition, by line
+    """
+    function_def, _ = code_extract_definition(tree)
+    pool_aliases = {alias.asname or alias.name for node in tree.body
+                    if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool' for alias in node.names}
+    local = {function_def.name}
+    definitions = []
+    for node in ast.walk(function_def):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            definitions.append(node)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            local.add(node.name)
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Lambda):
+            local.update(target.id for target in node.targets if isinstance(target, ast.Name))
+
+    def show(node):
+        return (ast.get_source_segment(source_code, node) or ast.unparse(node)).split('\n')[0]
+
+    problems = []
+    for node in ast.walk(function_def):
+        if (isinstance(node, ast.Call) and node.keywords and isinstance(node.func, ast.Name)
+                and node.func.id in pool_aliases | local):
+            names = ', '.join(f"{k.arg}=" if k.arg else "**" for k in node.keywords)
+            problems.append((node.lineno, f"{show(node)}: keyword arguments ({names}) to {node.func.id}"))
+    for node in definitions:
+        if node.args.kwonlyargs or node.args.kwarg:
+            name = getattr(node, 'name', 'lambda')
+            kinds = ([f"keyword-only {', '.join(a.arg for a in node.args.kwonlyargs)}"] if node.args.kwonlyargs
+                     else []) + ([f"**{node.args.kwarg.arg}"] if node.args.kwarg else [])
+            problems.append((node.lineno, f"def {name}: {' and '.join(kinds)}"))
+    if problems:
+        lines = [f"{where}: bb stores parameters by position, so keywords cannot reach them:"]
+        lines += [f"  line {line}: {text}" for line, text in sorted(problems)[:10]]
+        if len(problems) > 10:
+            lines.append(f"  ... and {len(problems) - 10} more")
+        lines.append("Call pool functions, the function itself and functions defined inside it with")
+        lines.append("positional arguments only (pass several options as one dict), and give their")
+        lines.append("definitions no keyword-only parameters or **kwargs. Defaults and *args are fine.")
+        raise ValueError('\n'.join(lines))
+
+
 def code_prepare_source(source_code: str, lang: str, where: str = None) -> Dict[str, Any]:
     """
     Parse, normalize and hash a function's source, without saving it.
@@ -2990,6 +3050,8 @@ def code_prepare_source(source_code: str, lang: str, where: str = None) -> Dict[
         lines.append("A pool function is imports plus one function: move constants and setup into it,")
         lines.append("or into functions of their own.")
         raise ValueError('\n'.join(lines))
+
+    code_check_positional(source_code, tree, where)
 
     try:
         _, normalized_code_without_docstring, docstring, name_mapping, alias_mapping = code_normalize(tree, lang)

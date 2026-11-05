@@ -1,5 +1,15 @@
 # LIMITS
 
+## Positional arguments only
+
+bb stores parameters under positional placeholders (`_bb_v_N`) so that the same
+logic in any human language has one hash. A keyword names a parameter in one
+language at the call site, so it cannot reach them: calls to pool functions, to
+the function itself and to functions defined inside it take positional arguments
+only, and definitions have no keyword-only parameters or `**kwargs`. `bb add` and
+`bb edit` refuse code that breaks this rule. Keywords passed indirectly (e.g.
+`functools.partial(helper, height=1)`) cannot be detected and fail at run time.
+
 ## Potential Enhancements
 
 1. **Class support**: Would require normalizing method names, class hierarchy, etc.
