@@ -1,6 +1,6 @@
 # CLAUDE.md - AI Assistant Guide for Beyond Babel
 
-For practical development workflows (running tests, adding commands, writing transcripts), see **SKILLS.md**.
+For practical development workflows (running tests, adding commands, writing transcripts), see **CONTRIBUTING.md**.
 
 ## Project Overview
 
@@ -62,7 +62,7 @@ Store in $HOME/.local/bb/pool/ (or $BB_DIRECTORY/pool/) with:
 ### Naming Conventions
 
 - **Classes**: PascalCase (`ASTNormalizer`)
-- **Functions**: snake_case following `type_name_verb_complement` pattern (see SKILLS.md for details and examples)
+- **Functions**: snake_case following `type_name_verb_complement` pattern (see CONTRIBUTING.md for details and examples)
 - **Constants**: UPPER_SNAKE_CASE (`PYTHON_BUILTINS`)
 - **Normalized names**: `_bb_v_N` (N = 0, 1, 2, ...)
 

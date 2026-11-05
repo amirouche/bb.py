@@ -1,4 +1,4 @@
-# Skills for Developing bb
+# Contributing to bb
 
 ## Learning bb Features
 
