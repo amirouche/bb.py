@@ -77,3 +77,13 @@ def test_saving_runs_nothing_without_checks_and_checks_need_reviewed_imports(tmp
     assert refused.returncode == 1 and 'not reviewed' in refused.stderr
     allowed = bb(write, 'edit', 'quadruple@eng', '-m', 'with a check', '--dangerously-unreviewed')
     assert allowed.returncode == 0 and 'nobody reviewed' in allowed.stderr and 'Parent:' in allowed.stdout
+
+
+def test_latest_takes_name_at_lang_like_every_other_command(tmp_path):
+    draft = tmp_path / 'draft.md'
+    read = editor_env(tmp_path, f'sh -c \'cp "$0" {draft}\'')
+    bb(read, 'edit', 'slugify@eng')
+    draft.write_text(draft.read_text().replace('raise NotImplementedError', 'return 1'))
+    assert bb(editor_env(tmp_path, f'cp {draft}'), 'edit', 'slugify@eng', '-m', 'new').returncode == 0
+    assert bb(read, 'latest', 'slugify@eng').stdout == bb(read, 'latest', 'slugify', 'eng').stdout != ''
+    assert 'bb log lists every function' in bb(read, 'search').stderr

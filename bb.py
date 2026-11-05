@@ -2499,7 +2499,7 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     filters = untested or unreviewed or diverged or unused or uses
     if not query and not filters:
         print("Error: Give search terms, a filter (--untested, --unreviewed, --diverged, "
-              "--unused, --uses), or both", file=sys.stderr)
+              "--unused, --uses), or both (bb log lists every function)", file=sys.stderr)
         sys.exit(1)
 
     uses_hash = helper_resolve_to_hash(uses) if uses else None
@@ -5807,7 +5807,7 @@ def _build_parser():
 
     # Latest command
     latest_parser = subparsers.add_parser('latest', help='Find most recent version of function by name')
-    latest_parser.add_argument('name', help='Function name to find')
+    latest_parser.add_argument('name', help='Function name to find (or name@lang)')
     latest_parser.add_argument('lang', nargs='?', help='Optional language code to filter (e.g., eng, fra)')
     latest_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
 
@@ -5917,7 +5917,10 @@ def main():
                        untested=args.untested, unreviewed=args.unreviewed, diverged=args.diverged,
                        unused=args.unused, uses=args.uses)
     elif args.command == 'latest':
-        command_latest(args.name, args.lang, as_json=args.as_json)
+        name, lang = args.name, args.lang
+        if '@' in name and not lang:
+            name, lang = name.rsplit('@', 1)  # name@lang, as every other command takes it
+        command_latest(name, lang, as_json=args.as_json)
     elif args.command == 'worklog':
         if args.worklog_command == 'new':
             command_worklog_new(args.references, message=args.message)
