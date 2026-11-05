@@ -5273,42 +5273,12 @@ def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool =
     # Add main entry point
     main_func = functions[-1]  # The last one is the main function (root of dependency tree)
 
-    # Extract function signature for usage message
-    main_tree = ast.parse(main_func['code'])
-    main_func_def = None
-    for node in main_tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            main_func_def = node
-            break
-
-    # Build parameter list for usage message
-    param_names = []
-    if main_func_def and main_func_def.args.args:
-        for arg in main_func_def.args.args:
-            param_names.append(arg.arg)
-
+    # Arguments are passed as strings and the return value is not printed,
+    # as with bb run: the program does its own parsing and output
     lines.append('')
     lines.append('if __name__ == "__main__":')
     lines.append('    import sys')
-    lines.append(f'    # Entry point: {main_func["func_name"]}')
-    lines.append('    if len(sys.argv) > 1:')
-    lines.append('        args = []')
-    lines.append('        for arg in sys.argv[1:]:')
-    lines.append('            try:')
-    lines.append('                args.append(int(arg))')
-    lines.append('            except ValueError:')
-    lines.append('                try:')
-    lines.append('                    args.append(float(arg))')
-    lines.append('                except ValueError:')
-    lines.append('                    args.append(arg)')
-    lines.append(f'        result = {main_func["func_name"]}(*args)')
-    lines.append('        print(result)')
-    lines.append('    else:')
-    if param_names:
-        params_str = ' '.join(param_names)
-        lines.append('        print(f"Usage: {sys.argv[0]} ' + params_str + '")')
-    else:
-        lines.append('        print(f"Usage: {sys.argv[0]}")')
+    lines.append(f'    {main_func["func_name"]}(*sys.argv[1:])')
     lines.append('')
 
     return '\n'.join(lines)
