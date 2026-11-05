@@ -2959,6 +2959,22 @@ def code_prepare_source(source_code: str, lang: str, where: str = None) -> Dict[
     # Fail early with a clear message if there is no function definition
     code_extract_definition(tree)
 
+    # Only imports and the one function are stored: refuse rather than drop the rest
+    dropped = [node for node in tree.body
+               if not isinstance(node, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.AsyncFunctionDef))
+               and not (node is tree.body[0] and isinstance(node, ast.Expr)
+                        and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str))]
+    if dropped:
+        lines = [f"{where} has code outside its function, which bb would not store:"]
+        for node in dropped[:5]:
+            first = (ast.get_source_segment(source_code, node) or ast.unparse(node)).split('\n')[0]
+            lines.append(f"  line {node.lineno}: {first}")
+        if len(dropped) > 5:
+            lines.append(f"  ... and {len(dropped) - 5} more")
+        lines.append("A pool function is imports plus one function: move constants and setup into it,")
+        lines.append("or into functions of their own.")
+        raise ValueError('\n'.join(lines))
+
     try:
         _, normalized_code_without_docstring, docstring, name_mapping, alias_mapping = code_normalize(tree, lang)
     except Exception as e:

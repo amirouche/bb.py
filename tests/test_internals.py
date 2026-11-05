@@ -1440,3 +1440,19 @@ def test_objects_record_their_normalization(mock_bb_dir):
     path.write_text(json.dumps(data), encoding='utf-8')
     assert bb.object_normalization(legacy) == 1
 
+
+@pytest.mark.parametrize("source, line", [
+    ("LIMIT = 10\n\ndef f():\n    return LIMIT\n", "line 1: LIMIT = 10"),
+    ("def f():\n    return 1\n\nif __name__ == '__main__':\n    f()\n", "line 4: if __name__ == '__main__':"),
+    ("import flask\n\napp = flask.Flask(__name__)\n\ndef f():\n    return app\n", "line 3: app = flask.Flask(__name__)"),
+])
+def test_prepare_refuses_code_outside_the_function(mock_bb_dir, source, line):
+    """Module-level code would be silently lost: refuse it and say which line"""
+    with pytest.raises(ValueError, match="code outside its function") as error:
+        bb.code_prepare_source(source, 'eng', where="app.py")
+    assert line in str(error.value)
+
+
+def test_prepare_allows_a_module_docstring(mock_bb_dir):
+    """A module docstring is documentation, not code: dropping it loses nothing that runs"""
+    assert bb.code_prepare_source('"""Helpers."""\n\ndef f():\n    return 1\n', 'eng')['hash']
