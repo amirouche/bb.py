@@ -1723,7 +1723,7 @@ def command_latest(name: str, lang: str = None):
                 for lang_dir in func_dir.iterdir():
                     if lang_dir.is_dir() and len(lang_dir.name) == 3:
                         try:
-                            _, nm, _, _ = code_load(func_dir.name, lang_dir.name)
+                            _, nm, _, _ = code_load(hash_prefix_dir.name + func_dir.name, lang_dir.name)
                             if nm.get('_bb_v_0') == name:
                                 total_matches += 1
                                 break
