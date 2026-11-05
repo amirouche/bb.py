@@ -4512,24 +4512,41 @@ def command_edit(identifier: str, comment: str = None):
     changed checks record their own parents. The comment (asked for when
     --comment is not given) is stored in the new mappings.
 
+    A name no function has yet (in any language) starts a new function
+    from a template; it is saved with no parent. The language is then
+    required, as in `bb edit slugify@eng`.
+
     Examples:
 
     ```
     bb edit compute_pi@eng
     bb edit compute_pi@eng --comment "Faster convergence"
+    bb edit slugify@eng          # a new function
     ```
     """
-    hash_value, lang = helper_parse_identifier(identifier)
-    lang = lang or helper_pick_language(hash_value)
-    if lang not in storage_list_languages(hash_value):
-        print(f"Error: {hash_value[:12]}... has no '{lang}' mapping. Translate it first with bb translate.",
-              file=sys.stderr)
-        sys.exit(1)
-
-    # Load the function and the checks attached to it
-    original = edit_load_section(hash_value, lang)
-    original_checks = []
-    for check_hash in object_load_checks(hash_value):
+    name, _, requested_lang = identifier.partition('@')
+    is_hash = len(name) == 64 and all(c in '0123456789abcdef' for c in name.lower())
+    if not is_hash and name.isidentifier() and not helper_find_heads_by_name(name)[0]:
+        if not requested_lang:
+            print(f"Error: '{name}' is a new function: give its language, e.g. bb edit {name}@eng",
+                  file=sys.stderr)
+            sys.exit(1)
+        hash_value, lang = None, requested_lang
+        template = f'def {name}():\n    """Say what {name} does."""\n    raise NotImplementedError\n'
+        original = {'title': name, 'source': template, 'markdown': '', 'parent': None, 'mapping': '',
+                    'fingerprint': None}
+        original_checks = []
+    else:
+        hash_value, lang = helper_parse_identifier(identifier)
+        lang = lang or helper_pick_language(hash_value)
+        if lang not in storage_list_languages(hash_value):
+            print(f"Error: {hash_value[:12]}... has no '{lang}' mapping. Translate it first with bb translate.",
+                  file=sys.stderr)
+            sys.exit(1)
+        # Load the function and the checks attached to it
+        original = edit_load_section(hash_value, lang)
+        original_checks = []
+    for check_hash in (object_load_checks(hash_value) if hash_value else []):
         if code_detect_schema(check_hash) is None:
             print(f"Error: Check {check_hash[:12]}... is attached to this function "
                   f"but missing from the local pool. Fetch it with git first.", file=sys.stderr)
@@ -4563,6 +4580,10 @@ def command_edit(identifier: str, comment: str = None):
             sys.exit(1)
 
     section, prepared = plan['implementation']
+    if hash_value is None and section['source'].strip() == original['source'].strip() and not plan['checks']:
+        os.unlink(path)
+        print("No changes: the template was saved as it was, so no function was created.")
+        return
     # Without a marker, the implementation still descends from the edited function
     section['parent'] = section['parent'] or hash_value
     # Checks without a marker are matched to the loaded checks by name, then position
@@ -4610,7 +4631,7 @@ def command_edit(identifier: str, comment: str = None):
     os.unlink(path)
 
     print(f"Hash: {prepared['hash']}")
-    if prepared['hash'] != hash_value:
+    if hash_value and prepared['hash'] != hash_value:
         print(f"Parent: {hash_value}")
     for name, check_hash in new_checks:
         print(f"Check: {check_hash} {name}")
