@@ -15,7 +15,6 @@ Typical single-user workflow:
     bb add myfunction.py@eng        # add a function (English naming)
     bb show <hash>@eng              # retrieve and display it
     bb run myfunction 3 5           # execute it with arguments
-    bb check myfunction             # run associated @check tests
     bb refactor <what> <from> <to>  # swap a dependency for a new version
     bb compile <hash> -o main.py    # flatten into a standalone script
 
@@ -51,34 +50,6 @@ PYTHON_BUILTINS = set(dir(builtins))
 # By prefixing with "object_", we ensure all import names are valid
 BB_IMPORT_PREFIX = "object_"
 
-
-
-def check(target):
-    """
-    Decorator to mark a function as a test for another pool function.
-
-    This decorator is used to indicate that a function tests another function
-    in the bb pool. The decorator itself is a no-op at runtime - it simply
-    returns the decorated function unchanged. Its purpose is to be parsed by
-    the AST during `bb.py add` to extract test relationships.
-
-    Args:
-        target: The pool function being tested (e.g., object_abc123...)
-
-    Returns:
-        A decorator that returns the function unchanged
-
-    Usage:
-        from bb import check
-        from bb.pool import object_abc123 as my_func
-
-        @check(object_abc123)
-        def test_my_func():
-            return my_func(1, 2) == 3
-    """
-    def decorator(func):
-        return func
-    return decorator
 
 
 class ASTNormalizer(ast.NodeTransformer):
@@ -206,37 +177,6 @@ def code_extract_definition(tree: ast.Module) -> Tuple[Union[ast.FunctionDef, as
         raise ValueError("No function definition found in file")
 
     return function_def, imports
-
-
-def code_extract_check_decorators(function_def: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> List[str]:
-    """
-    Extract target function hashes from @check decorators.
-
-    The @check decorator marks a function as a test for another function in the pool.
-    Syntax: @check(object_HASH) where object_HASH is a bb pool import.
-
-    Args:
-        function_def: The function definition AST node
-
-    Returns:
-        List of function hashes (without object_ prefix) that this function tests
-    """
-    checks = []
-
-    for decorator in function_def.decorator_list:
-        # Look for @check(object_HASH) pattern
-        if isinstance(decorator, ast.Call):
-            # Check if it's a call to 'check'
-            if isinstance(decorator.func, ast.Name) and decorator.func.id == 'check':
-                # Get the argument (should be a Name node like 'object_abc123...')
-                if len(decorator.args) == 1 and isinstance(decorator.args[0], ast.Name):
-                    arg_name = decorator.args[0].id
-                    # Extract hash from object_HASH format
-                    if arg_name.startswith(BB_IMPORT_PREFIX):
-                        func_hash = arg_name[len(BB_IMPORT_PREFIX):]
-                        checks.append(func_hash)
-
-    return checks
 
 
 def code_create_name_mapping(function_def: Union[ast.FunctionDef, ast.AsyncFunctionDef], imports: List[ast.stmt],
@@ -538,7 +478,7 @@ def code_detect_schema(func_hash: str) -> int:
     return None
 
 
-def code_create_metadata(parent: str = None, checks: List[str] = None) -> Dict[str, any]:
+def code_create_metadata(parent: str = None) -> Dict[str, any]:
     """
     Create default metadata for a function.
 
@@ -547,11 +487,9 @@ def code_create_metadata(parent: str = None, checks: List[str] = None) -> Dict[s
     - name: User's name from config
     - email: User's email from config
     - parent: Optional parent function hash (for lineage tracking)
-    - checks: Optional list of function hashes this function tests
 
     Args:
         parent: Optional parent function hash (for fork lineage tracking)
-        checks: Optional list of function hashes this function tests (from @check decorators)
 
     Returns:
         Dictionary with metadata fields
@@ -575,8 +513,6 @@ def code_create_metadata(parent: str = None, checks: List[str] = None) -> Dict[s
     if parent:
         metadata['parent'] = parent
 
-    if checks:
-        metadata['checks'] = checks
 
     return metadata
 
@@ -846,7 +782,7 @@ def mapping_save(func_hash: str, lang: str, docstring: str,
 
 def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
                   name_mapping: Dict[str, str], alias_mapping: Dict[str, str], comment: str = "",
-                  parent: str = None, checks: List[str] = None):
+                  parent: str = None):
     """
     Save function to bb directory.
 
@@ -861,10 +797,9 @@ def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
         alias_mapping: BB function hash -> alias mapping
         comment: Optional comment explaining this mapping variant
         parent: Optional parent function hash (for fork lineage tracking)
-        checks: Optional list of function hashes this function tests (from @check decorators)
     """
-    # Create metadata (with optional parent for lineage and checks)
-    metadata = code_create_metadata(parent=parent, checks=checks)
+    # Create metadata (with optional parent for lineage)
+    metadata = code_create_metadata(parent=parent)
 
     # Save function (object.json)
     object_save(hash_value, normalized_code, metadata)
@@ -2775,10 +2710,9 @@ def code_add(file_path_with_lang: str, comment: str = ""):
         print(f"Error: Failed to parse {file_path}: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Extract function definition to get @check decorators before normalization
+    # Fail early with a clear message if the file has no function definition
     try:
-        function_def, _ = code_extract_definition(tree)
-        checks = code_extract_check_decorators(function_def)
+        code_extract_definition(tree)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -2807,26 +2741,11 @@ def code_add(file_path_with_lang: str, comment: str = ""):
             print("\nPlease add these functions to the pool first, or pull them from a remote.", file=sys.stderr)
             sys.exit(1)
 
-    # Verify all @check target hashes exist in the local pool
-    if checks:
-        missing_checks = []
-        for check_hash in checks:
-            check_dir = pool_dir / check_hash[:2] / check_hash[2:]
-            if not (check_dir / 'object.json').exists():
-                missing_checks.append(check_hash)
-
-        if missing_checks:
-            print("Error: The following @check target functions do not exist in the local pool:", file=sys.stderr)
-            for check_hash in missing_checks:
-                print(f"  - {check_hash[:12]}...", file=sys.stderr)
-            print("\nPlease add these functions to the pool first, or pull them from a remote.", file=sys.stderr)
-            sys.exit(1)
-
     # Compute hash on code WITHOUT docstring (so same logic = same hash regardless of language)
     hash_value = hash_compute(normalized_code_without_docstring)
 
     # Save to v1 format (docstring stored separately in mapping.json)
-    code_save(hash_value, lang, normalized_code_without_docstring, docstring, name_mapping, alias_mapping, comment, checks=checks)
+    code_save(hash_value, lang, normalized_code_without_docstring, docstring, name_mapping, alias_mapping, comment)
 
 
 def code_replace_docstring(code: str, new_docstring: str) -> str:
@@ -3566,175 +3485,6 @@ def helper_resolve_to_hash(identifier: str) -> str:
     """
     func_hash, _ = helper_parse_identifier(identifier)
     return func_hash
-
-
-def helper_execute_check(func_hash: str, lang: str):
-    """
-    Execute a @check function and return its boolean result.
-
-    Loads the function and its dependencies, strips bb imports, injects
-    the check decorator as a no-op, and calls the function with no arguments.
-
-    Args:
-        func_hash: Hash of the check function
-        lang: Language code
-
-    Returns:
-        The return value of the check function (typically True/False)
-    """
-    normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, lang)
-    func_name = name_mapping.get('_bb_v_0')
-
-    # Create namespace and load dependencies
-    namespace = {}
-    deps = code_extract_dependencies(normalized_code)
-    if deps:
-        for dep_hash in deps:
-            code_load_dependencies_recursive(dep_hash, lang, namespace, set())
-
-    # Denormalize code
-    normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
-    original_code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
-
-    # Strip both bb.pool and bb imports
-    tree = ast.parse(original_code)
-    new_body = []
-    for node in tree.body:
-        if isinstance(node, ast.ImportFrom) and node.module in ('bb.pool', 'bb'):
-            continue
-        new_body.append(node)
-    tree.body = new_body
-    executable_code = ast.unparse(tree)
-
-    # Set up aliases for dependencies
-    for dep_hash_key, alias in alias_mapping.items():
-        prefixed_dep_name = BB_IMPORT_PREFIX + dep_hash_key
-        if prefixed_dep_name in namespace:
-            dep_module = namespace[prefixed_dep_name]
-            if hasattr(dep_module, '_bb_v_0'):
-                namespace[alias] = dep_module._bb_v_0
-
-    # Inject check decorator as no-op
-    namespace['check'] = lambda target: lambda func: func
-
-    # Execute the code
-    exec(executable_code, namespace)
-
-    # Call the function with no arguments
-    func = namespace[func_name]
-    return func()
-
-
-def command_check(identifier: str):
-    """
-    Find and run all @check tests for the given function.
-
-    Accepts a hash or function name (with optional @lang suffix).
-    Scans the pool for functions with @check targeting this function,
-    executes each test, and reports PASS/FAIL.
-    """
-    hash_value = helper_resolve_to_hash(identifier)
-
-    pool_dir = storage_get_pool_directory()
-
-    if not pool_dir.exists():
-        print("No tests found.")
-        return
-
-    tests = []
-
-    # Scan for v1 functions (pool/XX/YYY.../object.json)
-    for hash_prefix_dir in pool_dir.iterdir():
-        if not hash_prefix_dir.is_dir():
-            continue
-
-        for func_dir in hash_prefix_dir.iterdir():
-            if not func_dir.is_dir():
-                continue
-
-            object_json = func_dir / 'object.json'
-            if not object_json.exists():
-                continue
-
-            try:
-                with open(object_json, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-
-                metadata = data.get('metadata', {})
-                checks = metadata.get('checks', [])
-
-                # Check if this function tests the target hash
-                if hash_value in checks:
-                    tests.append(data['hash'])
-            except (IOError, json.JSONDecodeError):
-                continue
-
-    if not tests:
-        print("No tests found.")
-        return
-
-    # Run each test and report results
-    config = storage_read_config()
-    preferred_langs = config['user'].get('languages', ['eng'])
-    if not preferred_langs:
-        preferred_langs = ['eng']
-
-    passed = 0
-    failed = 0
-    errors = 0
-
-    for test_hash in sorted(tests):
-        # Find test name and language
-        test_name = None
-        test_lang = None
-        for lang in preferred_langs:
-            try:
-                _, name_mapping, _, _ = code_load(test_hash, lang)
-                test_name = name_mapping.get('_bb_v_0')
-                test_lang = lang
-                if test_name:
-                    break
-            except SystemExit:
-                continue
-
-        if not test_name:
-            langs = storage_list_languages(test_hash)
-            if langs:
-                try:
-                    _, name_mapping, _, _ = code_load(test_hash, langs[0])
-                    test_name = name_mapping.get('_bb_v_0')
-                    test_lang = langs[0]
-                except SystemExit:
-                    pass
-
-        if not test_name or not test_lang:
-            print(f"ERROR {test_hash[:12]}... (could not load)")
-            errors += 1
-            continue
-
-        # Execute the test
-        try:
-            result = helper_execute_check(test_hash, test_lang)
-            if result:
-                print(f"PASS {test_name}")
-                passed += 1
-            else:
-                print(f"FAIL {test_name}")
-                failed += 1
-        except Exception as e:
-            print(f"ERROR {test_name}: {e}")
-            errors += 1
-
-    # Print summary
-    total = passed + failed + errors
-    parts = []
-    if passed:
-        parts.append(f"{passed} passed")
-    if failed:
-        parts.append(f"{failed} failed")
-    if errors:
-        parts.append(f"{errors} errors")
-    print(f"{total} checks: {', '.join(parts)}")
 
 
 def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str = None):
@@ -4626,7 +4376,6 @@ def command_skills():
         'validate': schema_validate_directory,
         'caller': command_caller,
         'tree': command_tree,
-        'check': command_check,
         'refactor': command_refactor,
         'compile': command_compile,
         'commit': command_commit,
@@ -4856,8 +4605,6 @@ def _build_parser():
     tree_parser.add_argument('identifier', help='Hash or name, with optional @lang')
 
     # Check command
-    check_parser = subparsers.add_parser('check', help='Run @check tests for a function')
-    check_parser.add_argument('identifier', help='Hash or name, with optional @lang')
 
     # Refactor command
     refactor_parser = subparsers.add_parser('refactor', help='Replace a dependency in a function')
@@ -4963,8 +4710,6 @@ def main():
         command_caller(args.identifier)
     elif args.command == 'tree':
         command_tree(args.identifier)
-    elif args.command == 'check':
-        command_check(args.identifier)
     elif args.command == 'refactor':
         command_refactor(args.what, args.from_hash, args.to_hash, args.at_hash if hasattr(args, 'at_hash') else None)
     elif args.command == 'compile':

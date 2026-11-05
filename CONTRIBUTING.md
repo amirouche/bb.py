@@ -282,7 +282,7 @@ HASH
 
 Transcripts serve dual purposes: **integration tests** AND **living documentation**. Write transcripts that tell realistic user stories, not just command catalogs.
 
-**Golden example**: See `transcripts/04-check-and-run.md` for best practices.
+**Golden example**: See `transcripts/04-run.md` for best practices.
 
 #### Key Principles
 
@@ -292,13 +292,13 @@ Transcripts serve dual purposes: **integration tests** AND **living documentatio
 
 2. **Provide context before commands** - Explain *why* before *what*
    ```markdown
-   # Chapter 2: Adding Tests
+   # Chapter 2: Collaborative Translation
 
-   Now that we have the tokenizer, let's add property-based tests using
-   @check decorators. These tests verify edge cases like empty strings
-   and Unicode handling.
+   Now that we have the tokenizer, let's add a French translation so
+   the same function reads naturally to French speakers, without
+   changing its hash.
 
-   ### Step 3: Add empty string test
+   ### Step 3: Translate the tokenizer
    ```
 
 3. **Build complexity progressively** - Start simple, then layer on features
@@ -328,10 +328,10 @@ Transcripts serve dual purposes: **integration tests** AND **living documentatio
    ## Summary
    | Command | Purpose |
    |---------|---------|
-   | bb check | Run @check tests |
+   | bb run | Execute a pool function |
 
    ## Key Insights
-   1. **@check is metadata**: Decorator parsed during `bb add`, not runtime
+   1. **Return values are not printed**: `bb run` leaves output to the function
    2. **Hash stability**: Same logic = same hash across languages
    ```
 
