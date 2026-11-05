@@ -132,6 +132,19 @@ class CLIRunner:
 
 
 
+@pytest.fixture(autouse=True)
+def isolate_from_home(tmp_path, monkeypatch):
+    """
+    Keep every test away from the real ~/.local/bb and ~/.local/state/bb.
+
+    Tests that need a specific layout still use mock_bb_dir or set their
+    own environment on top of this.
+    """
+    monkeypatch.setenv('BB_DIRECTORY', str(tmp_path / 'isolated_bb'))
+    monkeypatch.setenv('BB_STATE_DIRECTORY', str(tmp_path / 'isolated_state'))
+    monkeypatch.delenv('BB_CONFIG_PATH', raising=False)
+
+
 @pytest.fixture
 def mock_bb_dir(tmp_path, monkeypatch):
     """
