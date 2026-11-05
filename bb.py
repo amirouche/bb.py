@@ -4084,9 +4084,10 @@ def command_edit(identifier: str, comment: str = None):
     Edit a function and its checks as one markdown file, then save a fork.
 
     Opens $EDITOR on a file with an Implementation section and a Checks
-    section. Each section holds prose and examples, and exactly one
-    ```python def block: the function that is hashed. Each check takes the
-    implementation as its only argument and returns True when it passes.
+    section. Each section holds prose and examples, and exactly one code
+    block fenced as `python def`: the function that is hashed. Each check
+    takes the implementation as its only argument and returns True when it
+    passes.
 
     Saving requires the file to parse and every check to pass. The new
     function records the edited one as its parent and lists its checks;
