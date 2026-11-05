@@ -55,6 +55,28 @@ def add(a, b):
     assert "def add(a, b):" in transcript.source_files["calc.py"]
 
 
+def test_parser_extracts_markdown_source_files():
+    """Markdown source files use a ````markdown fence and may contain ``` blocks."""
+    markdown = """
+### Edit file `edit.md`
+````markdown
+## Implementation
+
+```python def
+def foo():
+    pass
+```
+````
+
+Prose that mentions `other.md` is not a source file.
+"""
+    parser = TranscriptParser()
+    transcript = parser.parse_string(markdown)
+
+    assert list(transcript.source_files) == ["edit.md"]
+    assert transcript.source_files["edit.md"] == "## Implementation\n\n```python def\ndef foo():\n    pass\n```\n"
+
+
 def test_parser_extracts_workflow_steps():
     """Test that parser extracts bash commands and expected output."""
     markdown = """

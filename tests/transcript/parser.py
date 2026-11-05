@@ -79,10 +79,11 @@ class TranscriptParser:
         return metadata
 
     def _extract_source_files(self, markdown: str) -> Dict[str, str]:
-        """Extract Python code blocks with filenames from anywhere in document.
+        """Extract source files with filenames from anywhere in document.
 
         Scans entire markdown for headings with backtick-wrapped filenames
-        followed by Python code blocks. These can appear in any section.
+        followed by Python code blocks, or by ````markdown blocks for .md
+        files. These can appear in any section.
 
         Example patterns:
             ### Fire Encoder `feu_fra.py`
@@ -106,6 +107,13 @@ class TranscriptParser:
             filename = match.group(1)
             code = match.group(2)
             source_files[filename] = code
+
+        # Markdown files (e.g. bb edit files) use a four-backtick fence so they
+        # can contain ``` blocks. The block must follow its heading directly.
+        md_pattern = r'^###?[ \t]+[^\n]*?`([^`\n]+\.md)`[^\n]*\n````markdown\n(.*?)\n````$'
+
+        for match in re.finditer(md_pattern, markdown, re.DOTALL | re.MULTILINE):
+            source_files[match.group(1)] = match.group(2) + '\n'
 
         return source_files
 
