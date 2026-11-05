@@ -277,6 +277,30 @@ $ bb tree $SUMM_HASH --json | python3 -c "import json, sys; t = json.load(sys.st
 summarize_text -> count_words
 ```
 
+### Step 25: Adding a near-copy gets a warning
+Agents (and people) tend to rewrite instead of searching. When a new
+function's structure is close to an existing one, `bb add` and `bb edit`
+say so on stderr. Names do not matter: they are normalized away.
+
+### Near-copy of tokenize `split_words_eng.py`
+```python
+def split_words(sentence):
+    """Cut a sentence into lowercase words without punctuation."""
+    import string
+    result = []
+    for piece in sentence.split():
+        cleaned = piece.strip(string.punctuation).lower()
+        if len(cleaned) > 0:
+            result.append(cleaned)
+    return result
+```
+
+```bash
+$ (bb add split_words_eng.py@eng 2>&1) | grep -v "^Hash\|^Mapping"
+Note: similar functions already exist; consider reusing or forking one:
+  80%  $TOK_HASH  tokenize
+```
+
 ---
 
 ## Summary
@@ -290,6 +314,7 @@ summarize_text -> count_words
 | `bb caller <hash>` | Find reverse dependencies | `tokenize` → 1 caller, `count_words` → 1 caller, `summarize_text` → 0 callers |
 | `bb search --untested/--unreviewed/--unused/--uses X/--diverged` | Architecture questions | 3 untested, `summarize_text` unused, `count_words` uses `tokenize` |
 | `... --json` | Output for agents | Names and dependency trees as JSON |
+| `bb add` near-copy note | Reuse before rewriting | `split_words` is 80% `tokenize` |
 
 ## Key Insights
 
