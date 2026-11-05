@@ -580,11 +580,10 @@ def storage_get_bb_directory() -> Path:
         ├── worklog/       # Worklogs: <uuid7>/worklog.json and translated messages
         ├── edit/          # Unfinished bb edit files (a scratch pad)
         ├── review/        # Signed reviews: XX/YYYY.../<key id>.json and .sig
-        ├── trust/         # allowed_signers: shared list of peers (not trusted by itself)
-        └── config.json    # Your name, email, signing key and preferred languages
+        └── trust/         # allowed_signers: shared list of peers (not trusted by itself)
 
-    Private state (review approvals, trusted peers) lives elsewhere: see
-    storage_get_state_directory.
+    Private state (config, review approvals, trusted peers) lives
+    elsewhere: see storage_get_state_directory.
     """
     env_dir = os.environ.get('BB_DIRECTORY')
     if env_dir:
@@ -604,14 +603,28 @@ def storage_get_pool_directory() -> Path:
 
 def storage_get_config_path() -> Path:
     """
-    Get the path to the config file.
-    Config is stored in $BB_DIRECTORY/config.json
-    Can be overridden with BB_CONFIG_PATH environment variable for testing.
+    Get the path to the config file: your name, email, signing key and
+    preferred languages.
+
+    It is private state, in storage_get_state_directory(), not in the
+    shared $BB_DIRECTORY: people sharing a store through git each keep
+    their own identity. Can be overridden with BB_CONFIG_PATH.
+
+    A config.json left in $BB_DIRECTORY by an older bb is copied here
+    once, with a note on stderr.
     """
     config_override = os.environ.get('BB_CONFIG_PATH')
     if config_override:
         return Path(config_override)
-    return storage_get_bb_directory() / 'config.json'
+    config_path = storage_get_state_directory() / 'config.json'
+    old_path = storage_get_bb_directory() / 'config.json'
+    if not config_path.exists() and old_path.exists():
+        import shutil
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(old_path, config_path)
+        print(f"Note: moved your config to {config_path} (private, out of the shared directory). "
+              f"You can delete {old_path}.", file=sys.stderr)
+    return config_path
 
 
 def storage_read_config() -> Dict[str, any]:
@@ -3415,7 +3428,7 @@ def schema_validate_directory() -> tuple:
         return False, errors, stats
 
     # Validate config file
-    config_path = bb_dir / 'config.json'
+    config_path = storage_get_config_path()
     if config_path.exists():
         try:
             with open(config_path, 'r', encoding='utf-8') as f:

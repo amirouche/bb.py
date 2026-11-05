@@ -917,7 +917,7 @@ def test_metadata_create_reads_from_config(mock_bb_dir):
             'languages': []
         }
     }
-    config_path = bb.storage_get_bb_directory() / 'config.json'
+    config_path = bb.storage_get_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, 'w') as f:
         json.dump(config, f)
@@ -1334,3 +1334,19 @@ def test_trust_import_asks_for_each_peer(mock_bb_dir, monkeypatch, tmp_path):
     monkeypatch.setattr('builtins.input', lambda _: next(answers))
     bb.command_trust_import()
     assert [email for email, _ in bb.trust_parse(bb.trust_private_path())] == ['alice@example.org']
+
+
+def test_config_is_private_and_migrated_once(mock_bb_dir, capsys):
+    """Config lives in the private state directory; an old shared one is copied over"""
+    old = bb.storage_get_bb_directory() / 'config.json'
+    old.parent.mkdir(parents=True, exist_ok=True)
+    old.write_text(json.dumps({'user': {'name': 'old', 'email': '', 'languages': ['eng']}}), encoding='utf-8')
+
+    path = bb.storage_get_config_path()
+    assert path == bb.storage_get_state_directory() / 'config.json'
+    assert bb.storage_get_bb_directory() not in path.parents
+    assert bb.storage_read_config()['user']['name'] == 'old'
+    assert "moved your config" in capsys.readouterr().err
+
+    bb.storage_get_config_path()
+    assert capsys.readouterr().err == ""

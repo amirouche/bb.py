@@ -96,8 +96,8 @@ class CLIRunner:
 
     Directory structure:
         bb_dir/
-        ├── pool/          # Pool directory
-        └── config.json    # Configuration file
+        └── pool/          # Pool directory
+    Private state (config, approvals) goes to a separate bb_state/ directory.
     """
 
     def __init__(self, bb_dir: Path):
@@ -140,8 +140,8 @@ def mock_bb_dir(tmp_path, monkeypatch):
 
     Directory structure:
         tmp_path/.bb/
-        ├── pool/          # Pool directory
-        └── config.json    # Configuration file
+        └── pool/          # Pool directory
+    Private state (config, approvals) goes to a separate bb_state/ directory.
     """
     base_dir = tmp_path / '.bb'
     pool_dir = base_dir / 'pool'
@@ -167,8 +167,8 @@ def cli_runner(tmp_path):
     Use this for integration tests that call CLI commands.
     Creates the directory structure:
         tmp_path/.bb/
-        ├── pool/           # Pool directory
-        └── config.json     # Configuration file
+        └── pool/           # Pool directory
+    Private state (config, approvals) goes to a separate bb_state/ directory.
     """
     bb_dir = tmp_path / '.bb'
     pool_dir = bb_dir / 'pool'

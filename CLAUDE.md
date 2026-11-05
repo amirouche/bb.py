@@ -31,7 +31,7 @@ The bb function pool location is controlled by the `BB_DIRECTORY` environment va
 - **Default**: `$HOME/.local/bb/` (follows XDG Base Directory specification)
 - **Custom location**: Set `BB_DIRECTORY=/path/to/pool` to override
 
-It holds `pool/` (functions), `worklog/` (worklogs), `edit/` (unfinished `bb edit` files), `review/` (signed reviews), `trust/` (shared list of peers) and `config.json`. Private state, your review approvals and trusted peers, lives outside it in `$BB_STATE_DIRECTORY` (default `~/.local/state/bb/`) so nobody can approve code for you through git. The user tracks the whole directory with git; bb has no commit, push or remote commands and never runs git.
+It holds `pool/` (functions), `worklog/` (worklogs), `edit/` (unfinished `bb edit` files), `review/` (signed reviews), and `trust/` (shared list of peers). Private state, your config, review approvals and trusted peers, lives outside it in `$BB_STATE_DIRECTORY` (default `~/.local/state/bb/`) so nobody can approve code for you through git. The user tracks the whole directory with git; bb has no commit, push or remote commands and never runs git.
 
 ### Data Flow
 
