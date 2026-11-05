@@ -2,7 +2,7 @@
 
 ## Metadata
 - ID: 08
-- Feature: bb edit, bb check
+- Feature: bb edit, bb review, bb validate --checks
 - Date: 2026-11-05
 - Status: draft
 - Complexity: intermediate
@@ -45,7 +45,7 @@ Mapping hash: 8987e90603c35197685ba70ead7c6a845cd7d1f64edf421eb350be3e7a372bd4
 
 ### Step 2: Nothing is attached yet
 ```bash
-$ bb check compute_pi@eng
+$ bb validate --checks compute_pi@eng
 No checks.
 ```
 
@@ -161,15 +161,44 @@ Check: 4487a0ba57b01c388b6edc53718257681a237607e616e3e765afa0b496159892 check_pi
 Check: 451a1d221bbeb6e40daa71aedbb82fea0a94eb3738dfa59c3b0aef94faa51025 check_pi_n8
 ```
 
-### Step 4: Run them any time
+### Step 4: Read before running
+Pool functions can come from anyone who can commit to the shared
+directory, and Python has no sandbox. So bb only runs checks once you
+have read and approved everything they would run: the function, each
+check, and their dependencies. Approvals are private: they live in your
+state directory (`~/.local/state/bb/`), not in the shared `$BB_DIRECTORY`.
+
 ```bash
-$ bb check compute_pi@eng
+$ (bb validate --checks compute_pi@eng || true)
+Not reviewed, checks not run:
+  compute_pi 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885 (6 to approve: bb review 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885)
+```
+
+`bb review` shows each function and asks for approval (`yes` answers for
+us here), then runs the checks on the exact code that was reviewed.
+
+```bash
+$ yes | bb review compute_pi@eng | tail -8
+Total reviewed: 6 function(s)
+
 PASS check_pi_n1
 PASS check_pi_n2
 PASS check_pi_n3
 PASS check_pi_n5
 PASS check_pi_n8
 5 checks: 5 passed
+```
+
+### Step 5: Run every reviewed check in the pool
+```bash
+$ bb validate --checks
+compute_pi 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
+  PASS check_pi_n1
+  PASS check_pi_n2
+  PASS check_pi_n3
+  PASS check_pi_n5
+  PASS check_pi_n8
+  5 checks: 5 passed
 ```
 
 ---
@@ -247,7 +276,7 @@ def check_pi_n8(compute_pi):
 
 ## Workflow
 
-### Step 5: Try to save the broken version
+### Step 6: Try to save the broken version
 ```bash
 $ (EDITOR="cp pi_broken.md" bb edit compute_pi@eng -m "Skip the first term" 2>/dev/null || true)
 FAIL check_pi_n1
@@ -258,7 +287,7 @@ FAIL check_pi_n8
 5 checks: 1 passed, 4 failed
 ```
 
-### Step 6: The name still points to the checked version
+### Step 7: The name still points to the checked version
 ```bash
 $ bb latest compute_pi eng | grep Hash
 Hash: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
@@ -352,7 +381,7 @@ def check_pi_n8(compute_pi):
 
 ## Workflow
 
-### Step 7: Save the rewrite
+### Step 8: Save the rewrite
 ```bash
 $ EDITOR="cp pi_sum.md" bb edit compute_pi@eng -m "Sum a generator instead of looping"
 PASS check_pi_n1
@@ -365,14 +394,25 @@ Hash: 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670
 Parent: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
 ```
 
-### Step 8: The name now points to the rewrite, which carries the same checks
+### Step 9: The name now points to the rewrite, which carries the same checks
 A version that was forked is never the latest, so `compute_pi@eng`
 resolves to the rewrite.
 
 ```bash
 $ bb latest compute_pi eng | grep Hash
 Hash: 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670
-$ bb check compute_pi@eng
+```
+
+The checks are already approved, but the rewrite is new code: only it
+needs reading before the checks run again.
+
+```bash
+$ (bb validate --checks compute_pi@eng || true)
+Not reviewed, checks not run:
+  compute_pi 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670 (1 to approve: bb review 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670)
+$ yes | bb review compute_pi@eng | tail -8
+Total reviewed: 7 function(s)
+
 PASS check_pi_n1
 PASS check_pi_n2
 PASS check_pi_n3
@@ -381,7 +421,7 @@ PASS check_pi_n8
 5 checks: 5 passed
 ```
 
-### Step 9: Rewording the documentation is not a fork
+### Step 10: Rewording the documentation is not a fork
 Only the prose changes, so the hash stays the same. bb writes a new
 English mapping whose parent is the previous one, and `bb show` uses it.
 
@@ -432,7 +472,7 @@ def check_pi_n8(compute_pi):
 
 ## Workflow
 
-### Step 10: Fork the check
+### Step 11: Fork the check
 ```bash
 $ EDITOR="cp n8_tighter.md" bb edit check_pi_n8@eng -m "Tighter bound"
 No checks.
@@ -440,7 +480,7 @@ Hash: e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f
 Parent: 451a1d221bbeb6e40daa71aedbb82fea0a94eb3738dfa59c3b0aef94faa51025
 ```
 
-### Step 11: Editing the fork again shows where it came from
+### Step 12: Editing the fork again shows where it came from
 ```bash
 $ EDITOR=cat bb edit e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f@eng | grep bb:parent
 <!-- bb:parent e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f -->
@@ -457,7 +497,7 @@ commands that take a name refuse it and ask for a hash.
 
 ## Workflow
 
-### Step 12: A second fork of the checked version
+### Step 13: A second fork of the checked version
 ```bash
 $ sed 's/sum((-1)/sum([(-1)/; s/range(n))$/range(n)])/' pi_sum.md > pi_list.md
 $ EDITOR="cp pi_list.md" bb edit 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885@eng -m "Sum a list"
@@ -471,7 +511,7 @@ Hash: 166d4a9cdf95cc983e6d9bbc77a71512cc5877210d5a4453b2aa89791cba47e3
 Parent: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
 ```
 
-### Step 13: The name now has two current versions
+### Step 14: The name now has two current versions
 ```bash
 $ bb latest compute_pi eng | grep "^Hash:" | sort
 Hash: 166d4a9cdf95cc983e6d9bbc77a71512cc5877210d5a4453b2aa89791cba47e3
@@ -488,7 +528,8 @@ Error: 'compute_pi@eng' is ambiguous: it has 2 current versions. Use a hash:
 |---------|---------|
 | `bb edit (name\|hash)@lang` | Edit a function and its checks in one markdown file, save a fork when all checks pass |
 | `bb edit ... -m "comment"` | Give the comment up front instead of being asked |
-| `bb check (name\|hash)@lang` | Run the checks attached to a function |
+| `bb review (name\|hash)@lang` | Read and approve a function, its checks and their dependencies, then run the checks |
+| `bb validate --checks [name\|hash]` | Run the checks of reviewed functions, one or the whole pool |
 
 ## Key Insights
 
@@ -505,3 +546,5 @@ Error: 'compute_pi@eng' is ambiguous: it has 2 current versions. Use a hash:
 6. **A check forked alone applies to nothing** until it is pasted into a function's Checks section.
 
 7. **Names never guess**: a name resolves to the versions nobody forked. When forks diverge, commands that take the name stop and list the hashes.
+
+8. **Nothing runs unread**: checks run only on code you approved with `bb review`, and `bb edit` refuses to run pool imports you have not reviewed. Approvals stay out of the shared directory, so nobody can approve code for you.

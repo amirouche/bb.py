@@ -16,7 +16,8 @@ Typical single-user workflow:
     bb show <hash>@eng              # retrieve and display it
     bb run myfunction 3 5           # execute it with arguments
     bb edit myfunction@eng          # edit it with its checks, save a fork
-    bb check myfunction             # run the checks attached to it
+    bb review myfunction@eng        # read it, approve it, run its checks
+    bb validate --checks            # run the checks of reviewed functions
     bb refactor <what> <from> <to>  # swap a dependency for a new version
     bb compile <hash> -o main.py    # flatten into a standalone script
 
@@ -1076,6 +1077,32 @@ def code_bundle_dependencies(hashes: List[str], output_dir: Path) -> Path:
     return output_dir
 
 
+def storage_get_state_directory() -> Path:
+    """
+    Get the directory for private, per-user state: review approvals.
+
+    It is deliberately outside $BB_DIRECTORY. That directory is shared
+    through git, so approvals stored there could be forged by anyone able
+    to commit to it, and forged approvals would let their code run.
+
+    Environment variable: BB_STATE_DIRECTORY, then $XDG_STATE_HOME/bb,
+    then ~/.local/state/bb.
+    """
+    env_dir = os.environ.get('BB_STATE_DIRECTORY')
+    if env_dir:
+        return Path(env_dir)
+    xdg_state = os.environ.get('XDG_STATE_HOME')
+    if xdg_state:
+        return Path(xdg_state) / 'bb'
+    home = os.environ.get('HOME', os.path.expanduser('~'))
+    return Path(home) / '.local' / 'state' / 'bb'
+
+
+def review_state_path() -> Path:
+    """Path of the file holding the hashes you approved with bb review."""
+    return storage_get_state_directory() / 'review_state.json'
+
+
 def review_load_state() -> set:
     """
     Load the set of previously reviewed function hashes.
@@ -1083,8 +1110,7 @@ def review_load_state() -> set:
     Returns:
         Set of reviewed function hashes
     """
-    bb_dir = storage_get_bb_directory()
-    state_file = bb_dir / 'review_state.json'
+    state_file = review_state_path()
 
     if not state_file.exists():
         return set()
@@ -1104,24 +1130,59 @@ def review_save_state(reviewed: set):
     Args:
         reviewed: Set of reviewed function hashes
     """
-    bb_dir = storage_get_bb_directory()
-    bb_dir.mkdir(parents=True, exist_ok=True)
-
-    state_file = bb_dir / 'review_state.json'
-    data = {'reviewed': list(reviewed)}
+    state_file = review_state_path()
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    data = {'reviewed': sorted(reviewed)}
 
     with open(state_file, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2)
 
 
+def review_closure(func_hash: str) -> List[str]:
+    """
+    Every function that runs when a function's checks run.
+
+    The function and its dependencies, then each check and its
+    dependencies, dependencies first. Checks are code too: they must be
+    approved before anything runs.
+    """
+    order: List[str] = []
+    for root in [func_hash] + object_load_checks(func_hash):
+        for dep in code_resolve_dependencies(root):
+            if dep not in order:
+                order.append(dep)
+    return order
+
+
+def review_run_checks(func_hash: str, reviewed: set) -> bool:
+    """
+    Run a function's checks if you approved everything they would run.
+
+    Returns:
+        False when a check failed, True otherwise (also when nothing ran)
+    """
+    if not object_load_checks(func_hash):
+        print("No checks.")
+        return True
+    results, missing = check_run_reviewed(func_hash, reviewed)
+    if missing:
+        print(f"Checks not run: {len(missing)} function(s) still need your approval.")
+        return True
+    return check_report(results)
+
+
 def command_review(identifier: str):
     """
-    Interactively review a function and its dependencies.
+    Interactively review a function, its dependencies and its checks.
 
     Accepts a hash or function name (with optional @lang suffix).
-    Reviews functions one at a time starting from lowest-level dependencies.
-    Requires explicit acknowledgment for security/correctness.
-    Remembers reviewed functions across invocations.
+    Reviews functions one at a time starting from lowest-level dependencies,
+    then the checks and theirs. Requires explicit acknowledgment for
+    security/correctness. Approvals are remembered in a private state
+    directory, outside the shared $BB_DIRECTORY.
+
+    Once everything is approved, the checks run on the exact code that
+    was reviewed.
     """
     hash_value = helper_resolve_to_hash(identifier)
 
@@ -1135,9 +1196,9 @@ def command_review(identifier: str):
     # Load previously reviewed functions
     reviewed = review_load_state()
 
-    # Resolve all dependencies (returns list with dependencies first, main function last)
+    # Everything that runs with the checks, dependencies first
     try:
-        all_deps = code_resolve_dependencies(hash_value)
+        all_deps = review_closure(hash_value)
     except ValueError as e:
         print(f"Error resolving dependencies: {e}", file=sys.stderr)
         sys.exit(1)
@@ -1148,7 +1209,10 @@ def command_review(identifier: str):
     if not to_review:
         print("All functions in this dependency tree have already been reviewed.")
         print(f"Total reviewed: {len(reviewed)} function(s)")
-        print("\nTo reset review state, delete: ~/.local/bb/review_state.json")
+        print(f"To reset review state, delete: {review_state_path()}")
+        print()
+        if not review_run_checks(hash_value, reviewed):
+            sys.exit(1)
         return
 
     print("Interactive Function Review")
@@ -1196,6 +1260,13 @@ def command_review(identifier: str):
                 else:
                     print("Dependencies: None")
 
+                checks = object_load_checks(current_hash)
+                if checks:
+                    print(f"Checks: {len(checks)}")
+                    for check_hash in checks:
+                        status = "✓" if check_hash in reviewed else "pending"
+                        print(f"  - {check_hash[:12]}... [{status}]")
+
                 print()
                 loaded = True
                 break
@@ -1238,6 +1309,9 @@ def command_review(identifier: str):
 
     print("Review complete!")
     print(f"Total reviewed: {len(reviewed)} function(s)")
+    print()
+    if not review_run_checks(hash_value, reviewed):
+        sys.exit(1)
 
 
 def command_log():
@@ -1642,6 +1716,7 @@ def storage_scan_functions() -> Dict[str, Dict[str, Any]]:
             functions[func_hash] = {
                 'hash': func_hash,
                 'metadata': data.get('metadata', {}),
+                'checks': data.get('checks', []),
                 'names': names,
                 'comments': comments,
             }
@@ -3323,17 +3398,13 @@ def helper_pick_language(func_hash: str, lang: str = None) -> Optional[str]:
     return languages[0]
 
 
-def code_load_function(func_hash: str, lang: str) -> Callable:
-    """Load a pool function and its dependencies as a Python callable."""
-    return code_load_dependencies_recursive(func_hash, lang, {}, set())
-
-
 def code_execute_source(source_code: str, lang: str) -> Callable:
     """
     Execute unsaved source (from an edit file) and return its function.
 
     Only imports and the function definition run, the same parts that get
-    hashed and stored. bb.pool imports are loaded from the local pool.
+    hashed and stored. bb.pool imports are loaded from the local pool, from
+    their normalized code (see code_load_normalized).
 
     Raises:
         ValueError: If a bb import cannot be loaded or the source fails to execute
@@ -3342,16 +3413,12 @@ def code_execute_source(source_code: str, lang: str) -> Callable:
     function_def, _ = code_extract_definition(tree)
 
     namespace: Dict[str, Any] = {}
+    cache: Dict[str, Callable] = {}
     body = []
     for node in tree.body:
         if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
             for alias in node.names:
-                dep_hash = alias.name[len(BB_IMPORT_PREFIX):]
-                dep_lang = helper_pick_language(dep_hash, lang)
-                try:
-                    dep = code_load_function(dep_hash, dep_lang)
-                except SystemExit:
-                    raise ValueError(f"Could not load bb import {alias.asname or alias.name}")
+                dep = code_load_normalized(alias.name[len(BB_IMPORT_PREFIX):], cache)
                 if alias.asname:
                     namespace[alias.asname] = dep
                 else:
@@ -3383,24 +3450,25 @@ def check_run(check: Callable, implementation: Callable) -> Tuple[str, str]:
     return ('PASS', '') if result else ('FAIL', '')
 
 
-def check_report(results: List[Tuple[str, str, str]]) -> bool:
+def check_report(results: List[Tuple[str, str, str]], indent: str = "") -> bool:
     """
     Print check results and a summary line.
 
     Args:
         results: List of (status, check name, detail)
+        indent: Prefix for every printed line
 
     Returns:
         True when every check passed (also when there are none)
     """
     if not results:
-        print("No checks.")
+        print(f"{indent}No checks.")
         return True
 
     counts = {'PASS': 0, 'FAIL': 0, 'ERROR': 0}
     for status, name, detail in results:
         counts[status] += 1
-        print(f"{status} {name}" + (f": {detail}" if detail else ""))
+        print(f"{indent}{status} {name}" + (f": {detail}" if detail else ""))
 
     parts = []
     if counts['PASS']:
@@ -3409,50 +3477,136 @@ def check_report(results: List[Tuple[str, str, str]]) -> bool:
         parts.append(f"{counts['FAIL']} failed")
     if counts['ERROR']:
         parts.append(f"{counts['ERROR']} errors")
-    print(f"{len(results)} checks: {', '.join(parts)}")
+    print(f"{indent}{len(results)} checks: {', '.join(parts)}")
 
     return counts['PASS'] == len(results)
 
 
-def command_check(identifier: str):
+def code_load_normalized(func_hash: str, cache: Dict[str, Callable] = None) -> Callable:
     """
-    Run the checks attached to a function.
+    Load a pool function from its normalized code, exactly as hashed.
 
-    Accepts a hash or function name (with optional @lang suffix). Each check
-    is called with the function as its only argument. Checks are attached
-    with `bb edit`. Exits with status 1 when a check fails.
+    No language mapping is applied, so what runs is the code that was
+    hashed and reviewed, whatever names a mapping displays. Each function
+    runs in its own namespace, with its bb imports bound to their own
+    loaded functions.
+
+    Raises:
+        ValueError: If the function or a dependency is missing or fails to load
     """
-    hash_value, lang = helper_parse_identifier(identifier)
-    check_hashes = object_load_checks(hash_value)
+    if cache is None:
+        cache = {}
+    if func_hash in cache:
+        return cache[func_hash]
 
-    if not check_hashes:
-        print("No checks.")
-        return
+    if code_detect_schema(func_hash) is None:
+        raise ValueError(f"Function not in the local pool: {func_hash}")
+    tree = ast.parse(object_load(func_hash)['normalized_code'])
+
+    namespace: Dict[str, Any] = {}
+    body = []
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
+            for alias in node.names:
+                dep = code_load_normalized(alias.name[len(BB_IMPORT_PREFIX):], cache)
+                namespace[alias.asname or alias.name] = types.SimpleNamespace(_bb_v_0=dep)
+            continue
+        body.append(node)
+    tree.body = body
 
     try:
-        implementation = code_load_function(hash_value, helper_pick_language(hash_value, lang))
-    except SystemExit:
-        print(f"Error: Could not load function {hash_value}", file=sys.stderr)
-        sys.exit(1)
+        exec(compile(tree, f'<bb {func_hash[:12]}>', 'exec'), namespace)
+    except Exception as e:
+        raise ValueError(f"{func_hash[:12]}... failed to load: {type(e).__name__}: {e}")
+
+    cache[func_hash] = namespace['_bb_v_0']
+    return cache[func_hash]
+
+
+def helper_function_label(func_hash: str) -> str:
+    """A function's name in your preferred language, or a short hash."""
+    lang = helper_pick_language(func_hash)
+    if lang is None:
+        return f"{func_hash[:12]}..."
+    mapping = mapping_load_json(func_hash, lang, mapping_select(func_hash, lang))
+    return mapping.get('name_mapping', {}).get('_bb_v_0') or f"{func_hash[:12]}..."
+
+
+def check_run_reviewed(func_hash: str, reviewed: set) -> Tuple[Optional[List[Tuple[str, str, str]]], List[str]]:
+    """
+    Run a function's checks, only if you approved everything that would run.
+
+    Pool functions can come from anyone with access to the shared
+    directory, and Python has no sandbox: reading the code first is the
+    protection. So nothing runs unless the function, its checks, and all
+    their dependencies are in your review approvals.
+
+    Returns:
+        (results for check_report, sorted by check name; []) when everything
+        was approved, or (None, hashes still to approve) when nothing ran
+    """
+    missing = [h for h in review_closure(func_hash) if h not in reviewed]
+    if missing:
+        return None, missing
+
+    cache: Dict[str, Callable] = {}
+    try:
+        implementation = code_load_normalized(func_hash, cache)
+    except ValueError as e:
+        return [('ERROR', helper_function_label(func_hash), str(e))], []
 
     results = []
-    for check_hash in check_hashes:
-        check_lang = helper_pick_language(check_hash, lang)
-        if check_lang is None:
-            results.append(('ERROR', f"{check_hash[:12]}...", "not in the local pool"))
-            continue
-        name = code_load(check_hash, check_lang)[1].get('_bb_v_0', check_hash[:12])
+    for check_hash in object_load_checks(func_hash):
+        name = helper_function_label(check_hash)
         try:
-            check = code_load_function(check_hash, check_lang)
-        except SystemExit:
-            results.append(('ERROR', name, "could not be loaded"))
+            check = code_load_normalized(check_hash, cache)
+        except ValueError as e:
+            results.append(('ERROR', name, str(e)))
             continue
         status, detail = check_run(check, implementation)
         results.append((status, name, detail))
 
-    # Checks are stored by hash; report them by name
     results.sort(key=lambda r: r[1])
-    if not check_report(results):
+    return results, []
+
+
+def command_validate_checks(identifier: str = None):
+    """
+    Run the checks of reviewed functions: one function, or the whole pool.
+
+    Only functions whose checks, and everything those checks run, you
+    approved with bb review are run; the others are listed as not
+    reviewed. Exits with status 1 when a check fails (or, for a single
+    function, when it is not reviewed).
+    """
+    reviewed = review_load_state()
+    if identifier:
+        targets = [helper_resolve_to_hash(identifier)]
+    else:
+        targets = sorted(h for h, f in storage_scan_functions().items() if f['checks'])
+
+    failed = False
+    not_reviewed = []
+    for func_hash in targets:
+        if not object_load_checks(func_hash):
+            print("No checks.")
+            continue
+        results, missing = check_run_reviewed(func_hash, reviewed)
+        if missing:
+            not_reviewed.append((func_hash, len(missing)))
+            continue
+        print(f"{helper_function_label(func_hash)} {func_hash}")
+        if not check_report(results, indent="  "):
+            failed = True
+        print()
+
+    if not_reviewed:
+        print("Not reviewed, checks not run:")
+        for func_hash, count in not_reviewed:
+            print(f"  {helper_function_label(func_hash)} {func_hash} "
+                  f"({count} to approve: bb review {func_hash})")
+
+    if failed or (identifier and not_reviewed):
         sys.exit(1)
 
 
@@ -3545,6 +3699,16 @@ def edit_prepare(text: str, lang: str) -> Dict[str, Any]:
     prepared_implementation = code_prepare_source(implementation['source'], lang, where="Implementation")
     checks = [(check, code_prepare_source(check['source'], lang, where=f"check '{check['title']}'"))
               for check in parsed['checks']]
+
+    # The sections were in front of you; what they import from the pool was
+    # not. Refuse to run imports you have not approved with bb review.
+    imported = {dep for _, p in [(implementation, prepared_implementation)] + checks
+                for dep in p['alias_mapping']}
+    reviewed = review_load_state()
+    missing = sorted({h for dep in imported for h in code_resolve_dependencies(dep)} - reviewed)
+    if missing:
+        raise ValueError("The edit imports functions you have not reviewed, so nothing was run:\n"
+                         + '\n'.join(f"  bb review {h}" for h in missing))
 
     function = code_execute_source(implementation['source'], lang)
 
@@ -4637,7 +4801,6 @@ def command_skills():
         'rm': command_rm,
         'run': command_run,
         'edit': command_edit,
-        'check': command_check,
         'review': command_review,
         'log': command_log,
         'search': command_search,
@@ -4821,9 +4984,6 @@ def _build_parser():
     edit_parser.add_argument('identifier', help='Hash or name, with optional @lang (e.g., compute_pi@eng)')
     edit_parser.add_argument('--comment', '-m', default=None, help='Comment for the new version (asked when omitted)')
 
-    # Check command
-    check_parser = subparsers.add_parser('check', help='Run the checks attached to a function')
-    check_parser.add_argument('identifier', help='Hash or name, with optional @lang')
 
     # Review command
     review_parser = subparsers.add_parser('review', help='Interactively review function and dependencies')
@@ -4863,6 +5023,8 @@ def _build_parser():
     # Validate command
     validate_parser = subparsers.add_parser('validate', help='Validate function or entire bb directory')
     validate_parser.add_argument('identifier', nargs='?', help='Hash or name to validate (omit for whole directory)')
+    validate_parser.add_argument('--checks', action='store_true',
+                                 help='Run the checks of functions you approved with bb review')
     validate_parser.add_argument('--all', '-a', action='store_true',
                                  help='Validate entire bb directory including pool and config')
 
@@ -4916,8 +5078,6 @@ def main():
         command_run(args.identifier, func_args=args.func_args)
     elif args.command == 'edit':
         command_edit(args.identifier, comment=args.comment)
-    elif args.command == 'check':
-        command_check(args.identifier)
     elif args.command == 'review':
         command_review(args.identifier)
     elif args.command == 'log':
@@ -4938,7 +5098,9 @@ def main():
         else:
             parser.parse_args([args.command, '--help'])
     elif args.command == 'validate':
-        if args.all or not args.identifier:
+        if args.checks:
+            command_validate_checks(args.identifier)
+        elif args.all or not args.identifier:
             # Validate entire directory
             is_valid, errors, stats = schema_validate_directory()
             print("BB Directory Validation")

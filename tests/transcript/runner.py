@@ -175,6 +175,7 @@ class TranscriptRunner:
             env={
                 **os.environ,
                 "BB_DIRECTORY": str(self.bb_directory),
+                "BB_STATE_DIRECTORY": str(self.bb_directory.parent / "bb_state"),
                 "PYTHONPATH": str(self.bb_py.parent),
                 "COVERAGE_FILE": self.coverage_file,
             }
@@ -216,6 +217,7 @@ class TranscriptRunner:
             env={
                 **os.environ,
                 "BB_DIRECTORY": str(self.bb_directory),
+                "BB_STATE_DIRECTORY": str(self.bb_directory.parent / "bb_state"),
                 "PYTHONPATH": str(self.bb_py.parent),
                 "COVERAGE_FILE": self.coverage_file,
             }
@@ -271,6 +273,7 @@ class TranscriptRunner:
             env={
                 **os.environ,
                 "BB_DIRECTORY": str(self.bb_directory),
+                "BB_STATE_DIRECTORY": str(self.bb_directory.parent / "bb_state"),
                 "PYTHONPATH": str(self.bb_py.parent),
                 "COVERAGE_FILE": self.coverage_file,
             }

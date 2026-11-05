@@ -104,7 +104,8 @@ class CLIRunner:
         self.bb_dir = bb_dir
         self.pool_dir = bb_dir / 'pool'
         self.env = {
-            'BB_DIRECTORY': str(bb_dir)
+            'BB_DIRECTORY': str(bb_dir),
+            'BB_STATE_DIRECTORY': str(bb_dir.parent / 'bb_state'),
         }
 
     def run(self, args: list, cwd: str = None) -> subprocess.CompletedProcess:
@@ -152,6 +153,8 @@ def mock_bb_dir(tmp_path, monkeypatch):
         return pool_dir
 
     monkeypatch.setattr(bb, 'storage_get_bb_directory', _get_temp_bb_dir)
+    # Review approvals are private state, kept out of the real home directory
+    monkeypatch.setenv('BB_STATE_DIRECTORY', str(tmp_path / 'bb_state'))
     monkeypatch.setattr(bb, 'storage_get_pool_directory', _get_temp_pool_dir)
     return tmp_path
 

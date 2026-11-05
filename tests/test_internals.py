@@ -1123,3 +1123,72 @@ def test_edit_assign_parents_by_name_then_position():
 def test_edit_assign_parents_new_checks_have_no_parent():
     """A check beyond the loaded ones, with a new name, has no parent"""
     assert bb.edit_assign_parents([('a', None), ('new', None)], [('a', 'h1')]) == ['h1', None]
+
+
+# ============================================================================
+# Tests for review-gated checks (nothing runs unread)
+# ============================================================================
+
+def _pool_add(source, lang='eng', checks=None):
+    """Add a function to the mocked pool from source; returns its hash."""
+    prepared = bb.code_prepare_source(source, lang)
+    func_hash = bb.code_compute_function_hash(prepared['normalized_code'], checks)
+    bb.object_save(func_hash, prepared['normalized_code'], bb.code_create_metadata(), checks=checks)
+    bb.mapping_save(func_hash, lang, prepared['docstring'], prepared['name_mapping'], prepared['alias_mapping'])
+    return func_hash
+
+
+def test_review_state_lives_outside_the_shared_directory(mock_bb_dir):
+    """Approvals committed into BB_DIRECTORY are not trusted"""
+    shared = bb.storage_get_bb_directory() / 'review_state.json'
+    shared.parent.mkdir(parents=True, exist_ok=True)
+    shared.write_text(json.dumps({'reviewed': ['f' * 64]}), encoding='utf-8')
+
+    assert bb.storage_get_bb_directory() not in bb.review_state_path().parents
+    assert bb.review_load_state() == set()
+
+
+def test_checks_do_not_run_until_everything_is_approved(mock_bb_dir, tmp_path):
+    """An unapproved check never executes, even when the function is approved"""
+    marker = tmp_path / 'ran'
+    check = _pool_add(f"def check_side_effect(f):\n    open({str(marker)!r}, 'w').close()\n    return True\n")
+    func = _pool_add("def one():\n    return 1\n", checks=[check])
+
+    results, missing = bb.check_run_reviewed(func, {func})
+    assert results is None and missing == [check]
+    assert not marker.exists()
+
+    results, missing = bb.check_run_reviewed(func, {func, check})
+    assert missing == [] and [r[0] for r in results] == ['PASS']
+    assert marker.exists()
+
+
+def test_review_closure_includes_check_dependencies(mock_bb_dir):
+    """A check's own imports must be approved too"""
+    helper = _pool_add("def six():\n    return 6\n")
+    check = _pool_add(f"from bb.pool import object_{helper} as six\n\n"
+                      f"def check_double(f):\n    return f(3) == six()\n")
+    func = _pool_add("def double(x):\n    return x * 2\n", checks=[check])
+    assert set(bb.review_closure(func)) == {func, helper, check}
+    results, _ = bb.check_run_reviewed(func, {func, helper, check})
+    assert results == [('PASS', 'check_double', '')]
+
+
+def test_code_load_normalized_runs_the_hashed_code(mock_bb_dir):
+    """What runs comes from object.json, not from a language mapping"""
+    func = _pool_add("def double(x):\n    return x * 2\n")
+    # A mapping cannot change what runs: the loaded function is the normalized one
+    assert bb.code_load_normalized(func)(21) == 42
+    assert bb.code_load_normalized(func).__name__ == '_bb_v_0'
+
+
+def test_edit_refuses_unreviewed_imports(mock_bb_dir):
+    """bb edit does not run pool functions you have not reviewed"""
+    helper = _pool_add("def six():\n    return 6\n")
+    text = (f"## Implementation\n\n```python def\nfrom bb.pool import object_{helper} as six\n\n"
+            f"def twelve():\n    return six() * 2\n```\n")
+    with pytest.raises(ValueError, match=f"bb review {helper}"):
+        bb.edit_prepare(text, 'eng')
+
+    bb.review_save_state({helper})
+    assert bb.edit_prepare(text, 'eng')['results'] == []
