@@ -26,12 +26,18 @@ Writing functions for the pool:
 - One function per file (def or async def), with its imports and, if
   you like, a module docstring. Anything else at module level (classes,
   constants, variables, code) is refused: put data in functions.
-- Use another pool function by importing it by hash, under any name:
+- Use another pool function by importing it by name or by hash:
 
+      from bb.pool import parse_amount
       from bb.pool import object_<hash> as parse_amount
 
-  The hash is printed by `bb add` (later: `bb search name`). So add
-  helpers before the functions that use them.
+  A name is resolved when you save (bb add, bb edit), in the language you
+  save in, to its one current version (the end of its lineage of edits,
+  never by date); the stored code holds that hash, so the function keeps
+  that version. A name with several current versions (two functions
+  called alike, or a fork) is refused: import one of them by hash
+  (`bb search name` shows hashes). So add helpers before the functions
+  that use them.
 - Arguments are positional: bb stores parameters as placeholders
   (_bb_v_0, ...), so a keyword cannot reach them. Call pool functions,
   the function itself and functions defined inside it without keywords
@@ -2867,6 +2873,7 @@ def code_add(file_path_with_lang: str, comment: str = ""):
         source_code = f.read()
 
     try:
+        source_code, resolved = code_resolve_pool_names(source_code, lang, where=file_path)
         prepared = code_prepare_source(source_code, lang, where=file_path)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -2876,6 +2883,8 @@ def code_add(file_path_with_lang: str, comment: str = ""):
     code_save(prepared['hash'], lang, prepared['normalized_code'], prepared['docstring'],
               prepared['name_mapping'], prepared['alias_mapping'], comment)
 
+    for name, func_hash in sorted(resolved.items()):
+        print(f"Import: {name} -> {func_hash}")
     helper_report_similar(prepared['hash'])
 
 
@@ -2992,6 +3001,56 @@ def helper_lineage(func_hash: str) -> Set[str]:
         seen.add(current)
         current = object_load(current)['metadata'].get('parent')
     return seen
+
+
+def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") -> Tuple[str, Dict[str, str]]:
+    """
+    Turn imports of pool functions by name into imports by hash.
+
+    `from bb.pool import helper` (or `... import helper as h`) names
+    `helper@lang`, resolved by lineage to its single current version (the
+    one no other function names as its parent); the import becomes
+    `from bb.pool import object_<hash> as helper`. Stored code always
+    holds a hash, so a function keeps the version it was saved with.
+    Never resolved by time: a name with several current versions (two
+    unrelated functions, or a fork) or none is refused.
+
+    Returns:
+        (source with every pool import by hash, {name: hash} resolved)
+
+    Raises:
+        ValueError: naming each import that does not resolve to one version
+    """
+    try:
+        tree = ast.parse(source_code)
+    except SyntaxError:
+        return source_code, {}  # code_prepare_source reports it
+    resolved: Dict[str, str] = {}
+    problems: List[str] = []
+    replacements = []
+    for node in tree.body:
+        if not (isinstance(node, ast.ImportFrom) and node.module == 'bb.pool'):
+            continue
+        names = [alias for alias in node.names if not alias.name.startswith(BB_IMPORT_PREFIX)]
+        if not names:
+            continue
+        for alias in names:
+            heads, functions = helper_find_heads_by_name(alias.name, lang)
+            if len(heads) == 1:
+                resolved[alias.name] = heads[0]
+                alias.asname, alias.name = alias.asname or alias.name, BB_IMPORT_PREFIX + heads[0]
+            elif not heads:
+                problems.append(f"  {alias.name}: no function called '{alias.name}' in {lang}")
+            else:
+                problems.append(f"  {alias.name}: {len(heads)} current versions; import one by its hash:")
+                problems += [f"    {helper_describe_function(functions[h], lang)}" for h in heads]
+        replacements.append((node.lineno, node.end_lineno, ast.unparse(node)))
+    if problems:
+        raise ValueError(f"{where}: pool imports by name must name one current version:\n" + '\n'.join(problems))
+    lines = source_code.splitlines(keepends=True)
+    for start, end, text in sorted(replacements, reverse=True):
+        lines[start - 1:end] = [text + '\n']
+    return ''.join(lines), resolved
 
 
 def code_check_positional(source_code: str, tree: ast.Module, where: str):
@@ -4454,6 +4513,11 @@ def edit_prepare(text: str, lang: str, unreviewed: bool = False) -> Dict[str, An
     parsed = markdown_parse_edit(text)
 
     implementation = parsed['implementation']
+    # Pool imports by name become imports by hash before anything else reads the code
+    resolved = {}
+    for section, where in [(implementation, "Implementation")] + [(c, f"check '{c['title']}'") for c in parsed['checks']]:
+        section['source'], names = code_resolve_pool_names(section['source'], lang, where=where)
+        resolved.update(names)
     prepared_implementation = code_prepare_source(implementation['source'], lang, where="Implementation")
     checks = [(check, code_prepare_source(check['source'], lang, where=f"check '{check['title']}'"))
               for check in parsed['checks']]
@@ -4461,7 +4525,8 @@ def edit_prepare(text: str, lang: str, unreviewed: bool = False) -> Dict[str, An
     # Saving is not running: only checks run the code. Without them nothing
     # is executed, so nothing it imports needs to have been reviewed.
     if not checks:
-        return {'implementation': (implementation, prepared_implementation), 'checks': [], 'results': []}
+        return {'implementation': (implementation, prepared_implementation), 'checks': [], 'results': [],
+                'resolved': resolved}
 
     # The sections were in front of you; what they import from the pool was
     # not. Refuse to run imports you have not approved with bb review.
@@ -4491,6 +4556,7 @@ def edit_prepare(text: str, lang: str, unreviewed: bool = False) -> Dict[str, An
         'implementation': (implementation, prepared_implementation),
         'checks': checks,
         'results': results,
+        'resolved': resolved,
     }
 
 
@@ -4688,6 +4754,8 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False)
         print(f"Parent: {hash_value}")
     for name, check_hash in new_checks:
         print(f"Check: {check_hash} {name}")
+    for name, func_hash in sorted(plan.get('resolved', {}).items()):
+        print(f"Import: {name} -> {func_hash}")
 
     if prepared['hash'] != hash_value:
         helper_report_similar(prepared['hash'], helper_lineage(prepared['hash']) | set(check_hashes))
