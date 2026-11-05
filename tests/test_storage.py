@@ -4,6 +4,7 @@ Tests for storage functions.
 Tests for saving and loading functions.
 """
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -445,3 +446,57 @@ def test_find_latest_by_name_prefers_fork_over_parent(mock_bb_dir):
         bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "")
 
     assert bb.helper_find_latest_by_name("f")[0] == child_hash
+
+
+# ============================================================================
+# Tests for worklogs
+# ============================================================================
+
+def test_uuid7_layout(monkeypatch):
+    """The fallback uuid7 sets version 7, the RFC variant, and starts with the time"""
+    monkeypatch.delattr(bb.uuid, 'uuid7', raising=False)
+    monkeypatch.setattr(bb.time, 'time_ns', lambda: 1_700_000_000_123_000_000)
+    value = bb.storage_uuid7()
+    assert value.version == 7
+    assert value.variant == bb.uuid.RFC_4122
+    assert value.int >> 80 == 1_700_000_000_123
+
+
+def test_uuid7_sorts_by_time(monkeypatch):
+    """Later uuid7 values sort after earlier ones"""
+    monkeypatch.delattr(bb.uuid, 'uuid7', raising=False)
+    times = iter([1_000_000_000, 2_000_000_000])
+    monkeypatch.setattr(bb.time, 'time_ns', lambda: next(times))
+    assert str(bb.storage_uuid7()) < str(bb.storage_uuid7())
+
+
+def test_worklog_message_hash_is_canonical():
+    """The translation hash covers language and message, in sorted-key compact JSON"""
+    expected = bb.hash_compute('{"language": "fra", "message": "Été"}')
+    assert bb.worklog_compute_message_hash("fra", "Été") == expected
+    assert bb.worklog_compute_message_hash("eng", "Été") != expected
+
+
+def test_worklog_save_and_translate(mock_bb_dir, monkeypatch):
+    """A worklog keeps its original language, references, and every translation"""
+    monkeypatch.setattr(bb, 'storage_get_worklog_directory', lambda: mock_bb_dir / '.bb' / 'worklog')
+    ref = "a" * 64 + "@eng@" + "b" * 64
+    worklog_id, original_hash = bb.worklog_save("eng", "Explored", [ref])
+    french_hash = bb.worklog_save_message(worklog_id, "fra", "Exploré")
+
+    worklog = bb.worklog_load(worklog_id)
+    assert worklog['uuid'] == worklog_id
+    assert worklog['language'] == "eng"
+    assert worklog['references'] == [ref]
+    assert worklog['messages'] == {"eng": [(original_hash, "Explored")], "fra": [(french_hash, "Exploré")]}
+    assert [w['uuid'] for w in bb.worklog_list()] == [worklog_id]
+
+
+def test_worklog_pick_message_prefers_requested_then_config():
+    """The requested language wins, then the user's languages, then the original"""
+    worklog = {'language': 'eng', 'messages': {'eng': [('h1', 'Hello')], 'fra': [('h2', 'Bonjour')]}}
+    with patch.object(bb, 'storage_read_config', return_value={'user': {'languages': ['kab', 'fra']}}):
+        assert bb.worklog_pick_message(worklog, 'eng') == ('eng', 'Hello')
+        assert bb.worklog_pick_message(worklog) == ('fra', 'Bonjour')
+    with patch.object(bb, 'storage_read_config', return_value={'user': {'languages': ['kab']}}):
+        assert bb.worklog_pick_message(worklog) == ('eng', 'Hello')

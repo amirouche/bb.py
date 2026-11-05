@@ -2069,6 +2069,308 @@ def command_log():
         print()
 
 
+# ============================================================================
+# Worklogs
+# ============================================================================
+#
+# A worklog is a note about work done, like an empty git commit, that can be
+# attached to function translations. It is neither a function nor a mapping:
+#
+#     $BB_DIRECTORY/worklog/<uuid7>/worklog.json
+#         uuid, original language, author metadata, attached translations
+#     $BB_DIRECTORY/worklog/<uuid7>/<lang>/XX/YYYY.../message.json
+#         one translation of the message (the original included),
+#         content-addressed by the hash of {"language", "message"}
+
+def storage_uuid7() -> uuid.UUID:
+    """
+    Create a UUIDv7: 48 bits of Unix time in milliseconds, then random bits.
+
+    UUIDv7 values sort by creation time. Uses uuid.uuid7 when Python has it (3.14+).
+    """
+    if hasattr(uuid, 'uuid7'):
+        return uuid.uuid7()
+    timestamp_ms = time.time_ns() // 1_000_000
+    random_bits = int.from_bytes(os.urandom(10), 'big')
+    rand_a = random_bits >> 68                   # 12 bits
+    rand_b = random_bits & ((1 << 62) - 1)       # 62 bits
+    value = ((timestamp_ms & ((1 << 48) - 1)) << 80) | (0x7 << 76) | (rand_a << 64) | (0b10 << 62) | rand_b
+    return uuid.UUID(int=value)
+
+
+def storage_get_worklog_directory() -> Path:
+    """
+    Get the directory where worklogs are stored.
+    Returns: $BB_DIRECTORY/worklog/
+    """
+    return storage_get_bb_directory() / 'worklog'
+
+
+def worklog_compute_message_hash(lang: str, message: str) -> str:
+    """Hash one worklog translation from its canonical JSON form."""
+    canonical_json = json.dumps({'language': lang, 'message': message}, sort_keys=True, ensure_ascii=False)
+    return hash_compute(canonical_json)
+
+
+def worklog_save_message(worklog_id: str, lang: str, message: str) -> str:
+    """
+    Save one translation of a worklog message.
+
+    Returns:
+        The translation hash
+    """
+    message_hash = worklog_compute_message_hash(lang, message)
+    message_dir = storage_get_worklog_directory() / worklog_id / lang / message_hash[:2] / message_hash[2:]
+    message_dir.mkdir(parents=True, exist_ok=True)
+    with open(message_dir / 'message.json', 'w', encoding='utf-8') as f:
+        json.dump({'language': lang, 'message': message}, f, indent=2, ensure_ascii=False)
+    return message_hash
+
+
+def worklog_save(lang: str, message: str, references: List[str]) -> Tuple[str, str]:
+    """
+    Create a worklog with its original message.
+
+    Args:
+        lang: Language of the message
+        message: The message
+        references: Attached translations, as hash@lang@mapping_hash
+
+    Returns:
+        (worklog uuid, translation hash)
+    """
+    worklog_id = str(storage_uuid7())
+    worklog_dir = storage_get_worklog_directory() / worklog_id
+    worklog_dir.mkdir(parents=True)
+
+    data = {
+        'schema_version': 1,
+        'uuid': worklog_id,
+        'language': lang,
+        'references': references,
+        'metadata': code_create_metadata(),
+    }
+    with open(worklog_dir / 'worklog.json', 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    return worklog_id, worklog_save_message(worklog_id, lang, message)
+
+
+def worklog_load(worklog_id: str) -> Dict[str, Any]:
+    """
+    Load a worklog with all its translations.
+
+    Returns:
+        The worklog.json data plus 'messages': {lang: [(hash, message), ...]}
+    """
+    worklog_dir = storage_get_worklog_directory() / worklog_id
+    with open(worklog_dir / 'worklog.json', 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    messages: Dict[str, List[Tuple[str, str]]] = {}
+    for message_json in sorted(worklog_dir.glob('*/*/*/message.json')):
+        with open(message_json, 'r', encoding='utf-8') as f:
+            message = json.load(f)
+        message_hash = message_json.parent.parent.name + message_json.parent.name
+        messages.setdefault(message['language'], []).append((message_hash, message['message']))
+    data['messages'] = messages
+    return data
+
+
+def worklog_list() -> List[Dict[str, Any]]:
+    """List every worklog, whatever its language, newest first."""
+    worklog_dir = storage_get_worklog_directory()
+    if not worklog_dir.exists():
+        return []
+    worklogs = [worklog_load(d.name) for d in worklog_dir.iterdir() if (d / 'worklog.json').exists()]
+    # UUIDv7 sorts by creation time
+    worklogs.sort(key=lambda w: w['uuid'], reverse=True)
+    return worklogs
+
+
+def worklog_resolve(identifier: str) -> str:
+    """Resolve a full worklog uuid or a unique prefix of one."""
+    worklog_dir = storage_get_worklog_directory()
+    candidates = [d.name for d in worklog_dir.iterdir()] if worklog_dir.exists() else []
+    matches = [c for c in candidates if c.startswith(identifier.lower())]
+    if len(matches) != 1:
+        problem = "No worklog matches" if not matches else "Several worklogs match"
+        print(f"Error: {problem}: {identifier}", file=sys.stderr)
+        sys.exit(1)
+    return matches[0]
+
+
+def worklog_pick_message(worklog: Dict[str, Any], lang: str = None) -> Tuple[str, str]:
+    """
+    Pick the message to display: lang, then preferred languages, then the original.
+
+    Returns:
+        (language, message)
+    """
+    preferred = [lang] if lang else []
+    preferred += storage_read_config()['user'].get('languages') or []
+    for candidate in preferred + [worklog['language']]:
+        if candidate in worklog['messages']:
+            return candidate, worklog['messages'][candidate][0][1]
+    first = sorted(worklog['messages'])[0]
+    return first, worklog['messages'][first][0][1]
+
+
+def helper_resolve_translation(identifier: str) -> str:
+    """
+    Resolve an identifier to an exact translation: hash@lang@mapping_hash.
+
+    Accepts name@lang, hash@lang and hash@lang@mapping_hash.
+    """
+    parts = identifier.split('@')
+    if len(parts) == 3:
+        func_hash, lang, mapping_hash = parts
+        if mapping_hash not in [m for m, _ in mappings_list(func_hash, lang)]:
+            print(f"Error: Translation not found: {identifier}", file=sys.stderr)
+            sys.exit(1)
+        return identifier
+
+    func_hash, lang = helper_parse_identifier(identifier)
+    if lang is None:
+        print(f"Error: Missing language suffix: {identifier} (use name@lang or hash@lang)", file=sys.stderr)
+        sys.exit(1)
+    mapping_hash = mapping_select(func_hash, lang)
+    if mapping_hash is None:
+        print(f"Error: {func_hash[:12]}... has no '{lang}' translation", file=sys.stderr)
+        sys.exit(1)
+    return f"{func_hash}@{lang}@{mapping_hash}"
+
+
+def helper_edit_message(lang: str, context: str = "") -> str:
+    """
+    Ask for a message in $EDITOR. Lines starting with # are ignored.
+
+    Args:
+        lang: Language the message should be written in (shown to the user)
+        context: Optional text shown as # comments, e.g. the original message
+
+    Returns:
+        The message, stripped; empty when the user wrote nothing
+    """
+    lines = ['', f'# Write the worklog message above, in {lang}.', '# Lines starting with # are ignored.']
+    if context:
+        lines += ['#'] + [f'# {line}'.rstrip() for line in context.split('\n')]
+    fd, path = tempfile.mkstemp(prefix='worklog-', suffix='.txt')
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines) + '\n')
+    try:
+        helper_run_editor(path)
+        with open(path, 'r', encoding='utf-8') as f:
+            kept = [line.rstrip() for line in f if not line.startswith('#')]
+    finally:
+        os.unlink(path)
+    return '\n'.join(kept).strip()
+
+
+def command_worklog_new(references: List[str], message: str = None):
+    """
+    Create a worklog in your preferred language.
+
+    A worklog is a note about work done, like an empty git commit. It can be
+    attached to any number of function translations (name@lang, hash@lang
+    or hash@lang@mapping_hash), or to none. The message is asked for in
+    $EDITOR when --message is not given.
+
+    Examples:
+
+    ```
+    bb worklog new -m "Explored faster series for pi"
+    bb worklog new compute_pi@eng calculer_pi@fra -m "Reviewed both translations"
+    ```
+    """
+    preferred = storage_read_config()['user'].get('languages') or ['eng']
+    lang = preferred[0]
+    resolved = [helper_resolve_translation(r) for r in references]
+
+    if message is None:
+        message = helper_edit_message(lang)
+    message = message.strip()
+    if not message:
+        print("Error: Empty worklog message, nothing saved", file=sys.stderr)
+        sys.exit(1)
+
+    worklog_id, message_hash = worklog_save(lang, message, resolved)
+    print(f"Worklog: {worklog_id}")
+    print(f"Message hash: {message_hash}")
+
+
+def command_worklog_translate(identifier: str, lang: str, message: str = None):
+    """
+    Add a translation of a worklog message.
+
+    The original message is shown in $EDITOR when --message is not given.
+    """
+    worklog_id = worklog_resolve(identifier)
+    worklog = worklog_load(worklog_id)
+
+    if message is None:
+        _, original = worklog_pick_message(worklog, worklog['language'])
+        message = helper_edit_message(lang, context=f"Original ({worklog['language']}):\n{original}")
+    message = message.strip()
+    if not message:
+        print("Error: Empty worklog message, nothing saved", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Message hash: {worklog_save_message(worklog_id, lang, message)}")
+
+
+def command_worklog_list():
+    """
+    List every worklog, whatever its language, newest first.
+
+    Each worklog shows in your preferred language when it has a translation
+    in it, otherwise in its original language.
+    """
+    worklogs = worklog_list()
+    if not worklogs:
+        print("No worklogs.")
+        return
+
+    for worklog in worklogs:
+        shown_lang, message = worklog_pick_message(worklog)
+        metadata = worklog['metadata']
+        print(f"Worklog: {worklog['uuid']}")
+        print(f"Date: {metadata.get('created', 'unknown')}")
+        print(f"Author: {helper_format_author(metadata)}")
+        print(f"Languages: {', '.join(sorted(worklog['messages']))}")
+        for reference in worklog['references']:
+            print(f"Attached: {reference}")
+        print()
+        for line in message.split('\n'):
+            print(f"    {line}".rstrip())
+        print()
+
+
+def command_worklog_show(identifier: str):
+    """
+    Show one worklog: identifier is a uuid (or unique prefix), with optional @lang.
+    """
+    part, _, lang = identifier.partition('@')
+    worklog = worklog_load(worklog_resolve(part))
+    if lang and lang not in worklog['messages']:
+        print(f"Error: Worklog has no '{lang}' translation (has: {', '.join(sorted(worklog['messages']))})",
+              file=sys.stderr)
+        sys.exit(1)
+    shown_lang, message = worklog_pick_message(worklog, lang or None)
+    print(f"Worklog: {worklog['uuid']}@{shown_lang}")
+    for reference in worklog['references']:
+        print(f"Attached: {reference}")
+    print()
+    print(message)
+
+
+def helper_format_author(metadata: Dict[str, Any]) -> str:
+    """Format the author recorded in metadata as 'name <email>'."""
+    name = metadata.get('name') or 'unknown'
+    email = metadata.get('email')
+    return f"{name} <{email}>" if email else name
+
+
 def helper_find_latest_by_name(name: str, lang: str = None) -> Tuple[str, str, str]:
     """
     Find the most recent version of a function by name.
@@ -5138,6 +5440,18 @@ def command_skills():
         'sync': command_remote_sync,
     }
 
+    worklog_handler_map = {
+        'new': command_worklog_new,
+        'translate': command_worklog_translate,
+        'list': command_worklog_list,
+        'show': command_worklog_show,
+    }
+
+    nested_handler_maps = {
+        'remote': remote_handler_map,
+        'worklog': worklog_handler_map,
+    }
+
     lines = []
     lines.append("# bb Skills")
     lines.append("")
@@ -5211,7 +5525,7 @@ def command_skills():
         # Handle nested subcommands (e.g., remote add/remove/list/pull/push/sync)
         if nested_action:
             for sub_name, sub_parser in nested_action.choices.items():
-                sub_handler = remote_handler_map.get(sub_name)
+                sub_handler = nested_handler_maps.get(cmd_name, {}).get(sub_name)
                 sub_title, sub_body = _skills_parse_docstring(sub_handler)
 
                 sub_usage = [f"bb {cmd_name} {sub_name}"]
@@ -5346,6 +5660,25 @@ def _build_parser():
     # Remote sync
     remote_sync_parser = remote_subparsers.add_parser('sync', help='Pull rebase then push to all remotes')
 
+    # Worklog command with subcommands
+    worklog_parser = subparsers.add_parser('worklog', help='Write, translate and list worklogs')
+    worklog_subparsers = worklog_parser.add_subparsers(dest='worklog_command', help='Worklog subcommands')
+
+    worklog_new_parser = worklog_subparsers.add_parser('new', help='Create a worklog in your preferred language')
+    worklog_new_parser.add_argument('references', nargs='*',
+                                    help='Translations to attach: name@lang, hash@lang or hash@lang@mapping_hash')
+    worklog_new_parser.add_argument('--message', '-m', default=None, help='Message (asked in $EDITOR when omitted)')
+
+    worklog_translate_parser = worklog_subparsers.add_parser('translate', help='Translate a worklog message')
+    worklog_translate_parser.add_argument('identifier', help='Worklog uuid or unique prefix')
+    worklog_translate_parser.add_argument('lang', help='Target language code (e.g., fra)')
+    worklog_translate_parser.add_argument('--message', '-m', default=None, help='Message (asked in $EDITOR when omitted)')
+
+    worklog_subparsers.add_parser('list', help='List every worklog, newest first')
+
+    worklog_show_parser = worklog_subparsers.add_parser('show', help='Show a worklog')
+    worklog_show_parser.add_argument('identifier', help='Worklog uuid or unique prefix, with optional @lang')
+
     # Validate command
     validate_parser = subparsers.add_parser('validate', help='Validate function or entire bb directory')
     validate_parser.add_argument('identifier', nargs='?', help='Hash or name to validate (omit for whole directory)')
@@ -5430,7 +5763,18 @@ def main():
         elif args.remote_command == 'sync':
             command_remote_sync()
         else:
-            remote_parser.print_help()
+            parser.parse_args([args.command, '--help'])
+    elif args.command == 'worklog':
+        if args.worklog_command == 'new':
+            command_worklog_new(args.references, message=args.message)
+        elif args.worklog_command == 'translate':
+            command_worklog_translate(args.identifier, args.lang, message=args.message)
+        elif args.worklog_command == 'list':
+            command_worklog_list()
+        elif args.worklog_command == 'show':
+            command_worklog_show(args.identifier)
+        else:
+            parser.parse_args([args.command, '--help'])
     elif args.command == 'validate':
         if args.all or not args.identifier:
             # Validate entire directory
