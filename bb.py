@@ -426,7 +426,7 @@ def hash_compute(code: str, algorithm: str = 'sha256') -> str:
 
 def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
                         alias_mapping: Dict[str, str], comment: str = "",
-                        markdown: str = "") -> str:
+                        markdown: str = "", parent: str = "") -> str:
     """
     Compute content-addressed hash for a mapping.
 
@@ -436,6 +436,7 @@ def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
     - alias_mapping
     - comment
     - markdown (only when non-empty, so older mappings keep their hash)
+    - parent (only when set, same reason)
 
     This enables deduplication: identical mappings share the same hash and storage.
 
@@ -445,6 +446,7 @@ def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
         alias_mapping: BB function hash -> alias mapping
         comment: Optional comment explaining this mapping variant
         markdown: Optional markdown documentation (from bb edit)
+        parent: Optional translation this mapping derives from, as hash@lang@mapping_hash
 
     Returns:
         64-character hex hash (SHA256)
@@ -457,6 +459,8 @@ def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
     }
     if markdown:
         mapping_dict['markdown'] = markdown
+    if parent:
+        mapping_dict['parent'] = parent
 
     # Create canonical JSON (sorted keys, no whitespace)
     canonical_json = json.dumps(mapping_dict, sort_keys=True, ensure_ascii=False)
@@ -739,7 +743,7 @@ def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any])
 
 def mapping_save(func_hash: str, lang: str, docstring: str,
                  name_mapping: Dict[str, str], alias_mapping: Dict[str, str],
-                 comment: str = "", markdown: str = "") -> str:
+                 comment: str = "", markdown: str = "", parent: str = "") -> str:
     """
     Save language mapping to bb directory.
 
@@ -757,6 +761,7 @@ def mapping_save(func_hash: str, lang: str, docstring: str,
         alias_mapping: BB function hash -> alias mapping
         comment: Optional comment explaining this mapping variant
         markdown: Optional markdown documentation, stored under the 'markdown' key
+        parent: Optional translation this mapping derives from, as hash@lang@mapping_hash
 
     Returns:
         Mapping hash (64-character hex)
@@ -764,7 +769,7 @@ def mapping_save(func_hash: str, lang: str, docstring: str,
     pool_dir = storage_get_pool_directory()
 
     # Compute mapping hash
-    mapping_hash = code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment, markdown)
+    mapping_hash = code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment, markdown, parent)
 
     # Create mapping directory: pool/XX/Y.../lang/ZZ/W.../
     func_dir = pool_dir / func_hash[:2] / func_hash[2:]
@@ -782,6 +787,8 @@ def mapping_save(func_hash: str, lang: str, docstring: str,
     }
     if markdown:
         data['markdown'] = markdown
+    if parent:
+        data['parent'] = parent
 
     with open(mapping_json, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -2041,6 +2048,8 @@ def command_translate(identifier_with_lang: str, target_lang: str, recursive: bo
     except SystemExit:
         print(f"Error: Could not load function {hash_value}@{source_lang}", file=sys.stderr)
         sys.exit(1)
+    # The new translation records the exact one it was made from
+    source_translation = f"{hash_value}@{source_lang}@{mapping_select(hash_value, source_lang)}"
 
     # Show source code for reference
     print(f"Source function ({source_lang}):")
@@ -2080,7 +2089,8 @@ def command_translate(identifier_with_lang: str, target_lang: str, recursive: bo
     comment = input("Optional comment for this translation (press Enter to skip): ").strip()
 
     # Save the translation
-    mapping_hash = mapping_save(hash_value, target_lang, target_docstring, name_mapping_target, alias_mapping_target, comment)
+    mapping_hash = mapping_save(hash_value, target_lang, target_docstring, name_mapping_target, alias_mapping_target,
+                                comment, parent=source_translation)
 
     print(f"Mapping hash: {mapping_hash}")
     print()
@@ -2677,33 +2687,57 @@ def mapping_load(func_hash: str, lang: str, mapping_hash: str) -> Tuple[str, Dic
     return docstring, name_mapping, alias_mapping, comment
 
 
-def mapping_select(func_hash: str, lang: str) -> Optional[str]:
-    """
-    Pick the mapping used by default for a function in a language.
-
-    With several mappings, the first one alphabetically wins for now.
-
-    Returns:
-        Mapping hash, or None if the language has no mapping
-    """
-    mappings = mappings_list(func_hash, lang)
-    if not mappings:
-        return None
-    return sorted(mappings, key=lambda x: x[0])[0][0]
+def mapping_load_json(func_hash: str, lang: str, mapping_hash: str) -> Dict[str, Any]:
+    """Load the raw mapping.json data ({} when missing or unreadable)."""
+    pool_dir = storage_get_pool_directory()
+    mapping_json = (pool_dir / func_hash[:2] / func_hash[2:] / lang /
+                    mapping_hash[:2] / mapping_hash[2:] / 'mapping.json')
+    try:
+        with open(mapping_json, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (IOError, json.JSONDecodeError):
+        return {}
 
 
 def mapping_load_markdown(func_hash: str, lang: str, mapping_hash: str) -> str:
     """
     Load the markdown documentation of a mapping ('' when it has none).
     """
-    pool_dir = storage_get_pool_directory()
-    mapping_json = (pool_dir / func_hash[:2] / func_hash[2:] / lang /
-                    mapping_hash[:2] / mapping_hash[2:] / 'mapping.json')
-    try:
-        with open(mapping_json, 'r', encoding='utf-8') as f:
-            return json.load(f).get('markdown', '')
-    except (IOError, json.JSONDecodeError):
-        return ''
+    return mapping_load_json(func_hash, lang, mapping_hash).get('markdown', '')
+
+
+def mapping_leaves(func_hash: str, lang: str) -> List[str]:
+    """
+    List the current mappings of a function in a language.
+
+    A mapping that another mapping of the same function and language names
+    as its parent was superseded and is left out.
+
+    Returns:
+        Mapping hashes, sorted
+    """
+    mappings = [m for m, _ in mappings_list(func_hash, lang)]
+    prefix = f"{func_hash}@{lang}@"
+    superseded = set()
+    for mapping_hash in mappings:
+        parent = mapping_load_json(func_hash, lang, mapping_hash).get('parent', '')
+        if parent.startswith(prefix):
+            superseded.add(parent[len(prefix):])
+    return sorted(m for m in mappings if m not in superseded)
+
+
+def mapping_select(func_hash: str, lang: str) -> Optional[str]:
+    """
+    Pick the mapping used by default for a function in a language.
+
+    Superseded mappings are skipped; among the remaining variants the
+    first one alphabetically wins for now.
+
+    Returns:
+        Mapping hash, or None if the language has no mapping
+    """
+    leaves = mapping_leaves(func_hash, lang)
+    return leaves[0] if leaves else None
 
 
 def code_load(hash_value: str, lang: str, mapping_hash: str = None) -> Tuple[str, Dict[str, str], Dict[str, str], str]:
@@ -2797,13 +2831,14 @@ def code_show(identifier: str):
     if mapping_hash is not None:
         # Explicit mapping hash provided
         selected_hash = mapping_hash
-    elif len(mappings) == 1:
-        # Only one mapping - show it directly
-        selected_hash, _ = mappings[0]
+    elif len(mapping_leaves(hash_value, lang)) == 1:
+        # One current mapping (older ones were superseded) - show it directly
+        selected_hash = mapping_leaves(hash_value, lang)[0]
     else:
-        # Multiple mappings - show selection menu
+        # Several current variants - show selection menu
+        leaves = set(mapping_leaves(hash_value, lang))
         print(f"Multiple mappings found for '{lang}'. Please choose one:\n")
-        for m_hash, comment in sorted(mappings):
+        for m_hash, comment in sorted(m for m in mappings if m[0] in leaves):
             comment_suffix = f"  # {comment}" if comment else ""
             print(f"bb show {hash_value}@{lang}@{m_hash}{comment_suffix}")
         return
@@ -3348,8 +3383,9 @@ def edit_load_section(func_hash: str, lang: str) -> Dict[str, Any]:
     Falls back to another language when the function has no mapping in lang.
 
     Returns:
-        Section dict (source, markdown, parent, title) plus 'fingerprint',
-        used to tell whether the user changed anything
+        Section dict (source, markdown, parent, title) plus 'mapping', the
+        exact translation loaded (hash@lang@mapping_hash), and
+        'fingerprint', used to tell whether the user changed anything
     """
     section_lang = helper_pick_language(func_hash, lang)
     if section_lang is None:
@@ -3366,6 +3402,7 @@ def edit_load_section(func_hash: str, lang: str) -> Dict[str, Any]:
         'source': source + '\n',
         'markdown': markdown,
         'parent': func_hash,
+        'mapping': f"{func_hash}@{section_lang}@{mapping_hash}",
         'fingerprint': edit_fingerprint(func_hash, docstring, name_mapping, alias_mapping, markdown),
     }
 
@@ -3448,14 +3485,16 @@ def edit_prepare(text: str, lang: str) -> Dict[str, Any]:
 
 
 def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: str,
-                      comment: str, checks: List[str] = None, unchanged: bool = False) -> bool:
+                      comment: str, checks: List[str] = None, unchanged: bool = False,
+                      mapping_parent: str = "") -> bool:
     """
     Save one edit-file section to the pool.
 
     A new function gets the section's bb:parent marker as its parent. An
     existing function only gets a new mapping when its names or
-    documentation changed. For the implementation, checks replaces the
-    list of attached checks.
+    documentation changed. A new mapping records mapping_parent, the
+    translation it was edited from. For the implementation, checks
+    replaces the list of attached checks.
 
     Returns:
         True when something was written
@@ -3484,7 +3523,7 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
 
     if is_new or not unchanged:
         mapping_save(func_hash, lang, prepared['docstring'], prepared['name_mapping'],
-                     prepared['alias_mapping'], comment, section['markdown'])
+                     prepared['alias_mapping'], comment, section['markdown'], mapping_parent)
         written = True
 
     return written
@@ -3607,14 +3646,19 @@ def command_edit(identifier: str, comment: str = None):
         except EOFError:
             comment = ""
 
+    # Each saved mapping descends from the translation its parent was loaded in
+    loaded_mappings = {s['parent']: s['mapping'] for s in [original] + original_checks}
+
     # Save checks first, so the implementation never lists a missing check
     with contextlib.redirect_stdout(io.StringIO()):
         new_checks = []
         for check, prep in plan['checks']:
-            if edit_save_section(check, prep, lang, comment, unchanged=unchanged(check, prep)):
+            if edit_save_section(check, prep, lang, comment, unchanged=unchanged(check, prep),
+                                 mapping_parent=loaded_mappings.get(check['parent'], "")):
                 new_checks.append((prep['name_mapping']['_bb_v_0'], prep['hash']))
         edit_save_section(section, prepared, lang, comment, checks=check_hashes,
-                          unchanged=unchanged(section, prepared))
+                          unchanged=unchanged(section, prepared),
+                          mapping_parent=loaded_mappings.get(section['parent'], ""))
 
     os.unlink(path)
 
@@ -3806,7 +3850,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
             new_dep_hash = hash_compute(code_without_docstring)
 
             # Save the new function
-            metadata = code_create_metadata()
+            metadata = code_create_metadata(parent=dep_hash)
             object_save(new_dep_hash, new_dep_code, metadata)
 
             # Copy language mappings
@@ -3817,8 +3861,8 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
                     dep_languages.append(item.name)
 
             for lang in dep_languages:
-                mappings = mappings_list(dep_hash, lang)
-                for mapping_hash, comment in mappings:
+                # Copy the current mappings; superseded ones stay reachable through parent
+                for mapping_hash in mapping_leaves(dep_hash, lang):
                     docstring, name_mapping, alias_mapping, comment = mapping_load(dep_hash, lang, mapping_hash)
 
                     # Update alias_mapping with all replacements
@@ -3829,7 +3873,9 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
                         else:
                             new_alias_mapping[h] = alias
 
-                    mapping_save(new_dep_hash, lang, docstring, name_mapping, new_alias_mapping, comment)
+                    mapping_save(new_dep_hash, lang, docstring, name_mapping, new_alias_mapping, comment,
+                                 mapping_load_markdown(dep_hash, lang, mapping_hash),
+                                 f"{dep_hash}@{lang}@{mapping_hash}")
 
             # Track this replacement for subsequent functions
             hash_map[dep_hash] = new_dep_hash
@@ -3928,15 +3974,15 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
     new_hash = hash_compute(code_without_docstring)
 
     # Create metadata for the new function
-    metadata = code_create_metadata()
+    metadata = code_create_metadata(parent=what_hash)
 
     # Save the new function (object.json) with docstring
     object_save(new_hash, new_normalized_code, metadata)
 
-    # Copy all language mappings from what_hash to new_hash (v1 only)
+    # Copy the current language mappings from what_hash to new_hash;
+    # superseded ones stay reachable through parent
     for lang in languages:
-        mappings = mappings_list(what_hash, lang)
-        for mapping_hash, comment in mappings:
+        for mapping_hash in mapping_leaves(what_hash, lang):
             docstring, name_mapping, alias_mapping, comment = mapping_load(what_hash, lang, mapping_hash)
 
             # Update alias_mapping: replace all mapped hashes
@@ -3947,7 +3993,9 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
                 else:
                     new_alias_mapping[dep_hash] = alias
 
-            mapping_save(new_hash, lang, docstring, name_mapping, new_alias_mapping, comment)
+            mapping_save(new_hash, lang, docstring, name_mapping, new_alias_mapping, comment,
+                         mapping_load_markdown(what_hash, lang, mapping_hash),
+                         f"{what_hash}@{lang}@{mapping_hash}")
 
     # Print the new function hash
     print(f'new hash: {new_hash}')

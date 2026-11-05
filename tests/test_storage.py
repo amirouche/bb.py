@@ -500,3 +500,42 @@ def test_worklog_pick_message_prefers_requested_then_config():
         assert bb.worklog_pick_message(worklog) == ('fra', 'Bonjour')
     with patch.object(bb, 'storage_read_config', return_value={'user': {'languages': ['kab']}}):
         assert bb.worklog_pick_message(worklog) == ('eng', 'Hello')
+
+
+# ============================================================================
+# Tests for mapping parents
+# ============================================================================
+
+def test_mapping_hash_includes_parent_only_when_set():
+    """An empty parent keeps old hashes; a parent changes the hash"""
+    args = ("Doc", {"_bb_v_0": "f"}, {}, "", "")
+    assert bb.code_compute_mapping_hash(*args) == bb.code_compute_mapping_hash(*args, parent="")
+    assert bb.code_compute_mapping_hash(*args, parent="x@eng@y") != bb.code_compute_mapping_hash(*args)
+
+
+def test_mapping_select_prefers_child_over_parent(mock_bb_dir):
+    """A mapping named as parent by another of the same function and language is superseded"""
+    func_hash = "abcd" + "0" * 60
+    bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
+
+    # Find an original/child pair where the child sorts after the original,
+    # so only lineage (not alphabetical order) can explain the choice
+    for i in range(50):
+        original = bb.mapping_save(func_hash, "eng", f"v{i}", {"_bb_v_0": "f"}, {}, "")
+        child = bb.mapping_save(func_hash, "eng", "documented", {"_bb_v_0": "f"}, {}, "",
+                                parent=f"{func_hash}@eng@{original}")
+        if child > original:
+            break
+
+    assert child in bb.mapping_leaves(func_hash, "eng")
+    assert original not in bb.mapping_leaves(func_hash, "eng")
+    assert bb.mapping_load_json(func_hash, "eng", child)['parent'] == f"{func_hash}@eng@{original}"
+
+
+def test_mapping_parent_in_other_language_does_not_supersede(mock_bb_dir):
+    """A translation's parent lives in another language, so both stay current"""
+    func_hash = "abcd" + "0" * 60
+    bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
+    english = bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "")
+    bb.mapping_save(func_hash, "fra", "", {"_bb_v_0": "f"}, {}, "", parent=f"{func_hash}@eng@{english}")
+    assert bb.mapping_leaves(func_hash, "eng") == [english]
