@@ -613,3 +613,55 @@ def test_object_save_writes_once(mock_bb_dir):
     assert data['metadata'] == {'created': 'first', 'parent': 'p' * 64}
     assert data['checks'] == ["a" * 64]
     assert 'checks' not in data['metadata']
+
+
+# ============================================================================
+# Tests for bb search
+# ============================================================================
+
+def _search(capsys, *query, **flags):
+    capsys.readouterr()  # drop what saving the pool printed
+    bb.command_search(list(query), as_json=True, **flags)
+    return json.loads(capsys.readouterr().out)
+
+
+def test_search_lists_current_versions_unless_all(mock_bb_dir, capsys):
+    """A superseded version is hidden by default and marked with --all"""
+    root, fork = "aaaa" + "0" * 60, "bbbb" + "0" * 60
+    _save_version(root, {"eng": "double"})
+    _save_version(fork, {"eng": "double"}, parent=root)
+    assert [r['hash'] for r in _search(capsys, "double")] == [fork]
+    results = {r['hash']: r for r in _search(capsys, "double", all_versions=True)}
+    assert results[root]['current'] is False and results[fork]['current'] is True
+
+
+def test_search_crosses_languages_and_shows_yours(mock_bb_dir, capsys):
+    """A French word finds the function; the result is shown in your language"""
+    func = "aaaa" + "0" * 60
+    _save_version(func, {"eng": "double", "fra": "doubler"})
+    bb.storage_write_config({'user': {'name': '', 'email': '', 'languages': ['eng']}})
+    [result] = _search(capsys, "doubler")
+    assert result['hash'] == func and result['name'] == 'double' and result['lang'] == 'eng'
+
+
+def test_search_terms_are_and(mock_bb_dir, capsys):
+    """Every term must appear"""
+    _save_version("aaaa" + "0" * 60, {"eng": "count_words"})
+    _save_version("bbbb" + "0" * 60, {"eng": "tokenize_words"})
+    assert [r['name'] for r in _search(capsys, "words", "count")] == ['count_words']
+
+
+def test_search_diverged_filter(mock_bb_dir, capsys):
+    """Two forks of one function make its name diverged"""
+    root, one, two = "aaaa" + "0" * 60, "bbbb" + "0" * 60, "cccc" + "0" * 60
+    _save_version(root, {"eng": "f"})
+    _save_version(one, {"eng": "f"}, parent=root)
+    _save_version(two, {"eng": "f"}, parent=root)
+    _save_version("dddd" + "0" * 60, {"eng": "g"})
+    assert sorted(r['hash'] for r in _search(capsys, diverged=True)) == [one, two]
+
+
+def test_search_needs_terms_or_filter(mock_bb_dir):
+    """Searching for nothing at all is an error"""
+    with pytest.raises(SystemExit):
+        bb.command_search([])

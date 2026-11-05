@@ -1388,7 +1388,7 @@ def review_save_rejections(rejected: Set[str]):
     path.write_text(json.dumps({'rejected': sorted(rejected)}, indent=2), encoding='utf-8')
 
 
-def command_reviews(identifier: str):
+def command_reviews(identifier: str, as_json: bool = False):
     """
     Show who reviewed a function: every shared review and its signature.
 
@@ -1399,9 +1399,12 @@ def command_reviews(identifier: str):
     func_hash = helper_resolve_to_hash(identifier)
     yours = ("approved" if func_hash in review_load_state() else
              "rejected" if func_hash in review_load_rejections() else "not reviewed")
+    reviews = review_list_shared(func_hash)
+    if as_json:
+        print(json.dumps({'function': func_hash, 'you': yours, 'reviews': reviews}, indent=2, ensure_ascii=False))
+        return
     print(f"Function: {func_hash}")
     print(f"You: {yours}")
-    reviews = review_list_shared(func_hash)
     if not reviews:
         print("No shared reviews.")
         return
@@ -2129,11 +2132,13 @@ def helper_format_author(metadata: Dict[str, Any]) -> str:
 
 def storage_scan_functions() -> Dict[str, Dict[str, Any]]:
     """
-    Read every function in the pool once: metadata, plus the name and
-    comment of its current mapping in each language.
+    Read every function in the pool once: metadata, checks, normalized
+    code, plus its current mapping in each language.
 
     Returns:
-        {hash: {'hash', 'metadata', 'names': {lang: name}, 'comments': {lang: comment}}}
+        {hash: {'hash', 'metadata', 'checks', 'normalized_code',
+                'names': {lang: name}, 'comments': {lang: comment},
+                'mappings': {lang: mapping.json data}}}
     """
     functions: Dict[str, Dict[str, Any]] = {}
     pool_dir = storage_get_pool_directory()
@@ -2153,7 +2158,7 @@ def storage_scan_functions() -> Dict[str, Dict[str, Any]]:
             except (IOError, json.JSONDecodeError):
                 continue
             func_hash = data['hash']
-            names, comments = {}, {}
+            names, comments, mappings = {}, {}, {}
             for lang_dir in func_dir.iterdir():
                 if not lang_dir.is_dir():
                     continue
@@ -2161,14 +2166,17 @@ def storage_scan_functions() -> Dict[str, Dict[str, Any]]:
                 if mapping_hash is None:
                     continue
                 mapping = mapping_load_json(func_hash, lang_dir.name, mapping_hash)
+                mappings[lang_dir.name] = mapping
                 names[lang_dir.name] = mapping.get('name_mapping', {}).get('_bb_v_0')
                 comments[lang_dir.name] = mapping.get('comment', '')
             functions[func_hash] = {
                 'hash': func_hash,
                 'metadata': data.get('metadata', {}),
                 'checks': data.get('checks', []),
+                'normalized_code': data.get('normalized_code', ''),
                 'names': names,
                 'comments': comments,
+                'mappings': mappings,
             }
     return functions
 
@@ -2270,7 +2278,7 @@ def helper_resolve_name(name: str, lang: str = None) -> Tuple[str, str]:
     return head, lang or (matching[0] if matching else helper_pick_language(head))
 
 
-def command_latest(name: str, lang: str = None):
+def command_latest(name: str, lang: str = None, as_json: bool = False):
     """
     List the current versions of a function by name.
 
@@ -2289,6 +2297,14 @@ def command_latest(name: str, lang: str = None):
         print(f"No function found with name: {name}{lang_str}", file=sys.stderr)
         sys.exit(1)
 
+    if as_json:
+        print(json.dumps([{'hash': h, 'created': functions[h]['metadata'].get('created', ''),
+                           'author': helper_format_author(functions[h]['metadata']),
+                           'parent': functions[h]['metadata'].get('parent'),
+                           'languages': sorted(functions[h]['names'])} for h in heads],
+                         indent=2, ensure_ascii=False))
+        return
+
     print(f"Current versions of '{name}{lang_str}': {len(heads)}")
     print()
     for func_hash in heads:
@@ -2306,94 +2322,158 @@ def command_latest(name: str, lang: str = None):
         print("Several current versions: use a hash to pick one.")
 
 
-def command_search(query: List[str]):
+def storage_pool_index() -> Dict[str, Any]:
     """
-    Search and list functions by query.
+    Scan the pool once and index its relations.
 
-    Searches in function names, docstrings, and code content.
-
-    Args:
-        query: List of search terms
+    Returns:
+        Dict with 'functions' (see storage_scan_functions), 'children'
+        (parent -> forks), 'importers' (hash -> functions importing it)
+        and 'checked_by' (check hash -> functions it is attached to)
     """
-    if not query:
-        print("Error: No search query provided", file=sys.stderr)
+    functions = storage_scan_functions()
+    children: Dict[str, List[str]] = {}
+    importers: Dict[str, List[str]] = {}
+    checked_by: Dict[str, List[str]] = {}
+    for func_hash, function in functions.items():
+        parent = function['metadata'].get('parent')
+        if parent:
+            children.setdefault(parent, []).append(func_hash)
+        for dep in code_extract_dependencies(function['normalized_code']):
+            importers.setdefault(dep, []).append(func_hash)
+        for check_hash in function['checks']:
+            checked_by.setdefault(check_hash, []).append(func_hash)
+    return {'functions': functions, 'children': children, 'importers': importers, 'checked_by': checked_by}
+
+
+def helper_display_language(function: Dict[str, Any], prefer: List[str] = None) -> Optional[str]:
+    """The language to show a function in: your languages first, then prefer, then any."""
+    preferred = storage_read_config()['user'].get('languages') or []
+    for lang in preferred + (prefer or []) + sorted(function['names']):
+        if lang in function['names']:
+            return lang
+    return None
+
+
+def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
+                    head_counts: Dict[Tuple[str, str], int], match: List[str] = None,
+                    prefer: List[str] = None) -> Dict[str, Any]:
+    """Everything search shows about one function, as a dict (also the --json form)."""
+    function = index['functions'][func_hash]
+    lang = helper_display_language(function, prefer)
+    name = function['names'].get(lang) if lang else None
+    mapping = function['mappings'].get(lang, {}) if lang else {}
+    docstring = mapping.get('docstring', '')
+    is_current = func_hash not in index['children']
+    return {
+        'hash': func_hash,
+        'name': name,
+        'lang': lang,
+        'languages': sorted(function['names']),
+        'created': function['metadata'].get('created', ''),
+        'author': helper_format_author(function['metadata']),
+        'parent': function['metadata'].get('parent'),
+        'current': is_current,
+        'diverged': is_current and head_counts.get((lang, name), 0) > 1,
+        'checks': len(function['checks']),
+        'is_check': func_hash in index['checked_by'],
+        'reviewed': func_hash in approved,
+        'callers': len(index['importers'].get(func_hash, [])),
+        'description': docstring.strip().split('\n')[0] if docstring else '',
+        'match': match or [],
+    }
+
+
+def command_search(query: List[str], all_versions: bool = False, as_json: bool = False,
+                   untested: bool = False, unreviewed: bool = False, diverged: bool = False,
+                   unused: bool = False, uses: str = None):
+    """
+    Search the pool by words, by status, and by architecture.
+
+    Words must all appear, in any language, in a function's name,
+    docstring, documentation, variable names or code. Results show in
+    your preferred language, with their checks, your review status and
+    whether their name has diverged into several current versions. Only
+    current versions (that nobody forked) are listed unless --all.
+
+    Filters, combinable with words or used alone:
+
+    ```
+    --untested    functions without checks (checks themselves excluded)
+    --unreviewed  functions you have not approved (see bb review)
+    --diverged    names that have several current versions
+    --unused      functions nothing imports and no function uses as a check
+    --uses X      functions that import X directly
+    --json        machine-readable output
+    ```
+    """
+    filters = untested or unreviewed or diverged or unused or uses
+    if not query and not filters:
+        print("Error: Give search terms, a filter (--untested, --unreviewed, --diverged, "
+              "--unused, --uses), or both", file=sys.stderr)
         sys.exit(1)
 
-    search_terms = [term.lower() for term in query]
+    uses_hash = helper_resolve_to_hash(uses) if uses else None
+    terms = [term.lower() for term in query]
+    index = storage_pool_index()
+    functions = index['functions']
 
-    pool_dir = storage_get_pool_directory()
+    head_counts: Dict[Tuple[str, str], int] = {}
+    for func_hash, function in functions.items():
+        if func_hash not in index['children']:
+            for lang, name in function['names'].items():
+                head_counts[(lang, name)] = head_counts.get((lang, name), 0) + 1
 
-    if not pool_dir.exists():
-        print("No functions in pool")
+    candidates = []
+    for func_hash, function in functions.items():
+        if not all_versions and func_hash in index['children']:
+            continue
+
+        # Every term must appear somewhere; remember where, and in which languages
+        fields: Dict[str, str] = {'code': function['normalized_code'].lower()}
+        langs_matched = []
+        for lang, mapping in function['mappings'].items():
+            texts = {
+                'name': (function['names'].get(lang) or ''),
+                'docstring': mapping.get('docstring', ''),
+                'docs': mapping.get('markdown', ''),
+                'variables': ' '.join(mapping.get('name_mapping', {}).values()),
+            }
+            for key, text in texts.items():
+                fields[key] = fields.get(key, '') + ' ' + text.lower()
+            if terms and all(any(t in text.lower() for text in texts.values()) for t in terms):
+                langs_matched.append(lang)
+        if terms and not all(any(t in text for text in fields.values()) for t in terms):
+            continue
+        match = [key for key in ('name', 'docstring', 'docs', 'variables', 'code')
+                 if any(t in fields.get(key, '') for t in terms)]
+        candidates.append((func_hash, match, langs_matched))
+
+    approved = review_approvals([h for h, _, _ in candidates])
+    results = [search_describe(index, h, approved, head_counts, match, langs)
+               for h, match, langs in candidates]
+
+    if untested:
+        results = [r for r in results if r['checks'] == 0 and not r['is_check']]
+    if unreviewed:
+        results = [r for r in results if not r['reviewed']]
+    if diverged:
+        results = [r for r in results if r['diverged']]
+    if unused:
+        results = [r for r in results if r['callers'] == 0 and not r['is_check']]
+    if uses_hash:
+        results = [r for r in results if r['hash'] in index['importers'].get(uses_hash, [])]
+
+    results.sort(key=lambda r: (r['created'], r['hash']), reverse=True)
+
+    if as_json:
+        print(json.dumps(results, indent=2, ensure_ascii=False))
         return
 
-    results = []
-
-    # Scan for v1 functions
-    if pool_dir.exists():
-        for hash_prefix_dir in pool_dir.iterdir():
-            if not hash_prefix_dir.is_dir():
-                continue
-
-            for func_dir in hash_prefix_dir.iterdir():
-                if not func_dir.is_dir():
-                    continue
-
-                object_json = func_dir / 'object.json'
-                if not object_json.exists():
-                    continue
-
-                # Load function
-                try:
-                    with open(object_json, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-
-                    func_hash = data['hash']
-                    metadata = data.get('metadata', {})
-                    created = metadata.get('created', 'unknown')
-
-                    # Get available languages and search in mappings
-                    for lang_dir in func_dir.iterdir():
-                        if lang_dir.is_dir() and len(lang_dir.name) == 3:
-                            lang = lang_dir.name
-                            try:
-                                _, name_mapping, _, docstring = code_load(func_hash, lang)
-                                func_name = name_mapping.get('_bb_v_0', 'unknown')
-
-                                # Search in function name, docstring, and original variable names
-                                all_original_names = ' '.join(name_mapping.values()).lower()
-                                searchable = f"{func_name} {docstring} {all_original_names}".lower()
-
-                                if any(term in searchable for term in search_terms):
-                                    # Determine where match was found
-                                    match_in = []
-                                    if any(term in func_name.lower() for term in search_terms):
-                                        match_in.append('name')
-                                    if any(term in docstring.lower() for term in search_terms):
-                                        match_in.append('docstring')
-                                    if any(term in all_original_names for term in search_terms):
-                                        if 'name' not in match_in:  # Don't duplicate if func name matched
-                                            match_in.append('variables')
-
-                                    results.append({
-                                        'hash': func_hash,
-                                        'name': func_name,
-                                        'lang': lang,
-                                        'docstring': docstring[:100],  # First 100 chars
-                                        'match_in': match_in,
-                                        'created': created
-                                    })
-                                    break
-                            except SystemExit:
-                                continue
-                except (IOError, json.JSONDecodeError):
-                    continue
-
-    # Sort by creation date (newest first)
-    results.sort(key=lambda x: x['created'], reverse=True)
-
-    # Display results
-    print(f"Search Results ({len(results)} matches for: {' '.join(query)})")
+    asked = ' '.join(query + [flag for flag, on in (('--untested', untested), ('--unreviewed', unreviewed),
+                                                    ('--diverged', diverged), ('--unused', unused)) if on]
+                     + ([f"--uses {uses}"] if uses else []))
+    print(f"Search Results ({len(results)} matches for: {asked})")
     print("=" * 80)
     print()
 
@@ -2401,15 +2481,23 @@ def command_search(query: List[str]):
         print("No matches found")
         return
 
-    for result in results:
-        match_str = ', '.join(result['match_in'])
-        print(f"Name: {result['name']} ({result['lang']})")
-        print(f"Hash: {result['hash']}")
-        print(f"Created: {result['created']}")
-        print(f"Match: {match_str}")
-        if result['docstring']:
-            print(f"Description: {result['docstring']}...")
-        print(f"View: bb show {result['hash']}@{result['lang']}")
+    for r in results:
+        print(f"Name: {r['name']} ({r['lang']})")
+        print(f"Hash: {r['hash']}")
+        print(f"Created: {r['created']}")
+        print(f"Languages: {', '.join(r['languages'])}")
+        status = [f"{r['checks']} checks" if r['checks'] else ("is a check" if r['is_check'] else "no checks"),
+                  "reviewed" if r['reviewed'] else "not reviewed"]
+        if not r['current']:
+            status.append("superseded")
+        if r['diverged']:
+            status.append(f"name diverged: {head_counts[(r['lang'], r['name'])]} current versions")
+        print(f"Status: {', '.join(status)}")
+        if r['match']:
+            print(f"Match: {', '.join(r['match'])}")
+        if r['description']:
+            print(f"Description: {r['description']}")
+        print(f"View: bb show {r['hash']}@{r['lang']}")
         print()
 
 
@@ -3510,13 +3598,13 @@ def schema_validate_directory() -> tuple:
     return is_valid, errors, stats
 
 
-def command_caller(identifier: str):
+def command_caller(identifier: str, as_json: bool = False):
     """
     Find all functions that depend on the given function.
 
     Accepts a hash or function name (with optional @lang suffix).
     Scans all functions in the pool and lists each function that
-    imports the given hash.
+    imports the given hash. --json gives hash, name and language.
     """
     hash_value = helper_resolve_to_hash(identifier)
 
@@ -3556,11 +3644,18 @@ def command_caller(identifier: str):
                     continue
 
     # Print results
+    if as_json:
+        out = []
+        for caller_hash in sorted(callers):
+            lang = helper_pick_language(caller_hash)
+            out.append({'hash': caller_hash, 'name': helper_function_label(caller_hash), 'lang': lang})
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        return
     for caller_hash in sorted(callers):
         print(f"bb show {caller_hash}")
 
 
-def command_tree(identifier: str):
+def command_tree(identifier: str, as_json: bool = False):
     """
     Display the dependency tree of a function.
 
@@ -3577,7 +3672,30 @@ def command_tree(identifier: str):
         preferred_langs = ['eng']
     lang = preferred_langs[0]
 
+    if as_json:
+        print(json.dumps(_tree_build(hash_value, lang, set()), indent=2, ensure_ascii=False))
+        return
     _tree_print_node(hash_value, lang, "", True, True, set())
+
+
+def _tree_build(func_hash: str, lang: str, visited: set) -> Dict[str, Any]:
+    """The dependency tree of a function as nested dicts: hash, name, description, dependencies."""
+    if code_detect_schema(func_hash) is None:
+        return {'hash': func_hash, 'name': None, 'description': '', 'found': False, 'dependencies': []}
+    shown = lang if lang in storage_list_languages(func_hash) else helper_pick_language(func_hash, lang)
+    normalized_code, name_mapping, _, docstring = code_load(func_hash, shown)
+    node = {
+        'hash': func_hash,
+        'name': name_mapping.get('_bb_v_0'),
+        'lang': shown,
+        'description': docstring.strip().split('\n')[0] if docstring else '',
+        'found': True,
+        'dependencies': [],
+    }
+    if func_hash not in visited:
+        node['dependencies'] = [_tree_build(dep, lang, visited | {func_hash})
+                                for dep in code_extract_dependencies(normalized_code)]
+    return node
 
 
 def _tree_print_node(func_hash: str, lang: str, prefix: str,
@@ -5330,6 +5448,7 @@ def _build_parser():
     # Reviews command
     reviews_parser = subparsers.add_parser('reviews', help='Show who reviewed a function, with signature status')
     reviews_parser.add_argument('identifier', help='Hash or name, with optional @lang')
+    reviews_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
 
     # Trust command with subcommands
     trust_parser = subparsers.add_parser('trust', help='Manage the peers whose signed reviews you trust')
@@ -5347,13 +5466,23 @@ def _build_parser():
     log_parser = subparsers.add_parser('log', help='Show functions and worklogs, newest first')
 
     # Search command
-    search_parser = subparsers.add_parser('search', help='Search and list functions by query')
-    search_parser.add_argument('query', nargs='+', help='Search terms')
+    search_parser = subparsers.add_parser('search', help='Search functions by words, status and architecture')
+    search_parser.add_argument('query', nargs='*', help='Words that must all appear (any language)')
+    search_parser.add_argument('--all', dest='all_versions', action='store_true',
+                               help='Include superseded versions (forked by another function)')
+    search_parser.add_argument('--untested', action='store_true', help='Only functions without checks')
+    search_parser.add_argument('--unreviewed', action='store_true', help='Only functions you have not approved')
+    search_parser.add_argument('--diverged', action='store_true', help='Only names with several current versions')
+    search_parser.add_argument('--unused', action='store_true',
+                               help='Only functions nothing imports and nothing uses as a check')
+    search_parser.add_argument('--uses', metavar='X', default=None, help='Only functions that import X directly')
+    search_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
 
     # Latest command
     latest_parser = subparsers.add_parser('latest', help='Find most recent version of function by name')
     latest_parser.add_argument('name', help='Function name to find')
     latest_parser.add_argument('lang', nargs='?', help='Optional language code to filter (e.g., eng, fra)')
+    latest_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
 
     # Worklog command with subcommands
     worklog_parser = subparsers.add_parser('worklog', help='Write, translate and list worklogs')
@@ -5388,10 +5517,12 @@ def _build_parser():
     # Caller command
     caller_parser = subparsers.add_parser('caller', help='Find functions that depend on a given function')
     caller_parser.add_argument('identifier', help='Hash or name, with optional @lang')
+    caller_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
 
     # Tree command
     tree_parser = subparsers.add_parser('tree', help='Display dependency tree of a function')
     tree_parser.add_argument('identifier', help='Hash or name, with optional @lang')
+    tree_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
 
     # Refactor command
     refactor_parser = subparsers.add_parser('refactor', help='Replace a dependency in a function')
@@ -5438,7 +5569,7 @@ def main():
     elif args.command == 'review':
         command_review(args.identifier, comment=args.comment)
     elif args.command == 'reviews':
-        command_reviews(args.identifier)
+        command_reviews(args.identifier, as_json=args.as_json)
     elif args.command == 'trust':
         if args.trust_command == 'add':
             command_trust_add(args.email, args.key)
@@ -5455,9 +5586,11 @@ def main():
     elif args.command == 'log':
         command_log()
     elif args.command == 'search':
-        command_search(args.query)
+        command_search(args.query, all_versions=args.all_versions, as_json=args.as_json,
+                       untested=args.untested, unreviewed=args.unreviewed, diverged=args.diverged,
+                       unused=args.unused, uses=args.uses)
     elif args.command == 'latest':
-        command_latest(args.name, args.lang)
+        command_latest(args.name, args.lang, as_json=args.as_json)
     elif args.command == 'worklog':
         if args.worklog_command == 'new':
             command_worklog_new(args.references, message=args.message)
@@ -5508,9 +5641,9 @@ def main():
                     print(f"  - {error}", file=sys.stderr)
                 sys.exit(1)
     elif args.command == 'caller':
-        command_caller(args.identifier)
+        command_caller(args.identifier, as_json=args.as_json)
     elif args.command == 'tree':
-        command_tree(args.identifier)
+        command_tree(args.identifier, as_json=args.as_json)
     elif args.command == 'refactor':
         command_refactor(args.what, args.from_hash, args.to_hash, args.at_hash if hasattr(args, 'at_hash') else None,
                          comment=args.comment)

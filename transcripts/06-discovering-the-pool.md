@@ -166,10 +166,10 @@ Hash: $TOK_HASH
 ### Step 13: Search with multiple terms
 ```bash
 $ bb search word count | grep "^Hash:" | wc -l
-3
+2
 ```
 
-All three functions contain both "word" (in various docstrings) and "count" somewhere in their content. Search uses AND logic across terms.
+Search uses AND logic across terms: every word must appear. `count_words` and `summarize_text` mention both "word" and "count"; `tokenize` talks about words but never counts.
 
 ---
 
@@ -237,6 +237,48 @@ The output provides ready-to-run commands to inspect each caller.
 
 ---
 
+# Chapter 6: Asking Architecture Questions
+
+Search also answers questions about the shape of the pool, alone or
+combined with words. None of the three functions has checks yet, and
+nobody reviewed them.
+
+### Step 21: What has no checks? What is not reviewed?
+```bash
+$ bb search --untested | grep "^Hash:" | wc -l
+3
+$ bb search --unreviewed text | grep "^Hash:" | wc -l
+3
+```
+
+### Step 22: What does nothing use? What uses tokenize?
+`summarize_text` is the top of the chain: nothing imports it.
+
+```bash
+$ bb search --unused | grep "^Hash:"
+Hash: $SUMM_HASH
+$ bb search --uses $TOK_HASH | grep "^Hash:"
+Hash: $COUNT_HASH
+```
+
+### Step 23: Each result tells its status
+```bash
+$ bb search frequency | grep "^Status:"
+Status: no checks, not reviewed
+```
+
+### Step 24: Machine-readable output for agents
+`--json` works on `search`, `caller`, `tree`, `latest` and `reviews`.
+
+```bash
+$ bb search frequency --json | python3 -c "import json, sys; print(json.load(sys.stdin)[0]['name'])"
+count_words
+$ bb tree $SUMM_HASH --json | python3 -c "import json, sys; t = json.load(sys.stdin); print(t['name'], '->', t['dependencies'][0]['name'])"
+summarize_text -> count_words
+```
+
+---
+
 ## Summary
 
 | Command | Purpose | What We Discovered |
@@ -246,14 +288,16 @@ The output provides ready-to-run commands to inspect each caller.
 | `bb search <terms>` | Find functions by content | Found 2 "text" functions, 1 "frequency" function |
 | `bb latest <name>` | Get most recent version | Found latest `tokenize`, `count_words` |
 | `bb caller <hash>` | Find reverse dependencies | `tokenize` → 1 caller, `count_words` → 1 caller, `summarize_text` → 0 callers |
+| `bb search --untested/--unreviewed/--unused/--uses X/--diverged` | Architecture questions | 3 untested, `summarize_text` unused, `count_words` uses `tokenize` |
+| `... --json` | Output for agents | Names and dependency trees as JSON |
 
 ## Key Insights
 
 1. **`bb whoami` stores preferences**: The configuration affects how other commands display information. Setting preferred languages determines which language mapping is shown in `bb tree` and `bb latest`.
 
-2. **`bb search` is content-aware**: It searches through function names, docstrings, AND code content. Multiple search terms narrow results (AND logic).
+2. **`bb search` is content-aware**: It searches names, docstrings, documentation, variable names and code, in every language, and shows results in yours. Multiple search terms narrow results (AND logic). Only current versions are listed unless `--all`.
 
-3. **`bb latest` uses modification time**: When multiple versions of a function exist with the same name (but different hashes due to logic changes), `latest` returns the most recently added one.
+3. **`bb latest` follows lineage**: it lists the current versions of a name, those nobody forked. Several of them means the name diverged and commands need a hash.
 
 4. **`bb caller` provides actionable output**: The output is formatted as ready-to-run `bb show` commands, making it easy to inspect each caller.
 
