@@ -2001,71 +2001,62 @@ def command_review(identifier: str):
 
 def command_log():
     """
-    Show a git-like commit log of the function pool.
+    Show the history of the pool: functions and worklogs, newest first.
 
-    Lists all functions with metadata (timestamp, author, hash).
+    Functions show their author, parent (when forked) and languages.
+    Worklogs show their author, languages, attached translations and
+    message, in your preferred language when translated.
     """
+    entries = []
+
     pool_dir = storage_get_pool_directory()
-
-    if not pool_dir.exists():
-        print("No functions in pool")
-        return
-
-    functions = []
-
-    # Scan for v1 functions (pool/XX/YYY.../object.json)
     if pool_dir.exists():
         for hash_prefix_dir in pool_dir.iterdir():
             if not hash_prefix_dir.is_dir():
                 continue
-
             for func_dir in hash_prefix_dir.iterdir():
-                if not func_dir.is_dir():
-                    continue
-
                 object_json = func_dir / 'object.json'
                 if not object_json.exists():
                     continue
-
-                # Load function metadata
                 try:
                     with open(object_json, 'r', encoding='utf-8') as f:
                         data = json.load(f)
-
-                    func_hash = data['hash']
-                    metadata = data.get('metadata', {})
-                    created = metadata.get('created', 'unknown')
-                    author = metadata.get('author', 'unknown')
-
-                    # Get available languages
-                    langs = []
-                    for item in func_dir.iterdir():
-                        if item.is_dir() and len(item.name) == 3:
-                            langs.append(item.name)
-
-                    functions.append({
-                        'hash': func_hash,
-                        'created': created,
-                        'author': author,
-                        'langs': sorted(langs)
-                    })
                 except (IOError, json.JSONDecodeError):
                     continue
+                metadata = data.get('metadata', {})
+                langs = sorted(item.name for item in func_dir.iterdir() if item.is_dir())
+                lines = [f"Hash: {data['hash']}",
+                         f"Date: {metadata.get('created', 'unknown')}",
+                         f"Author: {helper_format_author(metadata)}"]
+                if metadata.get('parent'):
+                    lines.append(f"Parent: {metadata['parent']}")
+                lines.append(f"Languages: {', '.join(langs) if langs else 'none'}")
+                entries.append((metadata.get('created', ''), data['hash'], lines))
 
-    # Sort by created timestamp (newest first)
-    functions.sort(key=lambda x: x['created'], reverse=True)
+    worklogs = worklog_list()
+    for worklog in worklogs:
+        metadata = worklog['metadata']
+        _, message = worklog_pick_message(worklog)
+        lines = [f"Worklog: {worklog['uuid']}",
+                 f"Date: {metadata.get('created', 'unknown')}",
+                 f"Author: {helper_format_author(metadata)}",
+                 f"Languages: {', '.join(sorted(worklog['messages']))}"]
+        lines += [f"Attached: {reference}" for reference in worklog['references']]
+        lines.append('')
+        lines += [f"    {line}".rstrip() for line in message.split('\n')]
+        entries.append((metadata.get('created', ''), worklog['uuid'], lines))
 
-    # Display log
-    print(f"Function Pool Log ({len(functions)} functions)")
+    # Newest first; ties broken by identifier so the order is stable
+    entries.sort(key=lambda e: (e[0], e[1]), reverse=True)
+
+    function_count = len(entries) - len(worklogs)
+    print(f"Pool Log ({function_count} functions, {len(worklogs)} worklogs)")
     print("=" * 80)
     print()
 
-    for func in functions:
-        langs_str = ', '.join(func['langs']) if func['langs'] else 'none'
-        print(f"Hash: {func['hash']}")
-        print(f"Date: {func['created']}")
-        print(f"Author: {func['author']}")
-        print(f"Languages: {langs_str}")
+    for _, _, lines in entries:
+        for line in lines:
+            print(line)
         print()
 
 

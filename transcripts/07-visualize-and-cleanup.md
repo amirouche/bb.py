@@ -251,7 +251,7 @@ Removed function: $CALC_HASH
 ### Step 21: Verify pool is empty
 ```bash
 $ bb log
-Function Pool Log (0 functions)
+Pool Log (0 functions, 0 worklogs)
 ================================================================================
 
 ```

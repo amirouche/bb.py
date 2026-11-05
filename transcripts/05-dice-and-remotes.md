@@ -87,7 +87,7 @@ def jouer_haut_bas(pari):
 ### Step 1: Alice starts with an empty pool
 ```bash
 $ bb log
-Function Pool Log (0 functions)
+Pool Log (0 functions, 0 worklogs)
 ================================================================================
 
 ```
