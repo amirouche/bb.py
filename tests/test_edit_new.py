@@ -21,7 +21,7 @@ def test_a_new_function_then_a_change_keep_one_current_version(tmp_path):
     # Read: an editor that copies the buffer out and changes nothing
     read = editor_env(tmp_path, f'sh -c \'cp "$0" {draft}\'')
     result = bb(read, 'edit', 'slugify@eng')
-    assert 'No changes' in result.stdout and 'def slugify():' in draft.read_text()
+    assert 'Nothing saved' in result.stdout and 'def slugify():' in draft.read_text()
 
     draft.write_text(draft.read_text().replace(
         'def slugify():\n    """Say what slugify does."""\n    raise NotImplementedError',
@@ -46,7 +46,7 @@ def test_a_new_function_needs_its_language_and_the_template_alone_saves_nothing(
     env = editor_env(tmp_path, 'true')
     assert 'give its language' in bb(env, 'edit', 'slugify').stderr
     result = bb(env, 'edit', 'slugify@eng')
-    assert 'no function was created' in result.stdout
+    assert 'Nothing saved' in result.stdout and 'no function was created' in result.stdout
     assert 'No function found' in bb(env, 'show', 'slugify@eng').stderr
 
 

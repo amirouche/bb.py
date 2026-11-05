@@ -4587,7 +4587,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False)
     section, prepared = plan['implementation']
     if hash_value is None and section['source'].strip() == original['source'].strip() and not plan['checks']:
         os.unlink(path)
-        print("No changes: the template was saved as it was, so no function was created.")
+        print("Nothing saved: the edited file still holds the template, so no function was created.")
         return
     # Without a marker, the implementation still descends from the edited function
     section['parent'] = section['parent'] or hash_value
