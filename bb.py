@@ -3498,7 +3498,12 @@ def check_run_reviewed(func_hash: str, reviewed: set) -> Tuple[Optional[List[Tup
     return results, []
 
 
-def command_validate_checks(identifier: str = None):
+def helper_is_ci() -> bool:
+    """True when the CI environment variable says we run on a CI machine."""
+    return os.environ.get('CI', '').strip().lower() not in ('', '0', 'false', 'no')
+
+
+def command_validate_checks(identifier: str = None, unreviewed: bool = False):
     """
     Run the checks of reviewed functions: one function, or the whole pool.
 
@@ -3506,7 +3511,21 @@ def command_validate_checks(identifier: str = None):
     approved with bb review are run; the others are listed as not
     reviewed. Exits with status 1 when a check fails (or, for a single
     function, when it is not reviewed).
+
+    With --unreviewed, every check runs, approved or not. That is only
+    safe on a disposable machine with nothing worth stealing (no secrets,
+    no write access, a fresh runner), so it requires the CI environment
+    variable to be set.
     """
+    if unreviewed and not helper_is_ci():
+        print("Error: --unreviewed runs code nobody approved. Only use it on a disposable CI machine,",
+              file=sys.stderr)
+        print("where the CI environment variable is set (CI=true).", file=sys.stderr)
+        sys.exit(1)
+    if unreviewed:
+        print("Warning: running checks without review (--unreviewed). "
+              "This machine must have no secrets and no write access.", file=sys.stderr)
+
     reviewed = review_load_state()
     if identifier:
         targets = [helper_resolve_to_hash(identifier)]
@@ -3519,7 +3538,8 @@ def command_validate_checks(identifier: str = None):
         if not object_load_checks(func_hash):
             print("No checks.")
             continue
-        results, missing = check_run_reviewed(func_hash, reviewed)
+        approved = set(review_closure(func_hash)) if unreviewed else reviewed
+        results, missing = check_run_reviewed(func_hash, approved)
         if missing:
             not_reviewed.append((func_hash, len(missing)))
             continue
@@ -4957,6 +4977,8 @@ def _build_parser():
     validate_parser.add_argument('identifier', nargs='?', help='Hash or name to validate (omit for whole directory)')
     validate_parser.add_argument('--checks', action='store_true',
                                  help='Run the checks of functions you approved with bb review')
+    validate_parser.add_argument('--unreviewed', action='store_true',
+                                 help='With --checks: run every check, approved or not (CI machines only, needs CI=true)')
     validate_parser.add_argument('--all', '-a', action='store_true',
                                  help='Validate entire bb directory including pool and config')
 
@@ -5030,8 +5052,11 @@ def main():
         else:
             parser.parse_args([args.command, '--help'])
     elif args.command == 'validate':
+        if args.unreviewed and not args.checks:
+            print("Error: --unreviewed only applies to --checks", file=sys.stderr)
+            sys.exit(1)
         if args.checks:
-            command_validate_checks(args.identifier)
+            command_validate_checks(args.identifier, unreviewed=args.unreviewed)
         elif args.all or not args.identifier:
             # Validate entire directory
             is_valid, errors, stats = schema_validate_directory()
