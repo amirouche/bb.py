@@ -3198,6 +3198,8 @@ EDIT_CHECKS_HINT = ('<!-- bb: add checks as ### subsections. Each one needs a ``
 
 _EDIT_FENCE_RE = re.compile(r'^(`{3,}|~{3,})\s*(.*?)\s*$')
 _EDIT_MARKER_RE = re.compile(r'^<!--\s*bb:(.*?)\s*-->$')
+# A whole-line HTML comment (<!-- ... -->): invisible in markdown, so dropping it loses nothing
+_EDIT_COMMENT_RE = re.compile(r'^<!--.*-->$')
 _EDIT_PARENT_RE = re.compile(r'^parent\s+([0-9a-f]{64})$')
 
 
@@ -3329,7 +3331,8 @@ def markdown_parse_edit(text: str) -> Dict[str, Any]:
                 raise EditFormatError(f"Duplicate section: '## {current}'")
             sections[current] = []
         elif current is None:
-            if line.strip() and not line.startswith('# ') and not _EDIT_MARKER_RE.match(line.strip()):
+            if (line.strip() and not line.startswith('# ') and not _EDIT_MARKER_RE.match(line.strip())
+                    and not _EDIT_COMMENT_RE.match(line.strip())):
                 raise EditFormatError(f"Text before '## {EDIT_IMPLEMENTATION_HEADING}' would be lost: {line.strip()!r}")
         else:
             sections[current].append((line, kind))
@@ -3352,7 +3355,7 @@ def markdown_parse_edit(text: str) -> Dict[str, Any]:
             title = line[4:].strip()
             body = []
         elif title is None:
-            if line.strip() and not _EDIT_MARKER_RE.match(line.strip()):
+            if line.strip() and not _EDIT_MARKER_RE.match(line.strip()) and not _EDIT_COMMENT_RE.match(line.strip()):
                 raise EditFormatError(f"Text in '## {EDIT_CHECKS_HEADING}' outside a ### subsection would be lost: {line.strip()!r}")
         else:
             body.append((line, kind))

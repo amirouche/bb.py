@@ -93,3 +93,10 @@ def test_strings_that_cannot_be_triple_quoted_fall_back(tmp_path):
         exec(shown, namespace)
         assert namespace['f']() == value
         assert bb.code_prepare_source(shown, 'eng')['hash'] == prepared['hash']
+
+
+def test_html_comments_in_an_edit_file_are_dropped_but_other_stray_text_is_refused():
+    base = '## Implementation\n\n```python def\ndef f():\n    return 1\n```\n\n## Checks\n\n'
+    assert bb.markdown_parse_edit(base + '<!-- none yet -->\n')['checks'] == []
+    with pytest.raises(bb.EditFormatError):
+        bb.markdown_parse_edit(base + 'a note\n')
