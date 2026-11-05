@@ -25,6 +25,10 @@ as JSON objects containing normalized code and per-language name mappings.
 Each language mapping preserves the original variable names, docstring,
 and BB import aliases, allowing the same function to be displayed in
 any language that has been added or translated.
+
+Worklogs live in $BB_DIRECTORY/worklog/ and unfinished edits in
+$BB_DIRECTORY/edit/. bb does not manage history or sharing: track
+$BB_DIRECTORY with git and use git's own commands to share it.
 """
 import ast
 import argparse
@@ -544,12 +548,15 @@ def storage_get_bb_directory() -> Path:
     Get the bb base directory from environment variable or default to '$HOME/.local/bb/'.
     Environment variable: BB_DIRECTORY
 
+    The whole directory is meant to be tracked with git by the user;
+    bb itself never runs git.
+
     Directory structure:
         $BB_DIRECTORY/
-        ├── pool/          # Pool directory (git repository for objects)
-        │   └── sha256/    # Hash algorithm prefix
-        │       └── XX/    # First 2 chars of hash
-        └── config.json    # Configuration file
+        ├── pool/          # Functions: XX/YYYY.../object.json and per-language mappings
+        ├── worklog/       # Worklogs: <uuid7>/worklog.json and translated messages
+        ├── edit/          # Unfinished bb edit files (a scratch pad)
+        └── config.json    # Your name, email and preferred languages
     """
     env_dir = os.environ.get('BB_DIRECTORY')
     if env_dir:
@@ -561,7 +568,7 @@ def storage_get_bb_directory() -> Path:
 
 def storage_get_pool_directory() -> Path:
     """
-    Get the pool directory (git repository) where objects are stored.
+    Get the pool directory where function objects are stored.
     Returns: $BB_DIRECTORY/pool/
     """
     return storage_get_bb_directory() / 'pool'

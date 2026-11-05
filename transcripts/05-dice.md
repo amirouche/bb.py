@@ -16,7 +16,7 @@ Along the way, we demonstrate:
 - Multilingual mappings sharing one hash
 - Compositional functions: `jouer_haut_bas` depends on `roll_dice`
 
-Sharing the pool is not bb's job: the pool is a plain directory that you track and share with git yourself.
+Sharing is not bb's job: `$BB_DIRECTORY` is a plain directory that you track and share with git yourself.
 
 ## Prerequisites
 - `bb` installed and in PATH
@@ -153,4 +153,4 @@ $ bb log | grep "^Hash:" | wc -l
 
 2. **Functions compose across languages**: The French game imports the dice roller by hash, whatever language the roller was written in.
 
-3. **Sharing is git's job**: The pool is a directory. Track it with git and use git's own commands (`git remote`, `git push`, `git pull`) to share it.
+3. **Sharing is git's job**: `$BB_DIRECTORY` is a plain directory holding the pool, worklogs and unfinished edits. Track it with git and use git's own commands (`git remote`, `git push`, `git pull`) to share it.

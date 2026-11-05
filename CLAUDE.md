@@ -31,6 +31,8 @@ The bb function pool location is controlled by the `BB_DIRECTORY` environment va
 - **Default**: `$HOME/.local/bb/` (follows XDG Base Directory specification)
 - **Custom location**: Set `BB_DIRECTORY=/path/to/pool` to override
 
+It holds `pool/` (functions), `worklog/` (worklogs), `edit/` (unfinished `bb edit` files) and `config.json`. The user tracks the whole directory with git; bb has no commit, push or remote commands and never runs git.
+
 ### Data Flow
 
 ```
