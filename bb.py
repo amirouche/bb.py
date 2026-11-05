@@ -2787,6 +2787,83 @@ def code_add(file_path_with_lang: str, comment: str = ""):
     code_save(prepared['hash'], lang, prepared['normalized_code'], prepared['docstring'],
               prepared['name_mapping'], prepared['alias_mapping'], comment)
 
+    helper_report_similar(prepared['hash'])
+
+
+def code_shingles(normalized_code: str, size: int = 3) -> Set[Tuple[str, ...]]:
+    """
+    The token n-grams of normalized code, used to compare structure.
+
+    Names are already normalized (_bb_v_N), so two functions that differ
+    only in naming or language are identical here.
+    """
+    import tokenize as py_tokenize
+    skip = {py_tokenize.NEWLINE, py_tokenize.NL, py_tokenize.INDENT, py_tokenize.DEDENT,
+            py_tokenize.ENDMARKER, py_tokenize.COMMENT}
+    try:
+        tokens = [t.string for t in py_tokenize.generate_tokens(io.StringIO(normalized_code).readline)
+                  if t.type not in skip]
+    except (py_tokenize.TokenError, SyntaxError):
+        return set()
+    return {tuple(tokens[i:i + size]) for i in range(max(1, len(tokens) - size + 1))}
+
+
+def code_find_similar(func_hash: str, exclude: Set[str] = None,
+                      threshold: float = 0.8, min_size: int = 10) -> List[Tuple[float, str]]:
+    """
+    Find current functions whose structure is close to func_hash.
+
+    Similarity is the Jaccard index of token 3-grams of normalized code.
+    Tiny functions (under min_size 3-grams) are never reported: they look
+    alike by nature. Checks are left out on both sides for the same reason.
+
+    Args:
+        func_hash: The function to compare
+        exclude: Hashes not to report (its lineage, its checks)
+
+    Returns:
+        (similarity, hash) pairs, most similar first, at most 3
+    """
+    index = storage_pool_index()
+    functions = index['functions']
+    if func_hash not in functions or func_hash in index['checked_by']:
+        return []
+    mine = code_shingles(functions[func_hash]['normalized_code'])
+    if len(mine) < min_size:
+        return []
+    skip = (exclude or set()) | {func_hash}
+    found = []
+    for other_hash, other in functions.items():
+        if (other_hash in skip or other_hash in index['children'] or other_hash in index['checked_by']):
+            continue
+        theirs = code_shingles(other['normalized_code'])
+        if len(theirs) < min_size:
+            continue
+        score = len(mine & theirs) / len(mine | theirs)
+        if score >= threshold:
+            found.append((score, other_hash))
+    return sorted(found, reverse=True)[:3]
+
+
+def helper_report_similar(func_hash: str, exclude: Set[str] = None):
+    """Tell, on stderr, about existing functions close to func_hash."""
+    similar = code_find_similar(func_hash, exclude)
+    if not similar:
+        return
+    print("Note: similar functions already exist; consider reusing or forking one:", file=sys.stderr)
+    for score, other_hash in similar:
+        print(f"  {score:.0%}  {other_hash}  {helper_function_label(other_hash)}", file=sys.stderr)
+
+
+def helper_lineage(func_hash: str) -> Set[str]:
+    """func_hash and every ancestor reachable through metadata parent links."""
+    seen = set()
+    current = func_hash
+    while current and current not in seen and code_detect_schema(current) is not None:
+        seen.add(current)
+        current = object_load(current)['metadata'].get('parent')
+    return seen
+
 
 def code_prepare_source(source_code: str, lang: str, where: str = None) -> Dict[str, Any]:
     """
@@ -4370,6 +4447,9 @@ def command_edit(identifier: str, comment: str = None):
         print(f"Parent: {hash_value}")
     for name, check_hash in new_checks:
         print(f"Check: {check_hash} {name}")
+
+    if prepared['hash'] != hash_value:
+        helper_report_similar(prepared['hash'], helper_lineage(prepared['hash']) | set(check_hashes))
 
 
 def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str = None, comment: str = None):

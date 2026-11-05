@@ -1370,3 +1370,21 @@ def test_mapping_cannot_rename_to_names_the_code_does_not_import(mock_bb_dir):
     with pytest.raises(NameError):
         bb.code_load_normalized(func)(6)
 
+
+def test_find_similar_reports_near_copies_only(mock_bb_dir):
+    """Near-copies are reported; rewrites, tiny functions and lineage are not"""
+    body = ("def tokenize(text):\n    import string\n    words = []\n    for word in text.split():\n"
+            "        cleaned = word.strip(string.punctuation).lower()\n        if cleaned:\n"
+            "            words.append(cleaned)\n    return words\n")
+    original = _pool_add(body)
+    near_copy = _pool_add(body.replace("if cleaned:", "if len(cleaned) > 0:").replace("tokenize", "split_words"))
+    rewrite = _pool_add("def tokenize(text):\n    import string\n"
+                        "    return [w for w in (x.strip(string.punctuation).lower() for x in text.split()) if w]\n")
+    tiny_one = _pool_add("def double(x):\n    return x * 2\n")
+    tiny_two = _pool_add("def triple(x):\n    return x * 3\n")
+
+    similar = [h for _, h in bb.code_find_similar(near_copy)]
+    assert similar == [original]
+    assert rewrite not in [h for _, h in bb.code_find_similar(original, {near_copy})]
+    assert bb.code_find_similar(tiny_two) == []
+    assert bb.code_find_similar(near_copy, exclude={original}) == []
