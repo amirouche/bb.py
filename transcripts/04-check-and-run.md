@@ -8,7 +8,7 @@
 - Complexity: intermediate
 
 ## Overview
-The `@check` decorator marks a pool function as a test for another function. `bb check` finds and runs all tests for a given function, reporting PASS or FAIL for each. This transcript builds a pi computation function, adds test functions using `@check` decorators with n values from the Fibonacci sequence, demonstrates passing and failing checks, and runs the function from the command line with `bb run`.
+The `@check` decorator marks a pool function as a test for another function. `bb check` finds and runs all tests for a given function, reporting PASS or FAIL for each. This transcript builds a pi computation function, adds test functions using `@check` decorators with n values from the Fibonacci sequence, demonstrates passing and failing checks, and runs it from the command line with `bb run` through a small entry point that prints the result.
 
 ## Prerequisites
 - `bb` installed and in PATH
@@ -215,18 +215,45 @@ FAIL check_pi_converged
 `bb run` executes a pool function by name or hash. Arguments arrive as
 strings, which is why `compute_pi` calls `int(n)`.
 
+`bb run` does not print the return value: output is the function's own
+job. `compute_pi` returns a number so it stays easy to test, so a small
+entry-point function prints the result.
+
+## Source Files
+
+### Print Pi `print_pi_eng.py`
+```python
+from bb.pool import object_ddda76213f839382c1f0df754b73d47214cf05859da05a14fe690eff32c24015 as compute_pi
+
+
+def print_pi(n):
+    """Print pi computed with n iterations."""
+    print(compute_pi(n))
+```
+
 ## Workflow
 
-### Step 7: Run by name
+### Step 7: Add the entry point
 ```bash
-$ bb run compute_pi@eng 3
+$ PRINT_HASH=$(bb add print_pi_eng.py@eng | grep '^Hash:' | awk '{print $2}')
+```
+
+### Step 8: Run by name
+```bash
+$ bb run print_pi@eng 3
 3.466666666666667
 ```
 
-### Step 8: Run by hash
+### Step 9: Run by hash
 ```bash
-$ bb run $PI_HASH@eng 100
+$ bb run $PRINT_HASH@eng 100
 3.1315929035585537
+```
+
+### Step 10: Calling compute_pi directly prints nothing
+```bash
+$ bb run compute_pi@eng 3 | wc -c
+0
 ```
 
 ---
@@ -245,7 +272,7 @@ $ bb run $PI_HASH@eng 100
 
 2. **`bb check` runs tests**: It loads each test function, executes it, and reports PASS (returned truthy) or FAIL (returned falsy). Tests that raise exceptions are reported as ERROR.
 
-3. **`bb run` accepts hash or name**: Both `bb run compute_pi@eng 3` and `bb run HASH@eng 3` work. String arguments pass through to the function unchanged.
+3. **`bb run` accepts hash or name**: Both `bb run print_pi@eng 3` and `bb run HASH@eng 3` work. String arguments pass through to the function unchanged, and the return value is not printed.
 
 4. **Fibonacci n values**: Using n = 1, 2, 3, 5, 8 (the Fibonacci numbers up to 10) gives a nice progression that exercises the alternating convergence of the Leibniz series.
 

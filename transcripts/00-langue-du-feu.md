@@ -72,6 +72,40 @@ def تشفير_لغة_النار(نص):
     return نتيجة
 ```
 
+### Fire Language Printer `afficher_fra.py`
+```python
+from bb.pool import object_5fe367ff2488ad9083034991a28db92f9be781f409adc395844a36e930bf3589 as encoder_langue_du_feu
+
+
+def afficher_langue_du_feu(texte):
+    """Affiche un texte en langue du feu."""
+    print(encoder_langue_du_feu(texte))
+```
+
+### Fire Language Printer `afficher_jpn.py`
+```python
+from bb.pool import object_5fe367ff2488ad9083034991a28db92f9be781f409adc395844a36e930bf3589 as 火の言葉に変換
+
+
+def 火の言葉を表示(文章):
+    """Affiche un texte en langue du feu."""
+    print(火の言葉に変換(文章))
+```
+
+### Fire Language Printer `afficher_ara.py`
+```python
+from bb.pool import object_5fe367ff2488ad9083034991a28db92f9be781f409adc395844a36e930bf3589 as تشفير_لغة_النار
+
+
+def عرض_لغة_النار(نص):
+    """Affiche un texte en langue du feu."""
+    print(تشفير_لغة_النار(نص))
+```
+
+`bb run` does not print return values, so each language also gets a small
+printer that calls the encoder and prints its result. The encoder hash in
+the import is the shared hash of the three encoders above.
+
 ## Workflow
 
 ### Step 1: Add French version
@@ -103,48 +137,66 @@ $ bb show $HASH@fra | head -1
 def encoder_langue_du_feu(texte):
 ```
 
-### Step 6: Run with French identifiers
+### Step 6: Add the printers
 ```bash
-$ bb run encoder_langue_du_feu@fra bonjour
+$ PRINT=$(bb add afficher_fra.py@fra | grep '^Hash:' | awk '{print $2}')
+```
+
+```bash
+$ PRINT_JPN=$(bb add afficher_jpn.py@jpn | grep '^Hash:' | awk '{print $2}')
+```
+
+```bash
+$ PRINT_ARA=$(bb add afficher_ara.py@ara | grep '^Hash:' | awk '{print $2}')
+```
+
+```bash
+$ test "$PRINT" = "$PRINT_JPN" && test "$PRINT" = "$PRINT_ARA" && echo "All hashes match!"
+All hashes match!
+```
+
+### Step 7: Run with French identifiers
+```bash
+$ bb run afficher_langue_du_feu@fra bonjour
 bofonjofoufur
 ```
 
-### Step 7: Run with another French input
+### Step 8: Run with another French input
 ```bash
-$ bb run encoder_langue_du_feu@fra "merci beaucoup"
+$ bb run afficher_langue_du_feu@fra "merci beaucoup"
 mefercifi befeafaufucofoufup
 ```
 
-### Step 8: Run with Japanese identifiers (same French input!)
+### Step 9: Run with Japanese identifiers (same French input!)
 ```bash
-$ bb run 火の言葉に変換@jpn bonjour
+$ bb run 火の言葉を表示@jpn bonjour
 bofonjofoufur
 ```
 
-### Step 9: Run with Arabic identifiers (same French input!)
+### Step 10: Run with Arabic identifiers (same French input!)
 ```bash
-$ bb run تشفير_لغة_النار@ara salut
+$ bb run عرض_لغة_النار@ara salut
 safalufut
 ```
 
-### Step 10: Time execution across languages
+### Step 11: Time execution across languages
 ```bash
 # SKIP-TEST: Timing information is for reference only
-$ /usr/bin/time -v bb run encoder_langue_du_feu@fra "Vive la France"
+$ /usr/bin/time -v bb run afficher_langue_du_feu@fra "Vive la France"
 Vivifeve lafa Frafancefe
         User time (seconds): 0.11
         System time (seconds): 0.02
         Elapsed (wall clock) time: 0.14
         Maximum resident set size (kbytes): 18200
 
-$ /usr/bin/time -v bb run 火の言葉に変換@jpn "Vive la France"
+$ /usr/bin/time -v bb run 火の言葉を表示@jpn "Vive la France"
 Vivifeve lafa Frafancefe
         User time (seconds): 0.11
         System time (seconds): 0.02
         Elapsed (wall clock) time: 0.14
         Maximum resident set size (kbytes): 18210
 
-$ /usr/bin/time -v bb run تشفير_لغة_النار@ara "Vive la France"
+$ /usr/bin/time -v bb run عرض_لغة_النار@ara "Vive la France"
 Vivifeve lafa Frafancefe
         User time (seconds): 0.11
         System time (seconds): 0.02

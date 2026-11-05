@@ -2562,20 +2562,14 @@ def command_run(identifier: str, func_args: list = None):
 
     func = namespace[loaded_func_name]
 
-    # Execute the function with provided arguments (all passed as strings)
-    if func_args:
-        try:
-            result = func(*func_args)
-            print(result)
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
-    else:
-        # No arguments - print an error
-        print(f"Error: No arguments provided", file=sys.stderr)
-        print(f"Usage: bb run {loaded_func_name} <arg1> <arg2> ...", file=sys.stderr)
+    # Call the function with the provided arguments (all passed as strings).
+    # The return value is not printed: functions do their own output.
+    try:
+        func(*(func_args or []))
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
