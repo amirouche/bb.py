@@ -91,7 +91,9 @@ BB_IMPORT_PREFIX = "object_"
 # objects without it were produced by version 1.
 #   1: names bound by imports inside a function body were renamed
 #   2: they are kept, like top-level imports
-NORMALIZATION_VERSION = 2
+#   3: `import a.b` binds `a`, which is kept too (version 2 renamed it, so
+#      such functions failed at run time: there is nothing to repair)
+NORMALIZATION_VERSION = 3
 
 
 
@@ -154,7 +156,8 @@ def code_get_import_names(tree: ast.Module) -> Set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                imported.add(alias.asname if alias.asname else alias.name)
+                # `import a.b` binds `a`
+                imported.add(alias.asname if alias.asname else alias.name.split('.')[0])
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 imported.add(alias.asname if alias.asname else alias.name)
@@ -237,7 +240,8 @@ def code_create_name_mapping(function_def: Union[ast.FunctionDef, ast.AsyncFunct
     for imp in imports:
         if isinstance(imp, ast.Import):
             for alias in imp.names:
-                imported_names.add(alias.asname if alias.asname else alias.name)
+                # `import a.b` binds `a`: never rename it
+                imported_names.add(alias.asname if alias.asname else alias.name.split('.')[0])
         elif isinstance(imp, ast.ImportFrom):
             for alias in imp.names:
                 imported_names.add(alias.asname if alias.asname else alias.name)

@@ -60,3 +60,17 @@ def test_positional_calls_to_an_inner_function_run(tmp_path):
     run = subprocess.run([sys.executable, '-c', f'import bb; print(bb.code_load_normalized("{func_hash}")("ab"))'],
                          capture_output=True, text=True, env=env, cwd=str(BB.parent))
     assert run.stdout.strip() == 'ababab', run.stderr
+
+
+def test_a_dotted_import_keeps_its_top_level_name_and_runs(tmp_path):
+    env = {**os.environ, 'BB_DIRECTORY': str(tmp_path / 'bb'), 'BB_STATE_DIRECTORY': str(tmp_path / 'state')}
+    source = tmp_path / 'quote_eng.py'
+    source.write_text('import urllib.parse\n\n\ndef quote(text):\n    """Quote text for a URL."""\n'
+                      '    return urllib.parse.quote(text)\n', encoding='utf-8')
+    prepared = bb.code_prepare_source(source.read_text(), 'eng')
+    assert 'urllib.parse.quote' in prepared['normalized_code']
+    result = subprocess.run([sys.executable, str(BB), 'add', f'{source}@eng'], capture_output=True, text=True, env=env)
+    func_hash = result.stdout.split('Hash:')[1].split()[0]
+    run = subprocess.run([sys.executable, '-c', f'import bb; print(bb.code_load_normalized("{func_hash}")("a b"))'],
+                         capture_output=True, text=True, env=env, cwd=str(BB.parent))
+    assert run.stdout.strip() == 'a%20b', run.stderr

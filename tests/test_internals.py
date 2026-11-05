@@ -1429,8 +1429,8 @@ def test_find_similar_survives_an_extra_early_variable(mock_bb_dir):
 def test_objects_record_their_normalization(mock_bb_dir):
     """New objects say which normalization produced them; old ones read as version 1"""
     func = _pool_add("def one():\n    return 1\n")
-    assert bb.object_load(func)['normalization'] == bb.NORMALIZATION_VERSION == 2
-    assert bb.object_normalization(func) == 2
+    assert bb.object_load(func)['normalization'] == bb.NORMALIZATION_VERSION == 3
+    assert bb.object_normalization(func) == 3
 
     legacy = _save_legacy_inner_import('random')
     assert bb.object_normalization(legacy) == 1
