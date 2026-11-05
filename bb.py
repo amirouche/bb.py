@@ -3914,6 +3914,37 @@ def check_report(results: List[Tuple[str, str, str]], indent: str = "") -> bool:
     return counts['PASS'] == len(results)
 
 
+def code_restore_inner_imports(tree: ast.Module, func_hash: str):
+    """
+    Give back their real names to modules imported inside a function body.
+
+    Normalization keeps `import random` inside a function as written but
+    renames its uses (`_bb_v_2.randint`), so the stored code cannot run as
+    is. The mapping knows that _bb_v_2 is `random`. To keep mappings from
+    changing what runs, a normalized name is restored only to a name that
+    an import statement in this very code binds.
+
+    Modifies tree in place.
+    """
+    bound = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            bound.update((alias.asname or alias.name).split('.')[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module != 'bb.pool':
+            bound.update(alias.asname or alias.name for alias in node.names)
+    if not bound:
+        return
+
+    lang = helper_pick_language(func_hash)
+    if lang is None:
+        return
+    mapping = mapping_load_json(func_hash, lang, mapping_select(func_hash, lang))
+    rename = {norm: name for norm, name in mapping.get('name_mapping', {}).items()
+              if norm.startswith('_bb_v_') and norm != '_bb_v_0' and name in bound}
+    if rename:
+        ASTNormalizer(rename).visit(tree)
+
+
 def code_load_normalized(func_hash: str, cache: Dict[str, Callable] = None) -> Callable:
     """
     Load a pool function from its normalized code, exactly as hashed.
@@ -3934,6 +3965,7 @@ def code_load_normalized(func_hash: str, cache: Dict[str, Callable] = None) -> C
     if code_detect_schema(func_hash) is None:
         raise ValueError(f"Function not in the local pool: {func_hash}")
     tree = ast.parse(object_load(func_hash)['normalized_code'])
+    code_restore_inner_imports(tree, func_hash)
 
     namespace: Dict[str, Any] = {}
     body = []

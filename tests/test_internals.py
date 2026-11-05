@@ -1350,3 +1350,23 @@ def test_config_is_private_and_migrated_once(mock_bb_dir, capsys):
 
     bb.storage_get_config_path()
     assert capsys.readouterr().err == ""
+
+
+def test_inner_imports_run_from_normalized_code(mock_bb_dir):
+    """A module imported inside the body gets its real name back when loaded"""
+    func = _pool_add("def pick(n):\n    import random\n    random.seed(1)\n    return random.randint(1, n) <= n\n")
+    assert bb.code_load_normalized(func)(6) is True
+
+
+def test_mapping_cannot_rename_to_names_the_code_does_not_import(mock_bb_dir):
+    """A hostile mapping that points the module at another name is ignored"""
+    func = _pool_add("def pick(n):\n    import random\n    return random.randint(1, n)\n")
+    lang_dir = bb.storage_get_pool_directory() / func[:2] / func[2:] / 'eng'
+    mapping_json = next(lang_dir.glob('*/*/mapping.json'))
+    data = json.loads(mapping_json.read_text(encoding='utf-8'))
+    data['name_mapping'] = {k: ('os' if v == 'random' else v) for k, v in data['name_mapping'].items()}
+    mapping_json.write_text(json.dumps(data), encoding='utf-8')
+
+    with pytest.raises(NameError):
+        bb.code_load_normalized(func)(6)
+
