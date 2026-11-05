@@ -428,6 +428,33 @@ def hash_compute(code: str, algorithm: str = 'sha256') -> str:
         raise ValueError(f"Unsupported hash algorithm: {algorithm}")
 
 
+def code_compute_function_hash(normalized_code: str, checks: List[str] = None) -> str:
+    """
+    Compute a function's hash: its identity in the pool.
+
+    The checks attached to a function are part of its definition, so
+    changing them gives a new hash (a fork). Documentation is not: it
+    lives in the language mappings.
+
+    - Without checks: SHA256 of the normalized code (without docstring),
+      so functions added before checks existed keep their hash
+    - With checks: SHA256 of the canonical JSON of {checks, normalized_code},
+      with checks sorted and deduplicated so their order does not matter
+
+    Args:
+        normalized_code: Normalized code without docstring
+        checks: Hashes of the attached check functions
+
+    Returns:
+        64-character hex hash
+    """
+    if not checks:
+        return hash_compute(normalized_code)
+    canonical_json = json.dumps({'normalized_code': normalized_code, 'checks': sorted(set(checks))},
+                                sort_keys=True, ensure_ascii=False)
+    return hash_compute(canonical_json)
+
+
 def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
                         alias_mapping: Dict[str, str], comment: str = "",
                         markdown: str = "", parent: str = "") -> str:
@@ -499,7 +526,7 @@ def code_detect_schema(func_hash: str) -> int:
     return None
 
 
-def code_create_metadata(parent: str = None, checks: List[str] = None) -> Dict[str, any]:
+def code_create_metadata(parent: str = None) -> Dict[str, any]:
     """
     Create default metadata for a function.
 
@@ -508,12 +535,9 @@ def code_create_metadata(parent: str = None, checks: List[str] = None) -> Dict[s
     - name: User's name from config
     - email: User's email from config
     - parent: Optional parent function hash (for lineage tracking)
-    - checks: Optional hashes of the check functions attached by bb edit
 
     Args:
         parent: Optional parent function hash (for fork lineage tracking)
-        checks: Optional list of check function hashes; each check takes this
-            function as its only argument
 
     Returns:
         Dictionary with metadata fields
@@ -536,9 +560,6 @@ def code_create_metadata(parent: str = None, checks: List[str] = None) -> Dict[s
 
     if parent:
         metadata['parent'] = parent
-
-    if checks:
-        metadata['checks'] = checks
 
     return metadata
 
@@ -713,7 +734,8 @@ def command_whoami(subcommand: str, value: list = None):
             print(f"Set {subcommand}: {value[0]}")
 
 
-def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any]):
+def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any],
+                checks: List[str] = None) -> bool:
     """
     Save function object to bb directory.
 
@@ -721,10 +743,18 @@ def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any])
     - Directory: $BB_DIRECTORY/pool/XX/YYYYYY.../
     - File: $BB_DIRECTORY/pool/XX/YYYYYY.../object.json
 
+    object.json is written once: an existing object is never rewritten, so
+    adding the same function again keeps its original metadata (creation
+    time, author, parent).
+
     Args:
-        hash_value: Function hash (64-character hex)
+        hash_value: Function hash (64-character hex), see code_compute_function_hash
         normalized_code: Normalized code with docstring
         metadata: Metadata dict (created, author)
+        checks: Hashes of the attached check functions, part of the definition
+
+    Returns:
+        True when the object was written, False when it already existed
     """
     pool_dir = storage_get_pool_directory()
 
@@ -735,17 +765,29 @@ def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any])
     # Create object.json
     object_json = func_dir / 'object.json'
 
+    if object_json.exists():
+        print(f"Hash: {hash_value}")
+        return False
+
     data = {
         'schema_version': 1,
         'hash': hash_value,
         'normalized_code': normalized_code,
         'metadata': metadata
     }
+    if checks:
+        data['checks'] = sorted(set(checks))
 
     with open(object_json, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
     print(f"Hash: {hash_value}")
+    return True
+
+
+def object_load_checks(hash_value: str) -> List[str]:
+    """Hashes of the checks attached to a function (part of its definition)."""
+    return object_load(hash_value).get('checks', [])
 
 
 def mapping_save(func_hash: str, lang: str, docstring: str,
@@ -2282,7 +2324,7 @@ def code_prepare_source(source_code: str, lang: str, where: str = None) -> Dict[
 
     return {
         # Hash on code WITHOUT docstring (same logic = same hash regardless of language)
-        'hash': hash_compute(normalized_code_without_docstring),
+        'hash': code_compute_function_hash(normalized_code_without_docstring),
         'normalized_code': normalized_code_without_docstring,
         'docstring': docstring,
         'name_mapping': name_mapping,
@@ -3227,8 +3269,9 @@ def helper_resolve_to_hash(identifier: str) -> str:
 # A check is an ordinary pool function that takes the implementation as its
 # only argument and returns a truthy value when it passes. Checks do not
 # import the function they test, so one check can run against every fork.
-# They are attached to an implementation through its metadata ('checks'),
-# which bb edit writes.
+# They are part of an implementation's definition: object.json lists their
+# hashes under 'checks', and they enter the function hash, so changing the
+# checks forks the function. bb edit writes them.
 
 def helper_pick_language(func_hash: str, lang: str = None) -> Optional[str]:
     """
@@ -3352,7 +3395,7 @@ def command_check(identifier: str):
     with `bb edit`. Exits with status 1 when a check fails.
     """
     hash_value, lang = helper_parse_identifier(identifier)
-    check_hashes = object_load(hash_value)['metadata'].get('checks', [])
+    check_hashes = object_load_checks(hash_value)
 
     if not check_hashes:
         print("No checks.")
@@ -3379,6 +3422,8 @@ def command_check(identifier: str):
         status, detail = check_run(check, implementation)
         results.append((status, name, detail))
 
+    # Checks are stored by hash; report them by name
+    results.sort(key=lambda r: r[1])
     if not check_report(results):
         sys.exit(1)
 
@@ -3497,43 +3542,28 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
     """
     Save one edit-file section to the pool.
 
-    A new function gets the section's bb:parent marker as its parent. An
-    existing function only gets a new mapping when its names or
-    documentation changed. A new mapping records mapping_parent, the
-    translation it was edited from. For the implementation, checks
-    replaces the list of attached checks.
+    A new function gets the section's bb:parent marker as its parent, and
+    checks (for the implementation) as part of its definition; prepared's
+    hash must already include them. An existing function is never
+    rewritten: it only gets a new mapping when its names or documentation
+    changed. A new mapping records mapping_parent, the translation it was
+    edited from.
 
     Returns:
         True when something was written
     """
     func_hash = prepared['hash']
-    object_json = storage_get_pool_directory() / func_hash[:2] / func_hash[2:] / 'object.json'
-    written = False
-    is_new = not object_json.exists()
-
-    if is_new:
-        parent = section.get('parent')
-        object_save(func_hash, prepared['normalized_code'],
-                    code_create_metadata(parent=parent if parent != func_hash else None, checks=checks))
-        written = True
-    elif checks is not None:
-        with open(object_json, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        if data['metadata'].get('checks', []) != checks:
-            if checks:
-                data['metadata']['checks'] = checks
-            else:
-                data['metadata'].pop('checks', None)
-            with open(object_json, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            written = True
+    parent = section.get('parent')
+    is_new = object_save(func_hash, prepared['normalized_code'],
+                         code_create_metadata(parent=parent if parent != func_hash else None),
+                         checks=checks)
 
     if is_new or not unchanged:
         mapping_save(func_hash, lang, prepared['docstring'], prepared['name_mapping'],
                      prepared['alias_mapping'], comment, section['markdown'], mapping_parent)
-        written = True
+        return True
 
-    return written
+    return False
 
 
 def helper_run_editor(path: str):
@@ -3590,7 +3620,7 @@ def command_edit(identifier: str, comment: str = None):
     # Load the function and the checks attached to it
     original = edit_load_section(hash_value, lang)
     original_checks = []
-    for check_hash in object_load(hash_value)['metadata'].get('checks', []):
+    for check_hash in object_load_checks(hash_value):
         if code_detect_schema(check_hash) is None:
             print(f"Error: Check {check_hash[:12]}... is attached to this function "
                   f"but missing from the local pool. Fetch it with git first.", file=sys.stderr)
@@ -3631,7 +3661,9 @@ def command_edit(identifier: str, comment: str = None):
                                   [(c['title'], c['parent']) for c in original_checks])
     for (check, _), parent in zip(plan['checks'], parents):
         check['parent'] = parent
-    check_hashes = list(dict.fromkeys(p['hash'] for _, p in plan['checks']))
+    check_hashes = sorted(set(p['hash'] for _, p in plan['checks']))
+    # The checks are part of the implementation's definition, hence of its hash
+    prepared['hash'] = code_compute_function_hash(prepared['normalized_code'], check_hashes)
 
     # Compare with what was loaded: hashes, names and documentation
     original_prints = {s['fingerprint'] for s in [original] + original_checks}
@@ -3640,8 +3672,7 @@ def command_edit(identifier: str, comment: str = None):
         return edit_fingerprint(prep['hash'], prep['docstring'], prep['name_mapping'],
                                 prep['alias_mapping'], sec['markdown']) in original_prints
 
-    old_check_hashes = object_load(hash_value)['metadata'].get('checks', [])
-    if (prepared['hash'] == hash_value and unchanged(section, prepared) and check_hashes == old_check_hashes
+    if (prepared['hash'] == hash_value and unchanged(section, prepared)
             and all(unchanged(s, p) for s, p in plan['checks'])):
         os.unlink(path)
         print("No changes.")
@@ -3865,11 +3896,13 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
                     code_without_docstring = ast.unparse(module_without_docstring)
                     break
 
-            new_dep_hash = hash_compute(code_without_docstring)
+            # The rewritten function keeps its checks, which are part of its hash
+            dep_checks = object_load_checks(dep_hash)
+            new_dep_hash = code_compute_function_hash(code_without_docstring, dep_checks)
 
             # Save the new function
             metadata = code_create_metadata(parent=dep_hash)
-            object_save(new_dep_hash, new_dep_code, metadata)
+            object_save(new_dep_hash, new_dep_code, metadata, checks=dep_checks)
 
             # Copy language mappings
             dep_func_dir = pool_dir / dep_hash[:2] / dep_hash[2:]
@@ -3989,13 +4022,15 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
             code_without_docstring = ast.unparse(module_without_docstring)
             break
 
-    new_hash = hash_compute(code_without_docstring)
+    # The rewritten function keeps its checks, which are part of its hash
+    what_checks = object_load_checks(what_hash)
+    new_hash = code_compute_function_hash(code_without_docstring, what_checks)
 
     # Create metadata for the new function
     metadata = code_create_metadata(parent=what_hash)
 
     # Save the new function (object.json) with docstring
-    object_save(new_hash, new_normalized_code, metadata)
+    object_save(new_hash, new_normalized_code, metadata, checks=what_checks)
 
     # Copy the current language mappings from what_hash to new_hash;
     # superseded ones stay reachable through parent

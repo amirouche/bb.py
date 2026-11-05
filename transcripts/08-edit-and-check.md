@@ -139,8 +139,10 @@ def check_pi_n8(compute_pi):
 ## Workflow
 
 ### Step 3: Save the checks
-The code did not change, so the hash stays the same. The five checks
-are added to the pool and attached to `compute_pi`.
+The checks are part of a function's definition, so attaching them gives
+`compute_pi` a new hash: a fork whose parent is the version without
+checks. The five checks are added to the pool too. The documentation
+paragraph is not part of the hash; it is stored in the English mapping.
 
 ```bash
 $ EDITOR="cp pi_checks.md" bb edit compute_pi@eng -m "Attach the Leibniz checks"
@@ -150,7 +152,8 @@ PASS check_pi_n3
 PASS check_pi_n5
 PASS check_pi_n8
 5 checks: 5 passed
-Hash: ddda76213f839382c1f0df754b73d47214cf05859da05a14fe690eff32c24015
+Hash: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
+Parent: ddda76213f839382c1f0df754b73d47214cf05859da05a14fe690eff32c24015
 Check: 1a98a8c92e2e8401f5b39ea51a5a3729eb756882860c54e8ec5c653fc6b5e620 check_pi_n1
 Check: a658651655db54709ff2e2490f4ba96ebfd3ccbf27b45e043079177ad365ccd7 check_pi_n2
 Check: 6ace86da1614319cf367ee008158c90486c224f0c9282f570d1dde66683a8b26 check_pi_n3
@@ -255,10 +258,10 @@ FAIL check_pi_n8
 5 checks: 1 passed, 4 failed
 ```
 
-### Step 6: The pool still has the working version only
+### Step 6: The name still points to the checked version
 ```bash
 $ bb latest compute_pi eng | grep Hash
-Hash: ddda76213f839382c1f0df754b73d47214cf05859da05a14fe690eff32c24015
+Hash: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
 ```
 
 ---
@@ -267,8 +270,8 @@ Hash: ddda76213f839382c1f0df754b73d47214cf05859da05a14fe690eff32c24015
 
 The same series written as one `sum` over a generator. The logic is
 different, so the hash is new. Every check passes, so it is saved, and
-it records the loop version as its parent. The checks come along
-unchanged: they never depended on the old hash.
+it records the checked loop version as its parent. The checks come
+along unchanged: they never depended on the old hash.
 
 ## Source Files
 
@@ -358,8 +361,8 @@ PASS check_pi_n3
 PASS check_pi_n5
 PASS check_pi_n8
 5 checks: 5 passed
-Hash: 26cffe126df6c7b35ab70a72c9fb6e743564ff66c30482d74e8fc27904bd3cc2
-Parent: ddda76213f839382c1f0df754b73d47214cf05859da05a14fe690eff32c24015
+Hash: 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670
+Parent: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
 ```
 
 ### Step 8: The name now points to the rewrite, which carries the same checks
@@ -368,7 +371,7 @@ resolves to the rewrite.
 
 ```bash
 $ bb latest compute_pi eng | grep Hash
-Hash: 26cffe126df6c7b35ab70a72c9fb6e743564ff66c30482d74e8fc27904bd3cc2
+Hash: 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670
 $ bb check compute_pi@eng
 PASS check_pi_n1
 PASS check_pi_n2
@@ -376,6 +379,24 @@ PASS check_pi_n3
 PASS check_pi_n5
 PASS check_pi_n8
 5 checks: 5 passed
+```
+
+### Step 9: Rewording the documentation is not a fork
+Only the prose changes, so the hash stays the same. bb writes a new
+English mapping whose parent is the previous one, and `bb show` uses it.
+
+```bash
+$ sed 's/More terms give a closer approximation/Each extra term gets closer/' pi_sum.md > pi_doc.md
+$ EDITOR="cp pi_doc.md" bb edit 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670@eng -m "Reword the documentation"
+PASS check_pi_n1
+PASS check_pi_n2
+PASS check_pi_n3
+PASS check_pi_n5
+PASS check_pi_n8
+5 checks: 5 passed
+Hash: 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670
+$ bb show 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670@eng | head -1
+def compute_pi(n):
 ```
 
 ---
@@ -411,7 +432,7 @@ def check_pi_n8(compute_pi):
 
 ## Workflow
 
-### Step 9: Fork the check
+### Step 10: Fork the check
 ```bash
 $ EDITOR="cp n8_tighter.md" bb edit check_pi_n8@eng -m "Tighter bound"
 No checks.
@@ -419,7 +440,7 @@ Hash: e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f
 Parent: 451a1d221bbeb6e40daa71aedbb82fea0a94eb3738dfa59c3b0aef94faa51025
 ```
 
-### Step 10: Editing the fork again shows where it came from
+### Step 11: Editing the fork again shows where it came from
 ```bash
 $ EDITOR=cat bb edit e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f@eng | grep bb:parent
 <!-- bb:parent e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f -->
@@ -439,10 +460,12 @@ $ EDITOR=cat bb edit e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa9919
 
 1. **Checks take the implementation as an argument**: They never import the function they test, so they keep working across every fork.
 
-2. **Saving is gated**: The file must parse and every check must pass before anything reaches the pool.
+2. **Checks are part of the definition**: A function's hash covers its code and its check hashes. Changing the checks forks the function; changing only the documentation does not.
 
-3. **Lineage is recorded**: A new version stores the edited one as `parent`, and each `<!-- bb:parent HASH -->` marker tells bb which check a section came from.
+3. **Saving is gated**: The file must parse and every check must pass before anything reaches the pool.
 
-4. **Documentation lives in the mapping**: Prose and examples around the `python def` block are stored per language, outside the hash, like docstrings.
+4. **Lineage is recorded**: A new version stores the edited one as `parent`, and each `<!-- bb:parent HASH -->` marker tells bb which check a section came from.
 
-5. **A check forked alone applies to nothing** until it is pasted into a function's Checks section.
+5. **Documentation lives in the mapping**: Prose and examples around the `python def` block are stored per language, outside the hash, like docstrings.
+
+6. **A check forked alone applies to nothing** until it is pasted into a function's Checks section.

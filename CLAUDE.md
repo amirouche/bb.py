@@ -74,7 +74,7 @@ Store in $HOME/.local/bb/pool/ (or $BB_DIRECTORY/pool/) with:
 2. **Built-ins never renamed**: `len`, `sum`, `print`, etc. preserved
 3. **Imported names never renamed**: `math`, `Counter`, etc. preserved
 4. **Imports sorted**: Lexicographically by module name
-5. **Hash on logic only**: Docstrings excluded from hash computation
+5. **Hash on logic only**: Docstrings and documentation excluded from hash computation; attached checks included
 6. **Language codes**: Always 3 characters (ISO 639-3: eng, fra, spa, etc.)
 7. **Hash format**: 64 lowercase hex characters (SHA256)
 
@@ -211,6 +211,12 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
 2. Compute hash on version WITHOUT docstring
 3. Store version WITH docstring for display
 4. Result: Same logic = same hash, regardless of language
+5. Checks are part of the definition (code_compute_function_hash):
+   - no checks: hash = sha256(normalized code), as it always was
+   - with checks: hash = sha256 of canonical JSON {checks (sorted), normalized_code}
+   Changing checks forks the function; changing documentation does not
+6. object.json is written once; documentation changes add a mapping
+   whose 'parent' is the mapping it replaces
 ```
 
 ### Public-Facing Hash Specification

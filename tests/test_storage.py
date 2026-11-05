@@ -539,3 +539,37 @@ def test_mapping_parent_in_other_language_does_not_supersede(mock_bb_dir):
     english = bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "")
     bb.mapping_save(func_hash, "fra", "", {"_bb_v_0": "f"}, {}, "", parent=f"{func_hash}@eng@{english}")
     assert bb.mapping_leaves(func_hash, "eng") == [english]
+
+
+# ============================================================================
+# Tests for function identity: code plus checks, written once
+# ============================================================================
+
+def test_function_hash_without_checks_is_code_hash():
+    """Functions without checks keep the hash they always had"""
+    code = normalize_code_for_test("def _bb_v_0(): return 1")
+    assert bb.code_compute_function_hash(code) == bb.hash_compute(code)
+    assert bb.code_compute_function_hash(code, []) == bb.hash_compute(code)
+
+
+def test_function_hash_covers_checks_in_any_order():
+    """Checks change the hash; their order and duplicates do not"""
+    code = normalize_code_for_test("def _bb_v_0(): return 1")
+    one, two = "a" * 64, "b" * 64
+    with_checks = bb.code_compute_function_hash(code, [one, two])
+    assert with_checks != bb.code_compute_function_hash(code)
+    assert with_checks == bb.code_compute_function_hash(code, [two, one, two])
+    assert with_checks != bb.code_compute_function_hash(code, [one])
+
+
+def test_object_save_writes_once(mock_bb_dir):
+    """Saving an existing object keeps its original metadata and checks"""
+    code = normalize_code_for_test("def _bb_v_0(): return 1")
+    func_hash = bb.code_compute_function_hash(code, ["a" * 64])
+    assert bb.object_save(func_hash, code, {'created': 'first', 'parent': 'p' * 64}, checks=["a" * 64]) is True
+    assert bb.object_save(func_hash, code, {'created': 'second'}) is False
+
+    data = bb.object_load(func_hash)
+    assert data['metadata'] == {'created': 'first', 'parent': 'p' * 64}
+    assert data['checks'] == ["a" * 64]
+    assert 'checks' not in data['metadata']
