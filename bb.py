@@ -3977,6 +3977,40 @@ def edit_fingerprint(func_hash: str, docstring: str, name_mapping: Dict[str, str
     return func_hash, code_compute_mapping_hash(docstring, name_mapping, alias_mapping, "", markdown)
 
 
+def edit_assign_parents(checks: List[Tuple[str, Optional[str]]], originals: List[Tuple[str, str]]) -> List[Optional[str]]:
+    """
+    Guess the parent of check sections that lost their bb:parent marker.
+
+    An unmarked check descends from an original check that no marker
+    claims: first one with the same function name, otherwise the one at
+    the same position. A check that matches neither has no parent.
+
+    Args:
+        checks: (function name, parent from marker or None) per edited check, in file order
+        originals: (function name, hash) per check that was loaded, in file order
+
+    Returns:
+        Parent hash (or None) per edited check
+    """
+    parents = [parent for _, parent in checks]
+    available = {h for _, h in originals} - {p for p in parents if p}
+
+    for i, (name, parent) in enumerate(checks):
+        if parent is None:
+            for original_name, original_hash in originals:
+                if original_name == name and original_hash in available:
+                    parents[i] = original_hash
+                    available.discard(original_hash)
+                    break
+
+    for i, (name, parent) in enumerate(checks):
+        if parents[i] is None and i < len(originals) and originals[i][1] in available:
+            parents[i] = originals[i][1]
+            available.discard(originals[i][1])
+
+    return parents
+
+
 def edit_prepare(text: str, lang: str) -> Dict[str, Any]:
     """
     Parse an edit file, normalize every section and run the checks.
@@ -4147,6 +4181,11 @@ def command_edit(identifier: str, comment: str = None):
     section, prepared = plan['implementation']
     # Without a marker, the implementation still descends from the edited function
     section['parent'] = section['parent'] or hash_value
+    # Checks without a marker are matched to the loaded checks by name, then position
+    parents = edit_assign_parents([(p['name_mapping']['_bb_v_0'], c['parent']) for c, p in plan['checks']],
+                                  [(c['title'], c['parent']) for c in original_checks])
+    for (check, _), parent in zip(plan['checks'], parents):
+        check['parent'] = parent
     check_hashes = list(dict.fromkeys(p['hash'] for _, p in plan['checks']))
 
     # Compare with what was loaded: hashes, names and documentation

@@ -1102,3 +1102,25 @@ def test_code_execute_source_ignores_statements_that_are_not_stored(mock_bb_dir)
     """Only imports and the function run, matching what bb stores"""
     func = bb.code_execute_source("print(1 / 0)\n\ndef one():\n    return 1\n", 'eng')
     assert func() == 1
+
+
+# ============================================================================
+# Tests for check lineage without markers
+# ============================================================================
+
+def test_edit_assign_parents_keeps_markers():
+    """Markers win; their hashes are not handed out again by name or position"""
+    originals = [('a', 'h1'), ('b', 'h2')]
+    assert bb.edit_assign_parents([('a', 'h2'), ('b', None)], originals) == ['h2', None]
+
+
+def test_edit_assign_parents_by_name_then_position():
+    """Same name is matched first, then the remaining check at the same position"""
+    originals = [('a', 'h1'), ('b', 'h2'), ('c', 'h3')]
+    checks = [('renamed', None), ('c', None), ('b', None)]
+    assert bb.edit_assign_parents(checks, originals) == ['h1', 'h3', 'h2']
+
+
+def test_edit_assign_parents_new_checks_have_no_parent():
+    """A check beyond the loaded ones, with a new name, has no parent"""
+    assert bb.edit_assign_parents([('a', None), ('new', None)], [('a', 'h1')]) == ['h1', None]
