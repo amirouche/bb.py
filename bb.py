@@ -952,7 +952,16 @@ def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
     mapping_save(hash_value, lang, docstring, name_mapping, alias_mapping, comment)
 
 
-class _ReadableUnparser(getattr(ast, '_Unparser', object)):
+def _ast_unparser_class():
+    """The class behind ast.unparse, or None: private, and loaded lazily by Python 3.14."""
+    try:
+        from _ast_unparse import Unparser  # Python 3.14
+        return Unparser
+    except ImportError:
+        return getattr(ast, '_Unparser', None)
+
+
+class _ReadableUnparser(_ast_unparser_class() or object):
     """
     ast.unparse for display: strings holding newlines are written as
     triple-quoted literals, as people write them (a stylesheet, a
@@ -979,7 +988,7 @@ class _ReadableUnparser(getattr(ast, '_Unparser', object)):
 
 def code_unparse_readable(tree: ast.AST) -> str:
     """Source for display (see _ReadableUnparser); plain ast.unparse where that is unavailable."""
-    if not hasattr(ast, '_Unparser'):
+    if _ReadableUnparser.__bases__ == (object,):
         return ast.unparse(tree)
     source = _ReadableUnparser().visit(tree)
     try:

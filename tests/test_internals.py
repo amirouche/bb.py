@@ -1460,3 +1460,12 @@ def test_prepare_refuses_code_outside_the_function(mock_bb_dir, source, line):
 def test_prepare_allows_a_module_docstring(mock_bb_dir):
     """A module docstring is documentation, not code: dropping it loses nothing that runs"""
     assert bb.code_prepare_source('"""Helpers."""\n\ndef f():\n    return 1\n', 'eng')['hash']
+
+
+def test_unparse_readable_after_ast_unparse():
+    """Multi-line strings show triple-quoted, even after ast.unparse ran (Python 3.14 loads it lazily)."""
+    import ast
+    import bb
+    tree = ast.parse('x = "a\\nb"\n')
+    ast.unparse(tree)
+    assert bb.code_unparse_readable(tree) == 'x = """a\nb"""'
