@@ -4398,7 +4398,7 @@ def edit_assign_parents(checks: List[Tuple[str, Optional[str]]], originals: List
     return parents
 
 
-def edit_prepare(text: str, lang: str) -> Dict[str, Any]:
+def edit_prepare(text: str, lang: str, unreviewed: bool = False) -> Dict[str, Any]:
     """
     Parse an edit file, normalize every section and run the checks.
 
@@ -4423,7 +4423,10 @@ def edit_prepare(text: str, lang: str) -> Dict[str, Any]:
                 for dep in p['alias_mapping']}
     needed = {h for dep in imported for h in code_resolve_dependencies(dep)}
     missing = sorted(needed - review_approvals(list(needed)))
-    if missing:
+    if missing and unreviewed:
+        print(f"Warning: running {len(missing)} imported function(s) nobody reviewed "
+              "(--dangerously-unreviewed).", file=sys.stderr)
+    elif missing:
         raise ValueError("The edit imports functions you have not reviewed, so nothing was run:\n"
                          + '\n'.join(f"  bb review {h}" for h in missing))
 
@@ -4497,7 +4500,7 @@ def helper_ask_yes(question: str) -> bool:
     return answer in ('', 'y', 'yes')
 
 
-def command_edit(identifier: str, comment: str = None):
+def command_edit(identifier: str, comment: str = None, unreviewed: bool = False):
     """
     Edit a function and its checks as one markdown file, then save a fork.
 
@@ -4507,7 +4510,9 @@ def command_edit(identifier: str, comment: str = None):
     takes the implementation as its only argument and returns True when it
     passes.
 
-    Saving requires the file to parse and every check to pass. The new
+    Saving requires the file to parse and every check to pass. Checks run
+    the code, so pool functions it imports must be reviewed first, unless
+    --dangerously-unreviewed (for experiments) runs them anyway. The new
     function records the edited one as its parent and lists its checks;
     changed checks record their own parents. The comment (asked for when
     --comment is not given) is stored in the new mappings.
@@ -4567,7 +4572,7 @@ def command_edit(identifier: str, comment: str = None):
             helper_run_editor(path)
             with open(path, 'r', encoding='utf-8') as f:
                 edited = f.read()
-            plan = edit_prepare(edited, lang)
+            plan = edit_prepare(edited, lang, unreviewed)
             passed = check_report(plan['results'])
         except ValueError as e:
             print(f"Error: {e}", file=sys.stderr)
@@ -5710,6 +5715,8 @@ def _build_parser():
     edit_parser = subparsers.add_parser('edit', help='Edit a function and its checks, then save a fork')
     edit_parser.add_argument('identifier', help='Hash or name, with optional @lang (e.g., compute_pi@eng)')
     edit_parser.add_argument('--comment', '-m', default=None, help='Comment for the new version (asked when omitted)')
+    edit_parser.add_argument('--dangerously-unreviewed', dest='unreviewed', action='store_true',
+                             help='Run imported functions nobody reviewed (for experiments)')
 
 
     # Review command
@@ -5837,7 +5844,7 @@ def main():
     elif args.command == 'run':
         command_run(args.identifier, func_args=args.func_args)
     elif args.command == 'edit':
-        command_edit(args.identifier, comment=args.comment)
+        command_edit(args.identifier, comment=args.comment, unreviewed=args.unreviewed)
     elif args.command == 'review':
         command_review(args.identifier, comment=args.comment)
     elif args.command == 'reviews':

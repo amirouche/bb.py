@@ -48,3 +48,24 @@ def test_a_new_function_needs_its_language_and_the_template_alone_saves_nothing(
     result = bb(env, 'edit', 'slugify@eng')
     assert 'no function was created' in result.stdout
     assert 'No function found' in bb(env, 'show', 'slugify@eng').stderr
+
+
+def test_editing_a_function_importing_unreviewed_code_needs_the_flag(tmp_path):
+    draft = tmp_path / 'draft.md'
+    read = editor_env(tmp_path, f'sh -c \'cp "$0" {draft}\'')
+    write = editor_env(tmp_path, f'cp {draft}')
+    bb(read, 'edit', 'double@eng')
+    draft.write_text(draft.read_text().replace(
+        'def double():\n    """Say what double does."""\n    raise NotImplementedError',
+        'def double(n):\n    """Twice n."""\n    return 2 * n'))
+    helper = bb(write, 'edit', 'double@eng', '-m', 'new').stdout.split('Hash:')[1].split()[0]
+
+    bb(read, 'edit', 'quadruple@eng')
+    draft.write_text(draft.read_text().replace(
+        'def quadruple():\n    """Say what quadruple does."""\n    raise NotImplementedError',
+        f'from bb.pool import object_{helper} as double\n\n\ndef quadruple(n):\n    """Four times n."""\n'
+        '    return double(double(n))'))
+    refused = bb(write, 'edit', 'quadruple@eng', '-m', 'new')
+    assert refused.returncode == 1 and 'not reviewed' in refused.stderr
+    allowed = bb(write, 'edit', 'quadruple@eng', '-m', 'new', '--dangerously-unreviewed')
+    assert allowed.returncode == 0 and 'nobody reviewed' in allowed.stderr and 'Hash:' in allowed.stdout
