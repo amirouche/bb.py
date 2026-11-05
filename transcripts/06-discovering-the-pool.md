@@ -82,7 +82,7 @@ def tokenize(text):
 
 ### Word Counter `count_words_eng.py`
 ```python
-from bb.pool import object_9a530147f8590dfd97545db79ec2ef5f8add090ecaa4a28219d84d793770a7eb as tokenize
+from bb.pool import object_67f88649d753226ec9c0b70159e1aca85a63ec971139cb58bf966b0ec0f7a1c2 as tokenize
 
 def count_words(text):
     """Count word frequency in text."""
@@ -95,7 +95,7 @@ def count_words(text):
 
 ### Text Summarizer `summarize_text_eng.py`
 ```python
-from bb.pool import object_077dab1cf785d4346936240332941a160e96e8a3e35dea417229c125d08b61f7 as count_words
+from bb.pool import object_80fbe90f88b2111ec0eedb666ef519b80003de52e2247233f0669dda0f354d86 as count_words
 
 def summarize_text(text):
     """Generate text statistics: total words, unique words, top word."""

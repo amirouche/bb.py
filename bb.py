@@ -213,6 +213,13 @@ def code_create_name_mapping(function_def: Union[ast.FunctionDef, ast.AsyncFunct
             for alias in imp.names:
                 imported_names.add(alias.asname if alias.asname else alias.name)
 
+    # Imports inside the function body bind names too: they are never renamed,
+    # otherwise the stored code would import `random` but call `_bb_v_2`
+    for node in ast.walk(function_def):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                imported_names.add((alias.asname or alias.name).split('.')[0])
+
     forward_mapping = {}
     reverse_mapping = {}
     counter = 0
@@ -3995,9 +4002,10 @@ def code_restore_inner_imports(tree: ast.Module, func_hash: str):
     """
     Give back their real names to modules imported inside a function body.
 
-    Normalization keeps `import random` inside a function as written but
-    renames its uses (`_bb_v_2.randint`), so the stored code cannot run as
-    is. The mapping knows that _bb_v_2 is `random`. To keep mappings from
+    Before the normalizer was fixed, it kept `import random` inside a
+    function as written but renamed its uses (`_bb_v_2.randint`), so
+    objects stored then cannot run as is. The mapping knows that _bb_v_2
+    is `random`. To keep mappings from
     changing what runs, a normalized name is restored only to a name that
     an import statement in this very code binds.
 

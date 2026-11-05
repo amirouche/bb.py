@@ -1352,23 +1352,38 @@ def test_config_is_private_and_migrated_once(mock_bb_dir, capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_inner_imports_are_not_renamed():
+    """A module imported inside the body keeps its name in the stored code"""
+    src = "def pick(n):\n    import random\n    from os import path as p\n    return random.randint(1, n), p\n"
+    _, code, _, names, _ = bb.code_normalize(ast.parse(src), 'eng')
+    assert "random.randint" in code and "return (random.randint(1, _bb_v_1), p)" in code
+    assert set(names.values()) == {'pick', 'n'}
+
+
 def test_inner_imports_run_from_normalized_code(mock_bb_dir):
-    """A module imported inside the body gets its real name back when loaded"""
+    """Such functions run directly from their normalized code"""
     func = _pool_add("def pick(n):\n    import random\n    random.seed(1)\n    return random.randint(1, n) <= n\n")
     assert bb.code_load_normalized(func)(6) is True
 
 
-def test_mapping_cannot_rename_to_names_the_code_does_not_import(mock_bb_dir):
-    """A hostile mapping that points the module at another name is ignored"""
-    func = _pool_add("def pick(n):\n    import random\n    return random.randint(1, n)\n")
-    lang_dir = bb.storage_get_pool_directory() / func[:2] / func[2:] / 'eng'
-    mapping_json = next(lang_dir.glob('*/*/mapping.json'))
-    data = json.loads(mapping_json.read_text(encoding='utf-8'))
-    data['name_mapping'] = {k: ('os' if v == 'random' else v) for k, v in data['name_mapping'].items()}
-    mapping_json.write_text(json.dumps(data), encoding='utf-8')
+def _save_legacy_inner_import(module_name):
+    """Store a function the way older bb normalized inner imports: the use renamed, the import not."""
+    code = normalize_code_for_test("def _bb_v_0(_bb_v_1):\n    import random\n    return _bb_v_2.randint(1, _bb_v_1)")
+    func = bb.hash_compute(code + module_name)
+    bb.object_save(func, code, bb.code_create_metadata())
+    bb.mapping_save(func, 'eng', '', {'_bb_v_0': 'pick', '_bb_v_1': 'n', '_bb_v_2': module_name}, {})
+    return func
 
+
+def test_legacy_inner_imports_still_run(mock_bb_dir):
+    """Objects stored before the fix get the module name back from the mapping"""
+    assert 1 <= bb.code_load_normalized(_save_legacy_inner_import('random'))(6) <= 6
+
+
+def test_mapping_cannot_rename_to_names_the_code_does_not_import(mock_bb_dir):
+    """A hostile mapping pointing the module at another name is ignored"""
     with pytest.raises(NameError):
-        bb.code_load_normalized(func)(6)
+        bb.code_load_normalized(_save_legacy_inner_import('os'))(6)
 
 
 def test_find_similar_reports_near_copies_only(mock_bb_dir):
