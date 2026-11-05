@@ -387,3 +387,45 @@ def test_function_load_dispatch_explicit_mapping(mock_bb_dir):
     assert loaded_code == normalized_code
     assert loaded_name == {"_bb_v_0": "func2"}
     assert loaded_doc == "Doc 2"
+
+
+# ============================================================================
+# Tests for the markdown documentation key (bb edit)
+# ============================================================================
+
+def test_mapping_hash_unchanged_without_markdown():
+    """An empty markdown key must not change the hash of existing mappings"""
+    args = ("Doc", {"_bb_v_0": "f"}, {}, "")
+    assert bb.code_compute_mapping_hash(*args) == bb.code_compute_mapping_hash(*args, markdown="")
+
+
+def test_mapping_hash_includes_markdown():
+    """Different markdown documentation gives different mapping hashes"""
+    args = ("Doc", {"_bb_v_0": "f"}, {}, "")
+    assert bb.code_compute_mapping_hash(*args, markdown="Prose") != bb.code_compute_mapping_hash(*args)
+
+
+def test_mapping_save_markdown_key(mock_bb_dir):
+    """mapping_save writes 'markdown' only when there is documentation"""
+    func_hash = "abcd" + "0" * 60
+    bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
+
+    plain = bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "")
+    documented = bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "", markdown="Prose")
+
+    pool_dir = mock_bb_dir / '.bb' / 'pool' / func_hash[:2] / func_hash[2:] / 'eng'
+    with open(pool_dir / plain[:2] / plain[2:] / 'mapping.json', encoding='utf-8') as f:
+        assert 'markdown' not in json.load(f)
+    assert bb.mapping_load_markdown(func_hash, "eng", plain) == ""
+    assert bb.mapping_load_markdown(func_hash, "eng", documented) == "Prose"
+
+
+def test_mapping_select(mock_bb_dir):
+    """mapping_select returns None without mappings, else the first alphabetically"""
+    func_hash = "abcd" + "0" * 60
+    bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
+    assert bb.mapping_select(func_hash, "eng") is None
+
+    first = bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "one")
+    second = bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "two")
+    assert bb.mapping_select(func_hash, "eng") == min(first, second)

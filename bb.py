@@ -31,6 +31,7 @@ import hashlib
 import itertools
 import json
 import os
+import re
 import subprocess
 import sys
 import struct
@@ -417,7 +418,8 @@ def hash_compute(code: str, algorithm: str = 'sha256') -> str:
 
 
 def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
-                        alias_mapping: Dict[str, str], comment: str = "") -> str:
+                        alias_mapping: Dict[str, str], comment: str = "",
+                        markdown: str = "") -> str:
     """
     Compute content-addressed hash for a mapping.
 
@@ -426,6 +428,7 @@ def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
     - name_mapping
     - alias_mapping
     - comment
+    - markdown (only when non-empty, so older mappings keep their hash)
 
     This enables deduplication: identical mappings share the same hash and storage.
 
@@ -434,6 +437,7 @@ def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
         name_mapping: Normalized name -> original name mapping
         alias_mapping: BB function hash -> alias mapping
         comment: Optional comment explaining this mapping variant
+        markdown: Optional markdown documentation (from bb edit)
 
     Returns:
         64-character hex hash (SHA256)
@@ -444,6 +448,8 @@ def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
         'alias_mapping': alias_mapping,
         'comment': comment
     }
+    if markdown:
+        mapping_dict['markdown'] = markdown
 
     # Create canonical JSON (sorted keys, no whitespace)
     canonical_json = json.dumps(mapping_dict, sort_keys=True, ensure_ascii=False)
@@ -731,7 +737,7 @@ def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any])
 
 def mapping_save(func_hash: str, lang: str, docstring: str,
                  name_mapping: Dict[str, str], alias_mapping: Dict[str, str],
-                 comment: str = "") -> str:
+                 comment: str = "", markdown: str = "") -> str:
     """
     Save language mapping to bb directory.
 
@@ -748,6 +754,7 @@ def mapping_save(func_hash: str, lang: str, docstring: str,
         name_mapping: Normalized name -> original name mapping
         alias_mapping: BB function hash -> alias mapping
         comment: Optional comment explaining this mapping variant
+        markdown: Optional markdown documentation, stored under the 'markdown' key
 
     Returns:
         Mapping hash (64-character hex)
@@ -755,7 +762,7 @@ def mapping_save(func_hash: str, lang: str, docstring: str,
     pool_dir = storage_get_pool_directory()
 
     # Compute mapping hash
-    mapping_hash = code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment)
+    mapping_hash = code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment, markdown)
 
     # Create mapping directory: pool/XX/Y.../lang/ZZ/W.../
     func_dir = pool_dir / func_hash[:2] / func_hash[2:]
@@ -771,6 +778,8 @@ def mapping_save(func_hash: str, lang: str, docstring: str,
         'alias_mapping': alias_mapping,
         'comment': comment
     }
+    if markdown:
+        data['markdown'] = markdown
 
     with open(mapping_json, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -2789,6 +2798,238 @@ def code_replace_docstring(code: str, new_docstring: str) -> str:
     return ast.unparse(tree)
 
 
+# ============================================================================
+# Edit file format (bb edit)
+# ============================================================================
+#
+# An edit file is markdown with two sections:
+#
+#     # name
+#
+#     ## Implementation
+#     <!-- bb:parent HASH -->
+#     prose, examples...
+#     ```python def
+#     def name(...): ...
+#     ```
+#
+#     ## Checks
+#
+#     ### check_name
+#     <!-- bb:parent HASH -->
+#     prose...
+#     ```python def
+#     def check_name(name): ...
+#     ```
+#
+# In each section, the single block fenced as ```python def is the function
+# that gets hashed. Everything else is documentation, stored in the language
+# mapping under the 'markdown' key. Lines like <!-- bb:... --> are written by
+# bb and are not documentation.
+
+EDIT_DEFINITION_INFO = 'python def'
+EDIT_IMPLEMENTATION_HEADING = 'Implementation'
+EDIT_CHECKS_HEADING = 'Checks'
+EDIT_CHECKS_HINT = ('<!-- bb: add checks as ### subsections. Each one needs a ```python def block '
+                    'whose function takes the implementation as its only argument and returns True when it passes. -->')
+
+_EDIT_FENCE_RE = re.compile(r'^(`{3,}|~{3,})\s*(.*?)\s*$')
+_EDIT_MARKER_RE = re.compile(r'^<!--\s*bb:(.*?)\s*-->$')
+_EDIT_PARENT_RE = re.compile(r'^parent\s+([0-9a-f]{64})$')
+
+
+class EditFormatError(ValueError):
+    """Raised when an edit file does not follow the bb edit format."""
+
+
+def markdown_split_lines(text: str) -> List[Tuple[str, str]]:
+    """
+    Split markdown into lines, tagging each one with its role.
+
+    Returns:
+        List of (line, kind) tuples where kind is 'text', 'open'
+        (opening fence), 'body' (inside a fence) or 'close' (closing fence)
+    """
+    result = []
+    fence = None
+    for line in text.split('\n'):
+        match = _EDIT_FENCE_RE.match(line)
+        if fence is None:
+            if match:
+                fence = match.group(1)
+                result.append((line, 'open'))
+            else:
+                result.append((line, 'text'))
+        elif (match and match.group(2) == '' and match.group(1)[0] == fence[0]
+              and len(match.group(1)) >= len(fence)):
+            fence = None
+            result.append((line, 'close'))
+        else:
+            result.append((line, 'body'))
+    if fence is not None:
+        raise EditFormatError("Unclosed fenced code block")
+    return result
+
+
+def markdown_strip_blank(lines: List[str]) -> List[str]:
+    """Remove leading and trailing blank lines."""
+    start, end = 0, len(lines)
+    while start < end and not lines[start].strip():
+        start += 1
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    return lines[start:end]
+
+
+def markdown_parse_section(lines: List[Tuple[str, str]], where: str) -> Dict[str, Any]:
+    """
+    Parse one section of an edit file.
+
+    Args:
+        lines: (line, kind) tuples of the section body, heading excluded
+        where: Section name used in error messages
+
+    Returns:
+        Dict with 'source' (the python def block), 'markdown' (the rest)
+        and 'parent' (hash from a bb:parent marker, or None)
+    """
+    source = None
+    parent = None
+    doc = []
+    i = 0
+    while i < len(lines):
+        line, kind = lines[i]
+        if kind == 'text':
+            marker = _EDIT_MARKER_RE.match(line.strip())
+            if marker:
+                found = _EDIT_PARENT_RE.match(marker.group(1))
+                if found:
+                    if parent is not None:
+                        raise EditFormatError(f"{where}: more than one bb:parent marker")
+                    parent = found.group(1)
+                i += 1
+                continue
+            doc.append(line)
+            i += 1
+            continue
+        # Opening fence: collect the whole block
+        opening = line
+        info = _EDIT_FENCE_RE.match(line).group(2)
+        j = i + 1
+        while lines[j][1] != 'close':
+            j += 1
+        body = [l for l, _ in lines[i + 1:j]]
+        if info == EDIT_DEFINITION_INFO:
+            if source is not None:
+                raise EditFormatError(f"{where}: more than one ```{EDIT_DEFINITION_INFO} block")
+            source = '\n'.join(body).strip('\n') + '\n'
+            # Drop one blank line left behind by the removed block
+            if doc and not doc[-1].strip():
+                doc.pop()
+        else:
+            doc.extend([opening] + body + [lines[j][0]])
+        i = j + 1
+
+    if source is None:
+        raise EditFormatError(f"{where}: missing ```{EDIT_DEFINITION_INFO} block")
+
+    return {
+        'source': source,
+        'markdown': '\n'.join(markdown_strip_blank(doc)),
+        'parent': parent,
+    }
+
+
+def markdown_parse_edit(text: str) -> Dict[str, Any]:
+    """
+    Parse an edit file into its implementation and checks.
+
+    Returns:
+        Dict with 'implementation' (a section dict) and 'checks'
+        (list of section dicts, each with an extra 'title')
+
+    Raises:
+        EditFormatError: If the file does not follow the edit format
+    """
+    lines = markdown_split_lines(text)
+
+    # Group lines under their level-2 headings
+    sections: Dict[str, List[Tuple[str, str]]] = {}
+    current = None
+    for line, kind in lines:
+        if kind == 'text' and line.startswith('## '):
+            current = line[3:].strip()
+            if current not in (EDIT_IMPLEMENTATION_HEADING, EDIT_CHECKS_HEADING):
+                raise EditFormatError(f"Unknown section: '## {current}' "
+                                      f"(expected '## {EDIT_IMPLEMENTATION_HEADING}' or '## {EDIT_CHECKS_HEADING}')")
+            if current in sections:
+                raise EditFormatError(f"Duplicate section: '## {current}'")
+            sections[current] = []
+        elif current is None:
+            if line.strip() and not line.startswith('# ') and not _EDIT_MARKER_RE.match(line.strip()):
+                raise EditFormatError(f"Text before '## {EDIT_IMPLEMENTATION_HEADING}' would be lost: {line.strip()!r}")
+        else:
+            sections[current].append((line, kind))
+
+    if EDIT_IMPLEMENTATION_HEADING not in sections:
+        raise EditFormatError(f"Missing '## {EDIT_IMPLEMENTATION_HEADING}' section")
+
+    implementation = markdown_parse_section(sections[EDIT_IMPLEMENTATION_HEADING], EDIT_IMPLEMENTATION_HEADING)
+
+    # Split the checks section into level-3 subsections
+    checks = []
+    title = None
+    body: List[Tuple[str, str]] = []
+    for line, kind in sections.get(EDIT_CHECKS_HEADING, []) + [('### ', 'text')]:
+        if kind == 'text' and line.startswith('### '):
+            if title is not None:
+                check = markdown_parse_section(body, f"Check '{title}'")
+                check['title'] = title
+                checks.append(check)
+            title = line[4:].strip()
+            body = []
+        elif title is None:
+            if line.strip() and not _EDIT_MARKER_RE.match(line.strip()):
+                raise EditFormatError(f"Text in '## {EDIT_CHECKS_HEADING}' outside a ### subsection would be lost: {line.strip()!r}")
+        else:
+            body.append((line, kind))
+
+    return {'implementation': implementation, 'checks': checks}
+
+
+def markdown_render_section(section: Dict[str, Any]) -> List[str]:
+    """Render a section body: parent marker, documentation, then the python def block."""
+    out = []
+    if section.get('parent'):
+        out.append(f"<!-- bb:parent {section['parent']} -->")
+        out.append('')
+    if section.get('markdown'):
+        out.append(section['markdown'])
+        out.append('')
+    out.append(f"```{EDIT_DEFINITION_INFO}")
+    out.append(section['source'].rstrip('\n'))
+    out.append('```')
+    return out
+
+
+def markdown_render_edit(name: str, implementation: Dict[str, Any], checks: List[Dict[str, Any]]) -> str:
+    """
+    Render an edit file from an implementation section and check sections.
+
+    Each check section needs a 'title' (used as its ### heading).
+    """
+    out = [f"# {name}", '', f"## {EDIT_IMPLEMENTATION_HEADING}", '']
+    out.extend(markdown_render_section(implementation))
+    out.extend(['', f"## {EDIT_CHECKS_HEADING}", ''])
+    if not checks:
+        out.extend([EDIT_CHECKS_HINT, ''])
+    for check in checks:
+        out.extend([f"### {check['title']}", ''])
+        out.extend(markdown_render_section(check))
+        out.append('')
+    return '\n'.join(out).rstrip('\n') + '\n'
+
+
 def object_load(hash_value: str) -> Dict[str, any]:
     """
     Load function object from bb directory.
@@ -2920,6 +3161,35 @@ def mapping_load(func_hash: str, lang: str, mapping_hash: str) -> Tuple[str, Dic
     return docstring, name_mapping, alias_mapping, comment
 
 
+def mapping_select(func_hash: str, lang: str) -> Optional[str]:
+    """
+    Pick the mapping used by default for a function in a language.
+
+    With several mappings, the first one alphabetically wins for now.
+
+    Returns:
+        Mapping hash, or None if the language has no mapping
+    """
+    mappings = mappings_list(func_hash, lang)
+    if not mappings:
+        return None
+    return sorted(mappings, key=lambda x: x[0])[0][0]
+
+
+def mapping_load_markdown(func_hash: str, lang: str, mapping_hash: str) -> str:
+    """
+    Load the markdown documentation of a mapping ('' when it has none).
+    """
+    pool_dir = storage_get_pool_directory()
+    mapping_json = (pool_dir / func_hash[:2] / func_hash[2:] / lang /
+                    mapping_hash[:2] / mapping_hash[2:] / 'mapping.json')
+    try:
+        with open(mapping_json, 'r', encoding='utf-8') as f:
+            return json.load(f).get('markdown', '')
+    except (IOError, json.JSONDecodeError):
+        return ''
+
+
 def code_load(hash_value: str, lang: str, mapping_hash: str = None) -> Tuple[str, Dict[str, str], Dict[str, str], str]:
     """
     Load a function from the bb pool (v1 format only).
@@ -2944,25 +3214,15 @@ def code_load(hash_value: str, lang: str, mapping_hash: str = None) -> Tuple[str
     func_data = object_load(hash_value)
     normalized_code = func_data['normalized_code']
 
-    # Get available mappings
-    mappings = mappings_list(hash_value, lang)
-
-    if len(mappings) == 0:
-        print(f"Error: No mappings found for language '{lang}'", file=sys.stderr)
-        sys.exit(1)
-
     # Determine which mapping to load
     if mapping_hash is not None:
         # Explicit mapping requested
         selected_hash = mapping_hash
-    elif len(mappings) == 1:
-        # Only one mapping available
-        selected_hash, _ = mappings[0]
     else:
-        # Multiple mappings available - pick first alphabetically for now
-        # (Phase 5 will improve this with a selection menu)
-        mappings_sorted = sorted(mappings, key=lambda x: x[0])
-        selected_hash, _ = mappings_sorted[0]
+        selected_hash = mapping_select(hash_value, lang)
+        if selected_hash is None:
+            print(f"Error: No mappings found for language '{lang}'", file=sys.stderr)
+            sys.exit(1)
 
     # Load the mapping
     docstring, name_mapping, alias_mapping, comment = mapping_load(hash_value, lang, selected_hash)

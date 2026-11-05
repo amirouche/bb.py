@@ -11,6 +11,7 @@ Tests for core functionality that doesn't map directly to CLI commands:
 import ast
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -218,6 +219,7 @@ def test_sort_imports_simple_imports():
     code = """
 import sys
 import ast
+import re
 import os
 """
     tree = ast.parse(code)
@@ -602,6 +604,7 @@ def test_normalize_ast_imports_sorted():
     code = """
 import sys
 import ast
+import re
 import os
 
 def foo():
@@ -980,3 +983,80 @@ def test_hash_determinism_multilingual_same_logic():
     assert len(english_hash) == 64, "Hash should be 64 hex characters (SHA256)"
     assert eng_docstring != fra_docstring, "Docstrings should differ (different languages)"
     assert eng_name_mapping != fra_name_mapping, "Name mappings should differ (different variable names)"
+
+
+# ============================================================================
+# Tests for the bb edit file format
+# ============================================================================
+
+EDIT_IMPLEMENTATION = {
+    'source': 'def double(x: int) -> int:\n    return x + x\n',
+    'markdown': 'Doubles a number.\n\n```python\n>>> double(3)\n6\n```',
+    'parent': 'a' * 64,
+}
+EDIT_CHECK = {
+    'title': 'check_small',
+    'source': 'def check_small(double):\n    return double(3) == 6\n',
+    'markdown': 'Small integers.',
+    'parent': 'b' * 64,
+}
+
+
+def test_edit_format_round_trip():
+    """Rendering then parsing an edit file gives back the same sections"""
+    text = bb.markdown_render_edit('double', EDIT_IMPLEMENTATION, [EDIT_CHECK])
+    parsed = bb.markdown_parse_edit(text)
+    assert parsed['implementation'] == EDIT_IMPLEMENTATION
+    assert parsed['checks'] == [EDIT_CHECK]
+
+
+def test_edit_format_round_trip_without_checks():
+    """The hint written into an empty Checks section is not read back as a check"""
+    implementation = dict(EDIT_IMPLEMENTATION, parent=None, markdown='')
+    parsed = bb.markdown_parse_edit(bb.markdown_render_edit('double', implementation, []))
+    assert parsed == {'implementation': implementation, 'checks': []}
+
+
+def test_edit_format_definition_anywhere_in_section():
+    """The python def block may come before the prose; the prose is still documentation"""
+    text = "## Implementation\n\n```python def\ndef f():\n    return 1\n```\n\nReturns one.\n"
+    section = bb.markdown_parse_edit(text)['implementation']
+    assert section['source'] == 'def f():\n    return 1\n'
+    assert section['markdown'] == 'Returns one.'
+    assert section['parent'] is None
+
+
+def test_edit_format_headings_inside_code_blocks_are_ignored():
+    """A '## ' line inside a fenced block does not start a section"""
+    text = ("## Implementation\n\n```text\n## Checks\n```\n\n"
+            "```python def\ndef f():\n    return 1\n```\n")
+    parsed = bb.markdown_parse_edit(text)
+    assert parsed['checks'] == []
+    assert parsed['implementation']['markdown'] == "```text\n## Checks\n```"
+
+
+def test_edit_format_longer_fence_can_contain_shorter_one():
+    """A ```` fence can hold a ``` block without closing early"""
+    text = ("## Implementation\n\n````markdown\n```python def\nnot this\n```\n````\n\n"
+            "```python def\ndef f():\n    return 1\n```\n")
+    section = bb.markdown_parse_edit(text)['implementation']
+    assert section['source'] == 'def f():\n    return 1\n'
+    assert 'not this' in section['markdown']
+
+
+@pytest.mark.parametrize("text, message", [
+    ("# f\n", "Missing '## Implementation'"),
+    ("## Implementation\n\nNo code here.\n", "missing ```python def"),
+    ("## Implementation\n\n```python def\ndef f(): pass\n```\n\n```python def\ndef g(): pass\n```\n",
+     "more than one ```python def"),
+    ("## Implementation\n\n```python def\ndef f(): pass\n", "Unclosed fenced code block"),
+    ("## Usage\n", "Unknown section"),
+    ("Stray prose\n\n## Implementation\n\n```python def\ndef f(): pass\n```\n", "would be lost"),
+    ("## Implementation\n\n```python def\ndef f(): pass\n```\n\n## Checks\n\nStray\n", "outside a ### subsection"),
+    ("## Implementation\n\n```python def\ndef f(): pass\n```\n\n## Checks\n\n### c\n\nNo code.\n",
+     "Check 'c': missing"),
+])
+def test_edit_format_errors(text, message):
+    """Malformed edit files are rejected with a clear message instead of losing text"""
+    with pytest.raises(bb.EditFormatError, match=re.escape(message)):
+        bb.markdown_parse_edit(text)
