@@ -3676,7 +3676,7 @@ def command_edit(identifier: str, comment: str = None):
         print(f"Check: {check_hash} {name}")
 
 
-def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str = None):
+def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str = None, comment: str = None):
     """
     Replace a dependency hash with another in a function.
 
@@ -3685,14 +3685,18 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
     2. Surgical refactor: Replaces FROM with TO only in the path from AT to WHAT
 
     Creates new functions where references to from_hash are replaced
-    with to_hash. Copies all language mappings, updating alias_mappings
-    to use the new hash key.
+    with to_hash, each recording the function it was rewritten from as
+    its parent. Copies the current language mappings, updating
+    alias_mappings to use the new hash key. Like a batch of bb edit, one
+    comment (asked for when --comment is not given) goes on every new
+    mapping.
 
     Args:
         what_hash: Function hash to modify (64-character hex)
         from_hash: Dependency hash to replace (64-character hex)
         to_hash: New dependency hash (64-character hex)
         at_hash: Optional. If provided, only refactor the path from AT to WHAT (surgical refactor)
+        comment: Comment for every new mapping (asked for when None)
     """
     # Validate hash formats
     for name, h in [('what', what_hash), ('from', from_hash), ('to', to_hash)]:
@@ -3783,6 +3787,13 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
         # Filter all_deps to only include affected functions
         all_deps = [d for d in all_deps if d in affected_set or d == what_hash]
 
+    # One comment describes the whole refactor, like a bb edit comment
+    if comment is None:
+        try:
+            comment = input("Comment (press Enter to skip): ").strip()
+        except EOFError:
+            comment = ""
+
     # Build hash replacement map for recursive refactoring
     # We need to refactor all functions in the chain that depend on from_hash
     hash_map = {from_hash: to_hash}  # Maps old_hash -> new_hash
@@ -3870,7 +3881,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
             for lang in dep_languages:
                 # Copy the current mappings; superseded ones stay reachable through parent
                 for mapping_hash in mapping_leaves(dep_hash, lang):
-                    docstring, name_mapping, alias_mapping, comment = mapping_load(dep_hash, lang, mapping_hash)
+                    docstring, name_mapping, alias_mapping, _ = mapping_load(dep_hash, lang, mapping_hash)
 
                     # Update alias_mapping with all replacements
                     new_alias_mapping = {}
@@ -3990,7 +4001,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
     # superseded ones stay reachable through parent
     for lang in languages:
         for mapping_hash in mapping_leaves(what_hash, lang):
-            docstring, name_mapping, alias_mapping, comment = mapping_load(what_hash, lang, mapping_hash)
+            docstring, name_mapping, alias_mapping, _ = mapping_load(what_hash, lang, mapping_hash)
 
             # Update alias_mapping: replace all mapped hashes
             new_alias_mapping = {}
@@ -4806,6 +4817,7 @@ def _build_parser():
     refactor_parser.add_argument('from_hash', metavar='from', help='Dependency hash to replace')
     refactor_parser.add_argument('to_hash', metavar='to', help='New dependency hash')
     refactor_parser.add_argument('at_hash', metavar='at', nargs='?', help='Optional: Limit refactor to path from AT to WHAT (surgical refactor)')
+    refactor_parser.add_argument('--comment', '-m', default=None, help='Comment for the new versions (asked when omitted)')
 
     # Compile command
     compile_parser = subparsers.add_parser('compile', help='Compile function to standalone Python file')
@@ -4900,7 +4912,8 @@ def main():
     elif args.command == 'tree':
         command_tree(args.identifier)
     elif args.command == 'refactor':
-        command_refactor(args.what, args.from_hash, args.to_hash, args.at_hash if hasattr(args, 'at_hash') else None)
+        command_refactor(args.what, args.from_hash, args.to_hash, args.at_hash if hasattr(args, 'at_hash') else None,
+                         comment=args.comment)
     elif args.command == 'compile':
         command_compile(args.identifier, debug_mode=args.debug, output_path=args.output)
     elif args.command == 'skills':

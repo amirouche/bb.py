@@ -144,7 +144,7 @@ graph TD
 
 ### Step 7: Run global refactor
 ```bash
-$ CEREMONY_GLOBAL=$(bb refactor $CEREMONY $FORMAT $FORMAT_V2 | grep '^new hash:' | awk '{print $3}')
+$ CEREMONY_GLOBAL=$(bb refactor $CEREMONY $FORMAT $FORMAT_V2 -m "Use the new formatter everywhere" | grep '^new hash:' | awk '{print $3}')
 ```
 
 ### Step 8: The refactored ceremony is different from the original
@@ -195,7 +195,7 @@ graph TD
 
 ### Step 12: Run surgical refactor (only the greet path)
 ```bash
-$ CEREMONY_SURGICAL=$(bb refactor $CEREMONY $FORMAT $FORMAT_V2 $GREET | grep '^new hash:' | awk '{print $3}')
+$ CEREMONY_SURGICAL=$(bb refactor $CEREMONY $FORMAT $FORMAT_V2 $GREET -m "Use the new formatter for greetings only" | grep '^new hash:' | awk '{print $3}')
 ```
 
 ### Step 13: Surgical result differs from global result
