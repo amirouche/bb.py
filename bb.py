@@ -945,6 +945,44 @@ def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
     mapping_save(hash_value, lang, docstring, name_mapping, alias_mapping, comment)
 
 
+class _ReadableUnparser(getattr(ast, '_Unparser', object)):
+    """
+    ast.unparse for display: strings holding newlines are written as
+    triple-quoted literals, as people write them (a stylesheet, a
+    template), instead of one line of \\n escapes. Display only: what is
+    shown parses back to the same tree, so to the same hash.
+    """
+
+    def visit_Constant(self, node):
+        value = node.value
+        if (isinstance(value, str) and '\n' in value and node.kind is None
+                and not getattr(self, '_avoid_backslashes', False) and not getattr(self, '_in_fstring', False)):
+            for quote in ('"""', "'''"):
+                if quote in value or value.endswith(quote[0]):
+                    continue
+                literal = quote + value.replace('\\', '\\\\') + quote
+                try:
+                    if ast.literal_eval(literal) == value:
+                        self.write(literal)
+                        return
+                except (SyntaxError, ValueError):
+                    pass
+        super().visit_Constant(node)
+
+
+def code_unparse_readable(tree: ast.AST) -> str:
+    """Source for display (see _ReadableUnparser); plain ast.unparse where that is unavailable."""
+    if not hasattr(ast, '_Unparser'):
+        return ast.unparse(tree)
+    source = _ReadableUnparser().visit(tree)
+    try:
+        if ast.dump(ast.parse(source)) == ast.dump(ast.parse(ast.unparse(tree))):
+            return source
+    except SyntaxError:
+        pass
+    return ast.unparse(tree)
+
+
 def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_mapping: Dict[str, str]) -> str:
     """
     Denormalize code by applying reverse name mappings.
@@ -1043,7 +1081,7 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
     denormalizer = Denormalizer()
     tree = denormalizer.visit(tree)
 
-    return ast.unparse(tree)
+    return code_unparse_readable(tree)
 
 
 def code_extract_dependencies(normalized_code: str) -> List[str]:

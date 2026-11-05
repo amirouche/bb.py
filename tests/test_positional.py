@@ -74,3 +74,22 @@ def test_a_dotted_import_keeps_its_top_level_name_and_runs(tmp_path):
     run = subprocess.run([sys.executable, '-c', f'import bb; print(bb.code_load_normalized("{func_hash}")("a b"))'],
                          capture_output=True, text=True, env=env, cwd=str(BB.parent))
     assert run.stdout.strip() == 'a%20b', run.stderr
+
+
+def test_shown_code_keeps_multi_line_strings_readable_and_its_hash(tmp_path):
+    source = ('def css():\n    """The stylesheet."""\n    return """body {\n  color: navy;\n}\na::after { content: "\\\\2192"; }\n"""\n')
+    prepared = bb.code_prepare_source(source, 'eng')
+    shown = bb.code_denormalize(prepared['normalized_code'], prepared['name_mapping'], prepared['alias_mapping'])
+    assert 'body {\n  color: navy;\n}' in shown and '\\n' not in shown.split('return', 1)[1].split('\n')[0]
+    assert bb.code_prepare_source(shown, 'eng')['hash'] == prepared['hash']   # shown code is the same function
+
+
+def test_strings_that_cannot_be_triple_quoted_fall_back(tmp_path):
+    for value in ['ends with a quote\n"', 'has """ and \'\'\' both\n', 'tab\tand\rreturn\n', 'nul\x00\n']:
+        source = f'def f():\n    return {value!r}\n'
+        prepared = bb.code_prepare_source(source, 'eng')
+        shown = bb.code_denormalize(prepared['normalized_code'], prepared['name_mapping'], prepared['alias_mapping'])
+        namespace = {}
+        exec(shown, namespace)
+        assert namespace['f']() == value
+        assert bb.code_prepare_source(shown, 'eng')['hash'] == prepared['hash']
