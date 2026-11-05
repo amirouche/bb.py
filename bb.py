@@ -64,6 +64,14 @@ PYTHON_BUILTINS = set(dir(builtins))
 # By prefixing with "object_", we ensure all import names are valid
 BB_IMPORT_PREFIX = "object_"
 
+# Version of the normalization that produced a function's code, and so its
+# hash. An identity holds under one normalization: the same source can hash
+# differently under another. Stored in object.json as 'normalization';
+# objects without it were produced by version 1.
+#   1: names bound by imports inside a function body were renamed
+#   2: they are kept, like top-level imports
+NORMALIZATION_VERSION = 2
+
 
 
 class ASTNormalizer(ast.NodeTransformer):
@@ -763,7 +771,7 @@ def command_whoami(subcommand: str, value: list = None):
 
 
 def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any],
-                checks: List[str] = None) -> bool:
+                checks: List[str] = None, normalization: int = NORMALIZATION_VERSION) -> bool:
     """
     Save function object to bb directory.
 
@@ -780,6 +788,9 @@ def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any],
         normalized_code: Normalized code with docstring
         metadata: Metadata dict (created, author)
         checks: Hashes of the attached check functions, part of the definition
+        normalization: Version of the normalization that produced the code
+            (see NORMALIZATION_VERSION); code rewritten from a stored object
+            keeps that object's version
 
     Returns:
         True when the object was written, False when it already existed
@@ -800,6 +811,7 @@ def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any],
     data = {
         'schema_version': 1,
         'hash': hash_value,
+        'normalization': normalization,
         'normalized_code': normalized_code,
         'metadata': metadata
     }
@@ -811,6 +823,11 @@ def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any],
 
     print(f"Hash: {hash_value}")
     return True
+
+
+def object_normalization(hash_value: str) -> int:
+    """The normalization version of a stored function (1 when not recorded)."""
+    return object_load(hash_value).get('normalization', 1)
 
 
 def object_load_checks(hash_value: str) -> List[str]:
@@ -2180,6 +2197,7 @@ def storage_scan_functions() -> Dict[str, Dict[str, Any]]:
                 'hash': func_hash,
                 'metadata': data.get('metadata', {}),
                 'checks': data.get('checks', []),
+                'normalization': data.get('normalization', 1),
                 'normalized_code': data.get('normalized_code', ''),
                 'names': names,
                 'comments': comments,
@@ -2383,6 +2401,7 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
         'current': is_current,
         'diverged': is_current and head_counts.get((lang, name), 0) > 1,
         'checks': len(function['checks']),
+        'normalization': function['normalization'],
         'is_check': func_hash in index['checked_by'],
         'reviewed': func_hash in approved,
         'callers': len(index['importers'].get(func_hash, [])),
@@ -4089,8 +4108,10 @@ def code_load_normalized(func_hash: str, cache: Dict[str, Callable] = None) -> C
 
     if code_detect_schema(func_hash) is None:
         raise ValueError(f"Function not in the local pool: {func_hash}")
-    tree = ast.parse(object_load(func_hash)['normalized_code'])
-    code_restore_inner_imports(tree, func_hash)
+    data = object_load(func_hash)
+    tree = ast.parse(data['normalized_code'])
+    if data.get('normalization', 1) < 2:
+        code_restore_inner_imports(tree, func_hash)
 
     namespace: Dict[str, Any] = {}
     body = []
@@ -4695,7 +4716,8 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
 
             # Save the new function
             metadata = code_create_metadata(parent=dep_hash)
-            object_save(new_dep_hash, new_dep_code, metadata, checks=dep_checks)
+            object_save(new_dep_hash, new_dep_code, metadata, checks=dep_checks,
+                        normalization=object_normalization(dep_hash))
 
             # Copy language mappings
             dep_func_dir = pool_dir / dep_hash[:2] / dep_hash[2:]
@@ -4823,7 +4845,8 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
     metadata = code_create_metadata(parent=what_hash)
 
     # Save the new function (object.json) with docstring
-    object_save(new_hash, new_normalized_code, metadata, checks=what_checks)
+    object_save(new_hash, new_normalized_code, metadata, checks=what_checks,
+                normalization=object_normalization(what_hash))
 
     # Copy the current language mappings from what_hash to new_hash;
     # superseded ones stay reachable through parent

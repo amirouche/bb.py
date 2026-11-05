@@ -1370,7 +1370,7 @@ def _save_legacy_inner_import(module_name):
     """Store a function the way older bb normalized inner imports: the use renamed, the import not."""
     code = normalize_code_for_test("def _bb_v_0(_bb_v_1):\n    import random\n    return _bb_v_2.randint(1, _bb_v_1)")
     func = bb.hash_compute(code + module_name)
-    bb.object_save(func, code, bb.code_create_metadata())
+    bb.object_save(func, code, bb.code_create_metadata(), normalization=1)
     bb.mapping_save(func, 'eng', '', {'_bb_v_0': 'pick', '_bb_v_1': 'n', '_bb_v_2': module_name}, {})
     return func
 
@@ -1423,3 +1423,20 @@ def test_find_similar_survives_an_extra_early_variable(mock_bb_dir):
     shifted = _pool_add(loop.replace("    n = int(n)\n", "    sign = 1\n    n = int(n)\n"))
     [(score, found)] = bb.code_find_similar(shifted)
     assert found == original and score >= 0.75
+
+
+
+def test_objects_record_their_normalization(mock_bb_dir):
+    """New objects say which normalization produced them; old ones read as version 1"""
+    func = _pool_add("def one():\n    return 1\n")
+    assert bb.object_load(func)['normalization'] == bb.NORMALIZATION_VERSION == 2
+    assert bb.object_normalization(func) == 2
+
+    legacy = _save_legacy_inner_import('random')
+    assert bb.object_normalization(legacy) == 1
+    data = bb.object_load(legacy)
+    data.pop('normalization')
+    path = bb.storage_get_pool_directory() / legacy[:2] / legacy[2:] / 'object.json'
+    path.write_text(json.dumps(data), encoding='utf-8')
+    assert bb.object_normalization(legacy) == 1
+
