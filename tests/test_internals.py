@@ -12,6 +12,8 @@ import ast
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -911,7 +913,7 @@ def test_metadata_create_reads_from_config(mock_bb_dir):
         'user': {
             'name': 'testuser',
             'email': 'test@example.com',
-            'public_key': '',
+            'signing_key': '',
             'languages': []
         }
     }
@@ -1236,3 +1238,99 @@ def test_validate_dangerously_unreviewed_runs_everything(mock_bb_dir, capsys):
     assert f"one {func}" in out.out and "PASS check_one" in out.out
     assert "dangerously-unreviewed" in out.err
     assert bb.review_load_state() == set()
+
+
+# ============================================================================
+# Tests for signed reviews and trusted peers
+# ============================================================================
+
+needs_ssh_keygen = pytest.mark.skipif(shutil.which('ssh-keygen') is None, reason="needs ssh-keygen")
+
+
+def _become(monkeypatch, tmp_path, name):
+    """Switch to a reviewer with their own SSH key, config and private state."""
+    key = tmp_path / f"{name}_key"
+    if not key.exists():
+        subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', name, '-f', str(key)], check=True)
+    monkeypatch.setenv('BB_STATE_DIRECTORY', str(tmp_path / f"{name}_state"))
+    bb.storage_write_config({'user': {'name': name, 'email': f"{name}@example.org",
+                                      'signing_key': str(key), 'languages': ['eng']}})
+    return key
+
+
+@needs_ssh_keygen
+def test_signed_review_status(mock_bb_dir, monkeypatch, tmp_path):
+    """A review is untrusted until you trust its key, and invalid once altered"""
+    func = _pool_add("def one():\n    return 1\n")
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    path = bb.review_publish(func, 'approve', 'fine')
+    assert path is not None and path.with_suffix('.json.sig').exists()
+
+    _become(monkeypatch, tmp_path, 'bob')
+    assert [r['status'] for r in bb.review_list_shared(func)] == ['untrusted']
+    assert bb.review_approvals([func]) == set()
+
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    assert [r['status'] for r in bb.review_list_shared(func)] == ['trusted']
+    assert bb.review_approvals([func]) == {func}
+
+    path.write_text(path.read_text(encoding='utf-8').replace('fine', 'great'), encoding='utf-8')
+    assert [r['status'] for r in bb.review_list_shared(func)] == ['invalid']
+    assert bb.review_approvals([func]) == set()
+
+
+@needs_ssh_keygen
+def test_signed_review_cannot_be_moved_to_another_function(mock_bb_dir, monkeypatch, tmp_path):
+    """Copying a valid review under another hash does not approve that hash"""
+    good = _pool_add("def one():\n    return 1\n")
+    evil = _pool_add("def two():\n    return 2\n")
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    path = bb.review_publish(good, 'approve')
+
+    target = bb.storage_get_review_directory() / evil[:2] / evil[2:]
+    target.mkdir(parents=True)
+    shutil.copy(path, target / path.name)
+    shutil.copy(str(path) + '.sig', target / (path.name + '.sig'))
+
+    _become(monkeypatch, tmp_path, 'bob')
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    assert bb.review_approvals([good, evil]) == {good}
+
+
+@needs_ssh_keygen
+def test_trusted_rejection_blocks_and_own_verdict_wins(mock_bb_dir, monkeypatch, tmp_path):
+    """A trusted peer's rejection cancels trusted approvals; your own verdict decides"""
+    func = _pool_add("def one():\n    return 1\n")
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    bb.review_publish(func, 'approve')
+    carol_key = _become(monkeypatch, tmp_path, 'carol')
+    bb.review_publish(func, 'reject', 'unsafe')
+
+    _become(monkeypatch, tmp_path, 'bob')
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    assert bb.review_approvals([func]) == {func}
+    bb.command_trust_add('carol@example.org', str(carol_key) + '.pub')
+    assert bb.review_approvals([func]) == set()
+
+    bb.review_save_state({func})
+    assert bb.review_approvals([func]) == {func}
+    bb.review_save_state(set())
+    bb.review_save_rejections({func})
+    bb.command_trust_remove('carol@example.org')
+    assert bb.review_approvals([func]) == set()
+
+
+@needs_ssh_keygen
+def test_trust_import_asks_for_each_peer(mock_bb_dir, monkeypatch, tmp_path):
+    """The shared list is never trusted as a whole: each entry is accepted or not"""
+    _become(monkeypatch, tmp_path, 'alice')
+    bb.command_trust_publish()
+    _become(monkeypatch, tmp_path, 'eve')
+    bb.command_trust_publish()
+
+    _become(monkeypatch, tmp_path, 'bob')
+    assert bb.trust_parse(bb.trust_private_path()) == []
+    answers = iter(['y', 'n'])
+    monkeypatch.setattr('builtins.input', lambda _: next(answers))
+    bb.command_trust_import()
+    assert [email for email, _ in bb.trust_parse(bb.trust_private_path())] == ['alice@example.org']

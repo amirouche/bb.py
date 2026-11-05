@@ -27,8 +27,9 @@ Each language mapping preserves the original variable names, docstring,
 and BB import aliases, allowing the same function to be displayed in
 any language that has been added or translated.
 
-Worklogs live in $BB_DIRECTORY/worklog/ and unfinished edits in
-$BB_DIRECTORY/edit/. bb does not manage history or sharing: track
+Worklogs live in $BB_DIRECTORY/worklog/, unfinished edits in
+$BB_DIRECTORY/edit/, signed reviews in $BB_DIRECTORY/review/ and the
+shared list of peers in $BB_DIRECTORY/trust/. bb does not manage history or sharing: track
 $BB_DIRECTORY with git and use git's own commands to share it.
 """
 import ast
@@ -578,7 +579,12 @@ def storage_get_bb_directory() -> Path:
         ├── pool/          # Functions: XX/YYYY.../object.json and per-language mappings
         ├── worklog/       # Worklogs: <uuid7>/worklog.json and translated messages
         ├── edit/          # Unfinished bb edit files (a scratch pad)
-        └── config.json    # Your name, email and preferred languages
+        ├── review/        # Signed reviews: XX/YYYY.../<key id>.json and .sig
+        ├── trust/         # allowed_signers: shared list of peers (not trusted by itself)
+        └── config.json    # Your name, email, signing key and preferred languages
+
+    Private state (review approvals, trusted peers) lives elsewhere: see
+    storage_get_state_directory.
     """
     env_dir = os.environ.get('BB_DIRECTORY')
     if env_dir:
@@ -620,7 +626,7 @@ def storage_read_config() -> Dict[str, any]:
             'user': {
                 'name': '',
                 'email': '',
-                'public_key': '',
+                'signing_key': '',
                 'languages': []
             }
         }
@@ -671,7 +677,7 @@ def command_init():
             'user': {
                 'name': os.environ.get('USER', os.environ.get('USERNAME', '')),
                 'email': '',
-                'public_key': '',
+                'signing_key': '',
                 'languages': ['eng']
             }
         }
@@ -691,6 +697,7 @@ def command_whoami(subcommand: str, value: list = None):
     bb whoami name              # get current name
     bb whoami name amirouche    # set name to amirouche
     bb whoami email azul@amirouche.dev  # set email
+    bb whoami signing-key ~/.ssh/id_ed25519  # sign your reviews with this SSH key
     bb whoami language eng fra  # set preferred languages
     ```
     """
@@ -700,20 +707,20 @@ def command_whoami(subcommand: str, value: list = None):
     key_map = {
         'name': 'name',
         'email': 'email',
-        'public-key': 'public_key',
+        'signing-key': 'signing_key',
         'language': 'languages'
     }
 
     if subcommand not in key_map:
         print(f"Error: Unknown subcommand: {subcommand}", file=sys.stderr)
-        print("Valid subcommands: name, email, public-key, language", file=sys.stderr)
+        print("Valid subcommands: name, email, signing-key, language", file=sys.stderr)
         sys.exit(1)
 
     config_key = key_map[subcommand]
 
     # Get current value
     if value is None or len(value) == 0:
-        current = config['user'][config_key]
+        current = config['user'].get(config_key, '')
         if isinstance(current, list):
             print(' '.join(current) if current else '')
         else:
@@ -1138,6 +1145,341 @@ def review_save_state(reviewed: set):
         json.dump(data, f, indent=2)
 
 
+# ============================================================================
+# Signed reviews and trusted peers
+# ============================================================================
+#
+# A review can be shared with others through $BB_DIRECTORY, which is tracked
+# with git. Anyone able to commit can write a file there, so a shared review
+# only counts when it is signed (ssh-keygen -Y sign) by a key you trust:
+#
+#     $BB_DIRECTORY/review/XX/YYYY.../<key id>.json      the review
+#     $BB_DIRECTORY/review/XX/YYYY.../<key id>.json.sig  its signature
+#     $BB_DIRECTORY/trust/allowed_signers                peers shared publicly
+#     <state directory>/allowed_signers                  peers YOU trust
+#
+# Only the private list is trusted. The public one is a directory of peers
+# that you copy from, entry by entry, with `bb trust import`. Both use the
+# OpenSSH allowed_signers format: "email key-type base64 [comment]".
+
+REVIEW_SIGNATURE_NAMESPACE = 'bb-review'
+REVIEW_VERDICTS = ('approve', 'reject')
+
+
+def storage_get_review_directory() -> Path:
+    """Get the directory of shared, signed reviews: $BB_DIRECTORY/review/"""
+    return storage_get_bb_directory() / 'review'
+
+
+def trust_public_path() -> Path:
+    """The shared list of peers: $BB_DIRECTORY/trust/allowed_signers (not trusted by itself)."""
+    return storage_get_bb_directory() / 'trust' / 'allowed_signers'
+
+
+def trust_private_path() -> Path:
+    """Your list of trusted peers, in the private state directory."""
+    return storage_get_state_directory() / 'allowed_signers'
+
+
+def trust_parse(path: Path) -> List[Tuple[str, str]]:
+    """
+    Read an allowed_signers file.
+
+    Returns:
+        (email, key) pairs, key being "type base64" without the comment
+    """
+    if not path.exists():
+        return []
+    entries = []
+    for line in path.read_text(encoding='utf-8').splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and not line.lstrip().startswith('#'):
+            entries.append((parts[0], f"{parts[1]} {parts[2]}"))
+    return entries
+
+
+def trust_write(path: Path, entries: List[Tuple[str, str]]):
+    """Write an allowed_signers file, one sorted 'email key' line per entry."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"{email} {key}" for email, key in sorted(set(entries))]
+    path.write_text(''.join(f"{line}\n" for line in lines), encoding='utf-8')
+
+
+def helper_key_id(public_key: str) -> str:
+    """A filesystem-safe id for a public key: SHA256 of its 'type base64' form."""
+    return hash_compute(' '.join(public_key.split()[:2]))
+
+
+def helper_signing_identity() -> Optional[Tuple[str, str, str]]:
+    """
+    Your signing identity from config: (private key path, public key, email).
+
+    Returns:
+        None when no signing key is configured or its .pub file is missing
+    """
+    user = storage_read_config()['user']
+    key_path = os.path.expanduser(user.get('signing_key') or '')
+    if not key_path:
+        return None
+    pub_path = Path(key_path + '.pub')
+    if not pub_path.exists():
+        print(f"Warning: signing key {key_path} has no {pub_path.name}; review not signed.", file=sys.stderr)
+        return None
+    public_key = ' '.join(pub_path.read_text(encoding='utf-8').split()[:2])
+    return key_path, public_key, user.get('email') or ''
+
+
+def review_publish(func_hash: str, verdict: str, comment: str = "") -> Optional[Path]:
+    """
+    Write a signed review of a function into $BB_DIRECTORY/review/.
+
+    One review per reviewer and function: a new verdict replaces yours
+    (git keeps the history).
+
+    Returns:
+        Path of the review, or None when you have no signing key or signing failed
+    """
+    assert verdict in REVIEW_VERDICTS
+    identity = helper_signing_identity()
+    if identity is None:
+        return None
+    key_path, public_key, email = identity
+    if not email:
+        print("Warning: set your email (bb whoami email ...) to sign reviews; review not signed.",
+              file=sys.stderr)
+        return None
+
+    user = storage_read_config()['user']
+    record = {
+        'schema_version': 1,
+        'function': func_hash,
+        'verdict': verdict,
+        'reviewer': {'name': user.get('name', ''), 'email': email},
+        'public_key': public_key,
+        'created': code_create_metadata()['created'],
+        'comment': comment,
+    }
+    review_dir = storage_get_review_directory() / func_hash[:2] / func_hash[2:]
+    review_dir.mkdir(parents=True, exist_ok=True)
+    path = review_dir / f"{helper_key_id(public_key)}.json"
+    path.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+    signature = Path(str(path) + '.sig')
+    if signature.exists():
+        signature.unlink()
+    try:
+        result = subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', key_path,
+                                 '-n', REVIEW_SIGNATURE_NAMESPACE, str(path)],
+                                capture_output=True, text=True)
+    except FileNotFoundError:
+        result = None
+    if result is None or result.returncode != 0:
+        path.unlink()
+        detail = "ssh-keygen not found" if result is None else result.stderr.strip()
+        print(f"Warning: could not sign the review ({detail}); it stays private.", file=sys.stderr)
+        return None
+    return path
+
+
+def review_verify(path: Path, allowed_signers: Path) -> bool:
+    """True when the review at path is signed by its reviewer's email in allowed_signers."""
+    signature = Path(str(path) + '.sig')
+    if not signature.exists() or not allowed_signers.exists():
+        return False
+    try:
+        record = json.loads(path.read_text(encoding='utf-8'))
+        email = record['reviewer']['email']
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return False
+    try:
+        with open(path, 'rb') as data:
+            result = subprocess.run(['ssh-keygen', '-Y', 'verify', '-f', str(allowed_signers),
+                                     '-I', email, '-n', REVIEW_SIGNATURE_NAMESPACE, '-s', str(signature)],
+                                    stdin=data, capture_output=True)
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0
+
+
+def review_list_shared(func_hash: str) -> List[Dict[str, Any]]:
+    """
+    Every shared review of a function, with its signature status.
+
+    Each entry is the review record plus 'status': 'trusted' (valid
+    signature by a key in your private list), 'untrusted' (valid signature
+    by a key you do not trust) or 'invalid' (bad, missing or misplaced).
+    """
+    review_dir = storage_get_review_directory() / func_hash[:2] / func_hash[2:]
+    if not review_dir.exists():
+        return []
+    reviews = []
+    for path in sorted(review_dir.glob('*.json')):
+        try:
+            record = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            continue
+        # The signed content must be about this function and its own key
+        placed_right = (record.get('function') == func_hash and record.get('verdict') in REVIEW_VERDICTS
+                        and path.stem == helper_key_id(record.get('public_key', '')))
+        if placed_right and review_verify(path, trust_private_path()):
+            record['status'] = 'trusted'
+        else:
+            record['status'] = 'invalid'
+            if placed_right:
+                # Check the signature against the key it claims, to tell bad from untrusted
+                with tempfile.TemporaryDirectory() as tmp:
+                    own = Path(tmp) / 'allowed_signers'
+                    own.write_text(f"{record['reviewer']['email']} {record['public_key']}\n", encoding='utf-8')
+                    if review_verify(path, own):
+                        record['status'] = 'untrusted'
+        reviews.append(record)
+    return reviews
+
+
+def review_approvals(hashes: List[str]) -> Set[str]:
+    """
+    The functions among hashes that count as approved for you.
+
+    Approved means: you approved it yourself, or a peer you trust approved
+    it in a signed review and no peer you trust rejected it. Your own
+    rejection always wins.
+    """
+    private = review_load_state()
+    rejected = review_load_rejections()
+    approved = set()
+    for func_hash in set(hashes):
+        if func_hash in rejected:
+            continue
+        if func_hash in private:
+            approved.add(func_hash)
+            continue
+        verdicts = {r['verdict'] for r in review_list_shared(func_hash) if r['status'] == 'trusted'}
+        if 'approve' in verdicts and 'reject' not in verdicts:
+            approved.add(func_hash)
+    return approved
+
+
+def review_load_rejections() -> Set[str]:
+    """Hashes you rejected in bb review (private state)."""
+    path = storage_get_state_directory() / 'review_rejected.json'
+    try:
+        return set(json.loads(path.read_text(encoding='utf-8')).get('rejected', []))
+    except (OSError, json.JSONDecodeError):
+        return set()
+
+
+def review_save_rejections(rejected: Set[str]):
+    """Save the hashes you rejected (private state)."""
+    path = storage_get_state_directory() / 'review_rejected.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({'rejected': sorted(rejected)}, indent=2), encoding='utf-8')
+
+
+def command_reviews(identifier: str):
+    """
+    Show who reviewed a function: every shared review and its signature.
+
+    trusted: signed by a peer in your private list; untrusted: validly
+    signed by someone you do not trust (yet); invalid: forged, altered or
+    misplaced. Only trusted reviews count.
+    """
+    func_hash = helper_resolve_to_hash(identifier)
+    yours = ("approved" if func_hash in review_load_state() else
+             "rejected" if func_hash in review_load_rejections() else "not reviewed")
+    print(f"Function: {func_hash}")
+    print(f"You: {yours}")
+    reviews = review_list_shared(func_hash)
+    if not reviews:
+        print("No shared reviews.")
+        return
+    for record in reviews:
+        reviewer = record.get('reviewer', {})
+        line = (f"{record['status']}  {record.get('verdict', '?')}  "
+                f"{reviewer.get('name', '')} <{reviewer.get('email', '')}>  {record.get('created', '')}")
+        print(line + (f"  {record['comment']}" if record.get('comment') else ""))
+
+
+def command_trust_add(email: str, key: str):
+    """
+    Trust a peer: add their email and SSH public key to your private list.
+
+    key is a public key ("ssh-ed25519 AAAA...") or the path of a .pub file.
+    """
+    if os.path.exists(os.path.expanduser(key)):
+        key = Path(os.path.expanduser(key)).read_text(encoding='utf-8')
+    parts = key.split()
+    if len(parts) < 2:
+        print(f"Error: not an SSH public key: {key!r}", file=sys.stderr)
+        sys.exit(1)
+    entries = trust_parse(trust_private_path()) + [(email, f"{parts[0]} {parts[1]}")]
+    trust_write(trust_private_path(), entries)
+    print(f"Trusted: {email} {parts[0]} {parts[1][:16]}...")
+
+
+def command_trust_remove(email: str):
+    """Stop trusting a peer: remove every key of email from your private list."""
+    entries = trust_parse(trust_private_path())
+    kept = [(e, k) for e, k in entries if e != email]
+    if len(kept) == len(entries):
+        print(f"Error: {email} is not in your trusted peers", file=sys.stderr)
+        sys.exit(1)
+    trust_write(trust_private_path(), kept)
+    print(f"No longer trusted: {email}")
+
+
+def command_trust_list():
+    """List the peers you trust (your private list)."""
+    entries = trust_parse(trust_private_path())
+    if not entries:
+        print("No trusted peers.")
+        return
+    for email, key in entries:
+        print(f"{email} {key}")
+
+
+def command_trust_publish():
+    """
+    Add your email and signing key to the shared list of peers.
+
+    Others can then import you with bb trust import. The shared list is
+    only a directory: nobody trusts it without importing entries.
+    """
+    identity = helper_signing_identity()
+    if identity is None or not identity[2]:
+        print("Error: set a signing key and an email first "
+              "(bb whoami signing-key PATH, bb whoami email ADDRESS)", file=sys.stderr)
+        sys.exit(1)
+    _, public_key, email = identity
+    trust_write(trust_public_path(), trust_parse(trust_public_path()) + [(email, public_key)])
+    print(f"Published: {email} {public_key.split()[0]} {public_key.split()[1][:16]}...")
+
+
+def command_trust_import():
+    """
+    Import peers from the shared list into your private list, one by one.
+
+    Anyone able to commit can add a line to the shared list, so each
+    entry is shown and must be accepted explicitly.
+    """
+    private = trust_parse(trust_private_path())
+    candidates = [entry for entry in trust_parse(trust_public_path()) if entry not in private]
+    if not candidates:
+        print("Nothing to import.")
+        return
+    for email, key in candidates:
+        print(f"{email} {key}")
+        try:
+            answer = input("Trust this peer? [y/n]: ").strip().lower()
+        except EOFError:
+            print()
+            break
+        if answer == 'y':
+            private.append((email, key))
+            trust_write(trust_private_path(), private)
+            print(f"Trusted: {email}")
+    print(f"Trusted peers: {len(private)}")
+
+
 def review_closure(func_hash: str) -> List[str]:
     """
     Every function that runs when a function's checks run.
@@ -1211,17 +1553,17 @@ def review_render(func_hash: str, preferred_langs: List[str]) -> Optional[Tuple[
     return None
 
 
-def review_ask(question: str) -> Optional[str]:
-    """Ask y/n/q; returns 'y', 'n', 'q', or None without input (EOF)."""
+def review_ask(question: str, choices: str = 'ynq') -> Optional[str]:
+    """Ask for one of choices (letters); returns it, or None without input (EOF)."""
     while True:
         try:
-            response = input(f"{question} [y/n/q]: ").strip().lower()
+            response = input(f"{question} [{'/'.join(choices)}]: ").strip().lower()
         except EOFError:
             print()
             return None
-        if response in ('y', 'n', 'q'):
+        if len(response) == 1 and response in choices:
             return response
-        print("Invalid input. Please enter 'y', 'n', or 'q'.")
+        print(f"Invalid input. Please enter one of: {', '.join(choices)}.")
 
 
 def review_require(func_hash: str, action: str):
@@ -1230,7 +1572,9 @@ def review_require(func_hash: str, action: str):
 
     Used before running or compiling pool code: nothing runs unread.
     """
-    missing = [h for h in code_resolve_dependencies(func_hash) if h not in review_load_state()]
+    closure = code_resolve_dependencies(func_hash)
+    approved = review_approvals(closure)
+    missing = [h for h in closure if h not in approved]
     if missing:
         print(f"Error: Refusing to {action} code you have not reviewed "
               f"({len(missing)} function(s) to approve).", file=sys.stderr)
@@ -1238,9 +1582,9 @@ def review_require(func_hash: str, action: str):
         sys.exit(1)
 
 
-def command_review(identifier: str):
+def command_review(identifier: str, comment: str = ""):
     """
-    Read and approve a function, its dependencies and its checks.
+    Read and approve (or reject) a function, its dependencies and its checks.
 
     Functions come in breadth-first levels of the dependency order: what a
     function imports and its checks come before it, so each check that is
@@ -1248,22 +1592,31 @@ def command_review(identifier: str):
 
     For each function: read its code and its checks' code, run the checks
     if you want to (once everything they run is approved, except the
-    function you are reading), then approve the hash or not. Approvals are
-    remembered in a private state directory, outside the shared
-    $BB_DIRECTORY. Exits with status 1 when a check fails.
+    function you are reading), then approve the hash, reject it, or skip.
+    Your verdicts are kept in a private state directory; with a signing key
+    (bb whoami signing-key PATH) each one is also published as a signed
+    review in $BB_DIRECTORY/review/, so peers who trust you can rely on it.
+    Functions already approved by you or by peers you trust are skipped.
+    Exits with status 1 when a check fails.
     """
     hash_value = helper_resolve_to_hash(identifier)
 
     config = storage_read_config()
     preferred_langs = config['user'].get('languages') or ['eng']
 
-    reviewed = review_load_state()
-
     try:
         order = [h for level in review_order(hash_value) for h in level]
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
+    # Approved by you or by trusted peers; your own verdicts are saved privately
+    reviewed = review_approvals(order)
+    private = review_load_state()
+    rejected = review_load_rejections()
+    if helper_signing_identity() is None:
+        print("Note: no signing key, so your verdicts stay private (bb whoami signing-key PATH).")
+        print()
 
     to_review = [h for h in order if h not in reviewed]
     failed = False
@@ -1283,7 +1636,7 @@ def command_review(identifier: str):
     print()
     print("Dependencies and checks come first. For each function, read the code")
     print("and its checks, run the checks if you want to, then approve or not.")
-    print("Press 'y' for yes, 'n' for no, 'q' to quit.")
+    print("Press 'y' for yes, 'n' for no, 'r' to reject, 'q' to quit.")
     print("=" * 80)
     print()
 
@@ -1320,6 +1673,14 @@ def command_review(identifier: str):
                 print(f"  - {check_hash[:12]}... [{status}]")
                 if check_rendered:
                     print('\n'.join(f"      {line}".rstrip() for line in check_rendered[2].split('\n')))
+
+        shared = review_list_shared(current_hash)
+        if shared:
+            print(f"Shared reviews: {len(shared)}")
+            for record in shared:
+                reviewer = record.get('reviewer', {})
+                print(f"  - {record['status']} {record.get('verdict')} by "
+                      f"{reviewer.get('name', '')} <{reviewer.get('email', '')}>")
         print()
 
         if checks:
@@ -1337,7 +1698,7 @@ def command_review(identifier: str):
                         failed = True
             print()
 
-        answer = review_ask("Approve this function?")
+        answer = review_ask("Approve this function? (r to reject)", 'ynrq')
         if answer is None:
             print("Non-interactive mode - stopping here. Approvals so far are saved.")
             return
@@ -1347,8 +1708,20 @@ def command_review(identifier: str):
             return
         if answer == 'y':
             reviewed.add(current_hash)
-            review_save_state(reviewed)
-            print("✓ Function approved and saved to review state.")
+            private.add(current_hash)
+            rejected.discard(current_hash)
+            review_save_state(private)
+            review_save_rejections(rejected)
+            published = review_publish(current_hash, 'approve', comment)
+            print("✓ Function approved" + (" and signed review published." if published else "."))
+        elif answer == 'r':
+            reviewed.discard(current_hash)
+            private.discard(current_hash)
+            rejected.add(current_hash)
+            review_save_state(private)
+            review_save_rejections(rejected)
+            published = review_publish(current_hash, 'reject', comment)
+            print("✗ Function rejected" + (" and signed review published." if published else "."))
         else:
             print("✗ Function not approved.")
 
@@ -1356,7 +1729,7 @@ def command_review(identifier: str):
         print()
 
     print("Review complete!")
-    print(f"Total reviewed: {len(reviewed)} function(s)")
+    print(f"Total reviewed: {len(private)} function(s)")
     if failed:
         sys.exit(1)
 
@@ -3515,7 +3888,6 @@ def command_validate_checks(identifier: str = None, unreviewed: bool = False):
         print("Warning: running checks nobody reviewed (--dangerously-unreviewed). "
               "This machine must have no secrets and no write access.", file=sys.stderr)
 
-    reviewed = review_load_state()
     if identifier:
         targets = [helper_resolve_to_hash(identifier)]
     else:
@@ -3527,7 +3899,8 @@ def command_validate_checks(identifier: str = None, unreviewed: bool = False):
         if not object_load_checks(func_hash):
             print("No checks.")
             continue
-        approved = set(review_closure(func_hash)) if unreviewed else reviewed
+        closure = review_closure(func_hash)
+        approved = set(closure) if unreviewed else review_approvals(closure)
         results, missing = check_run_reviewed(func_hash, approved)
         if missing:
             not_reviewed.append((func_hash, len(missing)))
@@ -3641,8 +4014,8 @@ def edit_prepare(text: str, lang: str) -> Dict[str, Any]:
     # not. Refuse to run imports you have not approved with bb review.
     imported = {dep for _, p in [(implementation, prepared_implementation)] + checks
                 for dep in p['alias_mapping']}
-    reviewed = review_load_state()
-    missing = sorted({h for dep in imported for h in code_resolve_dependencies(dep)} - reviewed)
+    needed = {h for dep in imported for h in code_resolve_dependencies(dep)}
+    missing = sorted(needed - review_approvals(list(needed)))
     if missing:
         raise ValueError("The edit imports functions you have not reviewed, so nothing was run:\n"
                          + '\n'.join(f"  bb review {h}" for h in missing))
@@ -4743,6 +5116,7 @@ def command_skills():
         'run': command_run,
         'edit': command_edit,
         'review': command_review,
+        'reviews': command_reviews,
         'log': command_log,
         'search': command_search,
         'latest': command_latest,
@@ -4761,8 +5135,17 @@ def command_skills():
         'show': command_worklog_show,
     }
 
+    trust_handler_map = {
+        'add': command_trust_add,
+        'remove': command_trust_remove,
+        'list': command_trust_list,
+        'publish': command_trust_publish,
+        'import': command_trust_import,
+    }
+
     nested_handler_maps = {
         'worklog': worklog_handler_map,
+        'trust': trust_handler_map,
     }
 
     lines = []
@@ -4892,7 +5275,7 @@ def _build_parser():
 
     # Whoami command
     whoami_parser = subparsers.add_parser('whoami', help='Get or set user configuration')
-    whoami_parser.add_argument('subcommand', choices=['name', 'email', 'public-key', 'language'],
+    whoami_parser.add_argument('subcommand', choices=['name', 'email', 'signing-key', 'language'],
                                help='Configuration field to get/set')
     whoami_parser.add_argument('value', nargs='*', help='New value(s) to set (omit to get current value)')
 
@@ -4927,8 +5310,25 @@ def _build_parser():
 
 
     # Review command
-    review_parser = subparsers.add_parser('review', help='Interactively review function and dependencies')
+    review_parser = subparsers.add_parser('review', help='Read, run the checks of, and approve or reject functions')
     review_parser.add_argument('identifier', help='Hash or name, with optional @lang')
+    review_parser.add_argument('--comment', '-m', default="", help='Comment stored in your signed reviews')
+
+    # Reviews command
+    reviews_parser = subparsers.add_parser('reviews', help='Show who reviewed a function, with signature status')
+    reviews_parser.add_argument('identifier', help='Hash or name, with optional @lang')
+
+    # Trust command with subcommands
+    trust_parser = subparsers.add_parser('trust', help='Manage the peers whose signed reviews you trust')
+    trust_subparsers = trust_parser.add_subparsers(dest='trust_command', help='Trust subcommands')
+    trust_add_parser = trust_subparsers.add_parser('add', help='Trust a peer (private list)')
+    trust_add_parser.add_argument('email', help='Email the peer signs with')
+    trust_add_parser.add_argument('key', help='SSH public key, or path of a .pub file')
+    trust_remove_parser = trust_subparsers.add_parser('remove', help='Stop trusting a peer')
+    trust_remove_parser.add_argument('email', help='Email of the peer')
+    trust_subparsers.add_parser('list', help='List the peers you trust')
+    trust_subparsers.add_parser('publish', help='Add yourself to the shared list of peers')
+    trust_subparsers.add_parser('import', help='Import peers from the shared list, one by one')
 
     # Log command
     log_parser = subparsers.add_parser('log', help='Show functions and worklogs, newest first')
@@ -5023,7 +5423,22 @@ def main():
     elif args.command == 'edit':
         command_edit(args.identifier, comment=args.comment)
     elif args.command == 'review':
-        command_review(args.identifier)
+        command_review(args.identifier, comment=args.comment)
+    elif args.command == 'reviews':
+        command_reviews(args.identifier)
+    elif args.command == 'trust':
+        if args.trust_command == 'add':
+            command_trust_add(args.email, args.key)
+        elif args.trust_command == 'remove':
+            command_trust_remove(args.email)
+        elif args.trust_command == 'list':
+            command_trust_list()
+        elif args.trust_command == 'publish':
+            command_trust_publish()
+        elif args.trust_command == 'import':
+            command_trust_import()
+        else:
+            parser.parse_args([args.command, '--help'])
     elif args.command == 'log':
         command_log()
     elif args.command == 'search':
