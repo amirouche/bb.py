@@ -1060,3 +1060,45 @@ def test_edit_format_errors(text, message):
     """Malformed edit files are rejected with a clear message instead of losing text"""
     with pytest.raises(bb.EditFormatError, match=re.escape(message)):
         bb.markdown_parse_edit(text)
+
+
+# ============================================================================
+# Tests for functor checks
+# ============================================================================
+
+def test_check_run_statuses():
+    """A check passes on a truthy result, fails on a falsy one, errors on an exception"""
+    def double(x):
+        return x * 2
+
+    assert bb.check_run(lambda f: f(3) == 6, double) == ('PASS', '')
+    assert bb.check_run(lambda f: f(3) == 7, double) == ('FAIL', '')
+    status, detail = bb.check_run(lambda f: f(), double)
+    assert status == 'ERROR'
+    assert detail.startswith('TypeError:')
+
+
+def test_check_report_summary(capsys):
+    """check_report prints one line per check and returns whether all passed"""
+    assert bb.check_report([]) is True
+    assert bb.check_report([('PASS', 'a', ''), ('ERROR', 'b', 'boom')]) is False
+    out = capsys.readouterr().out
+    assert out == "No checks.\nPASS a\nERROR b: boom\n2 checks: 1 passed, 1 errors\n"
+
+
+def test_code_execute_source_returns_function(mock_bb_dir):
+    """Unsaved source from an edit file is executed and its function returned"""
+    func = bb.code_execute_source("import math\n\ndef area(r):\n    return math.pi * r * r\n", 'eng')
+    assert func(1) == pytest.approx(3.14159, rel=1e-5)
+
+
+def test_code_execute_source_reports_load_errors(mock_bb_dir):
+    """Errors while defining the function surface as ValueError with the function name"""
+    with pytest.raises(ValueError, match="broken failed to load: ZeroDivisionError"):
+        bb.code_execute_source("def broken(x=1 / 0):\n    return x\n", 'eng')
+
+
+def test_code_execute_source_ignores_statements_that_are_not_stored(mock_bb_dir):
+    """Only imports and the function run, matching what bb stores"""
+    func = bb.code_execute_source("print(1 / 0)\n\ndef one():\n    return 1\n", 'eng')
+    assert func() == 1

@@ -15,6 +15,8 @@ Typical single-user workflow:
     bb add myfunction.py@eng        # add a function (English naming)
     bb show <hash>@eng              # retrieve and display it
     bb run myfunction 3 5           # execute it with arguments
+    bb edit myfunction@eng          # edit it with its checks, save a fork
+    bb check myfunction             # run the checks attached to it
     bb refactor <what> <from> <to>  # swap a dependency for a new version
     bb compile <hash> -o main.py    # flatten into a standalone script
 
@@ -27,15 +29,20 @@ any language that has been added or translated.
 import ast
 import argparse
 import builtins
+import contextlib
 import hashlib
+import io
 import itertools
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import struct
+import tempfile
 import time
+import types
 import uuid
 from collections import namedtuple
 from contextlib import contextmanager
@@ -484,7 +491,7 @@ def code_detect_schema(func_hash: str) -> int:
     return None
 
 
-def code_create_metadata(parent: str = None) -> Dict[str, any]:
+def code_create_metadata(parent: str = None, checks: List[str] = None) -> Dict[str, any]:
     """
     Create default metadata for a function.
 
@@ -493,9 +500,12 @@ def code_create_metadata(parent: str = None) -> Dict[str, any]:
     - name: User's name from config
     - email: User's email from config
     - parent: Optional parent function hash (for lineage tracking)
+    - checks: Optional hashes of the check functions attached by bb edit
 
     Args:
         parent: Optional parent function hash (for fork lineage tracking)
+        checks: Optional list of check function hashes; each check takes this
+            function as its only argument
 
     Returns:
         Dictionary with metadata fields
@@ -519,6 +529,8 @@ def code_create_metadata(parent: str = None) -> Dict[str, any]:
     if parent:
         metadata['parent'] = parent
 
+    if checks:
+        metadata['checks'] = checks
 
     return metadata
 
@@ -2709,52 +2721,72 @@ def code_add(file_path_with_lang: str, comment: str = ""):
         print(f"Error: File not found: {file_path}", file=sys.stderr)
         sys.exit(1)
 
-    # Read and parse the file
+    # Read and prepare the source
     with open(file_path, 'r', encoding='utf-8') as f:
         source_code = f.read()
 
     try:
-        tree = ast.parse(source_code)
-    except SyntaxError as e:
-        print(f"Error: Failed to parse {file_path}: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # Fail early with a clear message if the file has no function definition
-    try:
-        code_extract_definition(tree)
+        prepared = code_prepare_source(source_code, lang, where=file_path)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Normalize the AST
+    # Save to v1 format (docstring stored separately in mapping.json)
+    code_save(prepared['hash'], lang, prepared['normalized_code'], prepared['docstring'],
+              prepared['name_mapping'], prepared['alias_mapping'], comment)
+
+
+def code_prepare_source(source_code: str, lang: str, where: str = None) -> Dict[str, Any]:
+    """
+    Parse, normalize and hash a function's source, without saving it.
+
+    Verifies that every bb import exists in the local pool.
+
+    Args:
+        source_code: Python source with imports and one function definition
+        lang: Language code of the names and docstring
+        where: Optional label used in error messages (defaults to "source")
+
+    Returns:
+        Dict with hash, normalized_code (without docstring), docstring,
+        name_mapping and alias_mapping
+
+    Raises:
+        ValueError: With a user-facing message when the source is not valid
+    """
+    where = where or "source"
+
     try:
-        normalized_code_with_docstring, normalized_code_without_docstring, docstring, name_mapping, alias_mapping = code_normalize(tree, lang)
+        tree = ast.parse(source_code)
+    except SyntaxError as e:
+        raise ValueError(f"Failed to parse {where}: {e}")
+
+    # Fail early with a clear message if there is no function definition
+    code_extract_definition(tree)
+
+    try:
+        _, normalized_code_without_docstring, docstring, name_mapping, alias_mapping = code_normalize(tree, lang)
     except Exception as e:
-        print(f"Error: Failed to normalize AST: {e}", file=sys.stderr)
-        sys.exit(1)
+        raise ValueError(f"Failed to normalize AST: {e}")
 
     # Verify all bb imports resolve to objects in the local pool
     pool_dir = storage_get_pool_directory()
+    missing_deps = [(dep_hash, alias) for dep_hash, alias in alias_mapping.items()
+                    if not (pool_dir / dep_hash[:2] / dep_hash[2:] / 'object.json').exists()]
+    if missing_deps:
+        lines = ["The following bb imports do not exist in the local pool:"]
+        lines += [f"  - {alias} (hash: {dep_hash[:12]}...)" for dep_hash, alias in missing_deps]
+        lines += ["", "Please add these functions to the pool first, or pull them from a remote."]
+        raise ValueError('\n'.join(lines))
 
-    if alias_mapping:
-        missing_deps = []
-        for dep_hash, alias in alias_mapping.items():
-            dep_dir = pool_dir / dep_hash[:2] / dep_hash[2:]
-            if not (dep_dir / 'object.json').exists():
-                missing_deps.append((dep_hash, alias))
-
-        if missing_deps:
-            print("Error: The following bb imports do not exist in the local pool:", file=sys.stderr)
-            for dep_hash, alias in missing_deps:
-                print(f"  - {alias} (hash: {dep_hash[:12]}...)", file=sys.stderr)
-            print("\nPlease add these functions to the pool first, or pull them from a remote.", file=sys.stderr)
-            sys.exit(1)
-
-    # Compute hash on code WITHOUT docstring (so same logic = same hash regardless of language)
-    hash_value = hash_compute(normalized_code_without_docstring)
-
-    # Save to v1 format (docstring stored separately in mapping.json)
-    code_save(hash_value, lang, normalized_code_without_docstring, docstring, name_mapping, alias_mapping, comment)
+    return {
+        # Hash on code WITHOUT docstring (same logic = same hash regardless of language)
+        'hash': hash_compute(normalized_code_without_docstring),
+        'normalized_code': normalized_code_without_docstring,
+        'docstring': docstring,
+        'name_mapping': name_mapping,
+        'alias_mapping': alias_mapping,
+    }
 
 
 def code_replace_docstring(code: str, new_docstring: str) -> str:
@@ -3747,6 +3779,413 @@ def helper_resolve_to_hash(identifier: str) -> str:
     return func_hash
 
 
+# ============================================================================
+# Checks and bb edit
+# ============================================================================
+#
+# A check is an ordinary pool function that takes the implementation as its
+# only argument and returns a truthy value when it passes. Checks do not
+# import the function they test, so one check can run against every fork.
+# They are attached to an implementation through its metadata ('checks'),
+# which bb edit writes.
+
+def helper_pick_language(func_hash: str, lang: str = None) -> Optional[str]:
+    """
+    Pick the language to load a function in.
+
+    Uses lang when the function has it, then the user's preferred languages,
+    then the first available language.
+
+    Returns:
+        A language code, or None if the function has no mapping at all
+    """
+    languages = storage_list_languages(func_hash)
+    if not languages:
+        return None
+    if lang in languages:
+        return lang
+    preferred = storage_read_config()['user'].get('languages') or []
+    for candidate in preferred:
+        if candidate in languages:
+            return candidate
+    return languages[0]
+
+
+def code_load_function(func_hash: str, lang: str) -> Callable:
+    """Load a pool function and its dependencies as a Python callable."""
+    return code_load_dependencies_recursive(func_hash, lang, {}, set())
+
+
+def code_execute_source(source_code: str, lang: str) -> Callable:
+    """
+    Execute unsaved source (from an edit file) and return its function.
+
+    Only imports and the function definition run, the same parts that get
+    hashed and stored. bb.pool imports are loaded from the local pool.
+
+    Raises:
+        ValueError: If a bb import cannot be loaded or the source fails to execute
+    """
+    tree = ast.parse(source_code)
+    function_def, _ = code_extract_definition(tree)
+
+    namespace: Dict[str, Any] = {}
+    body = []
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
+            for alias in node.names:
+                dep_hash = alias.name[len(BB_IMPORT_PREFIX):]
+                dep_lang = helper_pick_language(dep_hash, lang)
+                try:
+                    dep = code_load_function(dep_hash, dep_lang)
+                except SystemExit:
+                    raise ValueError(f"Could not load bb import {alias.asname or alias.name}")
+                if alias.asname:
+                    namespace[alias.asname] = dep
+                else:
+                    namespace[alias.name] = types.SimpleNamespace(_bb_v_0=dep)
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom)) or node is function_def:
+            body.append(node)
+    tree.body = body
+
+    try:
+        exec(compile(tree, f'<bb edit {function_def.name}>', 'exec'), namespace)
+    except Exception as e:
+        raise ValueError(f"{function_def.name} failed to load: {type(e).__name__}: {e}")
+
+    return namespace[function_def.name]
+
+
+def check_run(check: Callable, implementation: Callable) -> Tuple[str, str]:
+    """
+    Run one check against an implementation.
+
+    Returns:
+        (status, detail) where status is PASS, FAIL or ERROR
+    """
+    try:
+        result = check(implementation)
+    except Exception as e:
+        return 'ERROR', f"{type(e).__name__}: {e}"
+    return ('PASS', '') if result else ('FAIL', '')
+
+
+def check_report(results: List[Tuple[str, str, str]]) -> bool:
+    """
+    Print check results and a summary line.
+
+    Args:
+        results: List of (status, check name, detail)
+
+    Returns:
+        True when every check passed (also when there are none)
+    """
+    if not results:
+        print("No checks.")
+        return True
+
+    counts = {'PASS': 0, 'FAIL': 0, 'ERROR': 0}
+    for status, name, detail in results:
+        counts[status] += 1
+        print(f"{status} {name}" + (f": {detail}" if detail else ""))
+
+    parts = []
+    if counts['PASS']:
+        parts.append(f"{counts['PASS']} passed")
+    if counts['FAIL']:
+        parts.append(f"{counts['FAIL']} failed")
+    if counts['ERROR']:
+        parts.append(f"{counts['ERROR']} errors")
+    print(f"{len(results)} checks: {', '.join(parts)}")
+
+    return counts['PASS'] == len(results)
+
+
+def command_check(identifier: str):
+    """
+    Run the checks attached to a function.
+
+    Accepts a hash or function name (with optional @lang suffix). Each check
+    is called with the function as its only argument. Checks are attached
+    with `bb edit`. Exits with status 1 when a check fails.
+    """
+    hash_value, lang = helper_parse_identifier(identifier)
+    check_hashes = object_load(hash_value)['metadata'].get('checks', [])
+
+    if not check_hashes:
+        print("No checks.")
+        return
+
+    try:
+        implementation = code_load_function(hash_value, helper_pick_language(hash_value, lang))
+    except SystemExit:
+        print(f"Error: Could not load function {hash_value}", file=sys.stderr)
+        sys.exit(1)
+
+    results = []
+    for check_hash in check_hashes:
+        check_lang = helper_pick_language(check_hash, lang)
+        if check_lang is None:
+            results.append(('ERROR', f"{check_hash[:12]}...", "not in the local pool"))
+            continue
+        name = code_load(check_hash, check_lang)[1].get('_bb_v_0', check_hash[:12])
+        try:
+            check = code_load_function(check_hash, check_lang)
+        except SystemExit:
+            results.append(('ERROR', name, "could not be loaded"))
+            continue
+        status, detail = check_run(check, implementation)
+        results.append((status, name, detail))
+
+    if not check_report(results):
+        sys.exit(1)
+
+
+def edit_load_section(func_hash: str, lang: str) -> Dict[str, Any]:
+    """
+    Load a pool function as an edit-file section.
+
+    Falls back to another language when the function has no mapping in lang.
+
+    Returns:
+        Section dict (source, markdown, parent, title) plus 'fingerprint',
+        used to tell whether the user changed anything
+    """
+    section_lang = helper_pick_language(func_hash, lang)
+    if section_lang is None:
+        print(f"Error: Function not found in the local pool: {func_hash}", file=sys.stderr)
+        sys.exit(1)
+
+    mapping_hash = mapping_select(func_hash, section_lang)
+    normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, section_lang, mapping_hash)
+    source = code_denormalize(code_replace_docstring(normalized_code, docstring), name_mapping, alias_mapping)
+    markdown = mapping_load_markdown(func_hash, section_lang, mapping_hash)
+
+    return {
+        'title': name_mapping.get('_bb_v_0', func_hash[:12]),
+        'source': source + '\n',
+        'markdown': markdown,
+        'parent': func_hash,
+        'fingerprint': edit_fingerprint(func_hash, docstring, name_mapping, alias_mapping, markdown),
+    }
+
+
+def edit_fingerprint(func_hash: str, docstring: str, name_mapping: Dict[str, str],
+                     alias_mapping: Dict[str, str], markdown: str) -> Tuple[str, str]:
+    """Identify a section by function hash and mapping content (comment excluded)."""
+    return func_hash, code_compute_mapping_hash(docstring, name_mapping, alias_mapping, "", markdown)
+
+
+def edit_prepare(text: str, lang: str) -> Dict[str, Any]:
+    """
+    Parse an edit file, normalize every section and run the checks.
+
+    Returns:
+        Dict with 'implementation' and 'checks' (lists of (section, prepared)
+        pairs, as given by markdown_parse_edit and code_prepare_source) and
+        'results' (check results for check_report)
+
+    Raises:
+        ValueError: With a user-facing message when the file cannot be used
+    """
+    parsed = markdown_parse_edit(text)
+
+    implementation = parsed['implementation']
+    prepared_implementation = code_prepare_source(implementation['source'], lang, where="Implementation")
+    checks = [(check, code_prepare_source(check['source'], lang, where=f"check '{check['title']}'"))
+              for check in parsed['checks']]
+
+    function = code_execute_source(implementation['source'], lang)
+
+    results = []
+    for check, prepared in checks:
+        name = prepared['name_mapping']['_bb_v_0']
+        try:
+            status, detail = check_run(code_execute_source(check['source'], lang), function)
+        except ValueError as e:
+            status, detail = 'ERROR', str(e)
+        results.append((status, name, detail))
+
+    return {
+        'implementation': (implementation, prepared_implementation),
+        'checks': checks,
+        'results': results,
+    }
+
+
+def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: str,
+                      comment: str, checks: List[str] = None, unchanged: bool = False) -> bool:
+    """
+    Save one edit-file section to the pool.
+
+    A new function gets the section's bb:parent marker as its parent. An
+    existing function only gets a new mapping when its names or
+    documentation changed. For the implementation, checks replaces the
+    list of attached checks.
+
+    Returns:
+        True when something was written
+    """
+    func_hash = prepared['hash']
+    object_json = storage_get_pool_directory() / func_hash[:2] / func_hash[2:] / 'object.json'
+    written = False
+    is_new = not object_json.exists()
+
+    if is_new:
+        parent = section.get('parent')
+        object_save(func_hash, prepared['normalized_code'],
+                    code_create_metadata(parent=parent if parent != func_hash else None, checks=checks))
+        written = True
+    elif checks is not None:
+        with open(object_json, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if data['metadata'].get('checks', []) != checks:
+            if checks:
+                data['metadata']['checks'] = checks
+            else:
+                data['metadata'].pop('checks', None)
+            with open(object_json, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            written = True
+
+    if is_new or not unchanged:
+        mapping_save(func_hash, lang, prepared['docstring'], prepared['name_mapping'],
+                     prepared['alias_mapping'], comment, section['markdown'])
+        written = True
+
+    return written
+
+
+def helper_run_editor(path: str):
+    """
+    Open path in the user's editor ($EDITOR, then $VISUAL, then vi).
+
+    The variable may include arguments, e.g. EDITOR="code --wait".
+    """
+    editor = os.environ.get('EDITOR') or os.environ.get('VISUAL') or 'vi'
+    result = subprocess.run(shlex.split(editor) + [path])
+    if result.returncode != 0:
+        raise ValueError(f"Editor exited with status {result.returncode}")
+
+
+def helper_ask_yes(question: str) -> bool:
+    """Ask a yes/no question, defaulting to yes; no input (EOF) means no."""
+    try:
+        answer = input(f"{question} [Y/n] ").strip().lower()
+    except EOFError:
+        print()
+        return False
+    return answer in ('', 'y', 'yes')
+
+
+def command_edit(identifier: str, comment: str = None):
+    """
+    Edit a function and its checks as one markdown file, then save a fork.
+
+    Opens $EDITOR on a file with an Implementation section and a Checks
+    section. Each section holds prose and examples, and exactly one
+    ```python def block: the function that is hashed. Each check takes the
+    implementation as its only argument and returns True when it passes.
+
+    Saving requires the file to parse and every check to pass. The new
+    function records the edited one as its parent and lists its checks;
+    changed checks record their own parents. The comment (asked for when
+    --comment is not given) is stored in the new mappings.
+
+    Examples:
+
+    ```
+    bb edit compute_pi@eng
+    bb edit compute_pi@eng --comment "Faster convergence"
+    ```
+    """
+    hash_value, lang = helper_parse_identifier(identifier)
+    lang = lang or helper_pick_language(hash_value)
+    if lang not in storage_list_languages(hash_value):
+        print(f"Error: {hash_value[:12]}... has no '{lang}' mapping. Translate it first with bb translate.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    # Load the function and the checks attached to it
+    original = edit_load_section(hash_value, lang)
+    original_checks = []
+    for check_hash in object_load(hash_value)['metadata'].get('checks', []):
+        if code_detect_schema(check_hash) is None:
+            print(f"Error: Check {check_hash[:12]}... is attached to this function "
+                  f"but missing from the local pool. Pull it from a remote first.", file=sys.stderr)
+            sys.exit(1)
+        original_checks.append(edit_load_section(check_hash, lang))
+
+    text = markdown_render_edit(original['title'], original, original_checks)
+    # Kept next to the pool, so an abandoned edit is easy to find again
+    edit_dir = storage_get_bb_directory() / 'edit'
+    edit_dir.mkdir(parents=True, exist_ok=True)
+    fd, path = tempfile.mkstemp(prefix=f"{original['title']}-", suffix='.md', dir=edit_dir)
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        f.write(text)
+
+    # Edit until the file is usable and every check passes
+    while True:
+        try:
+            helper_run_editor(path)
+            with open(path, 'r', encoding='utf-8') as f:
+                edited = f.read()
+            plan = edit_prepare(edited, lang)
+            passed = check_report(plan['results'])
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            passed = False
+        if passed:
+            break
+        # Only offer another round when someone is at the terminal
+        if not sys.stdin.isatty() or not helper_ask_yes("Edit again?"):
+            print(f"Nothing saved. Your edit is kept in {path}", file=sys.stderr)
+            sys.exit(1)
+
+    section, prepared = plan['implementation']
+    # Without a marker, the implementation still descends from the edited function
+    section['parent'] = section['parent'] or hash_value
+    check_hashes = list(dict.fromkeys(p['hash'] for _, p in plan['checks']))
+
+    # Compare with what was loaded: hashes, names and documentation
+    original_prints = {s['fingerprint'] for s in [original] + original_checks}
+
+    def unchanged(sec, prep):
+        return edit_fingerprint(prep['hash'], prep['docstring'], prep['name_mapping'],
+                                prep['alias_mapping'], sec['markdown']) in original_prints
+
+    old_check_hashes = object_load(hash_value)['metadata'].get('checks', [])
+    if (prepared['hash'] == hash_value and unchanged(section, prepared) and check_hashes == old_check_hashes
+            and all(unchanged(s, p) for s, p in plan['checks'])):
+        os.unlink(path)
+        print("No changes.")
+        return
+
+    if comment is None:
+        try:
+            comment = input("Comment (press Enter to skip): ").strip()
+        except EOFError:
+            comment = ""
+
+    # Save checks first, so the implementation never lists a missing check
+    with contextlib.redirect_stdout(io.StringIO()):
+        new_checks = []
+        for check, prep in plan['checks']:
+            if edit_save_section(check, prep, lang, comment, unchanged=unchanged(check, prep)):
+                new_checks.append((prep['name_mapping']['_bb_v_0'], prep['hash']))
+        edit_save_section(section, prepared, lang, comment, checks=check_hashes,
+                          unchanged=unchanged(section, prepared))
+
+    os.unlink(path)
+
+    print(f"Hash: {prepared['hash']}")
+    if prepared['hash'] != hash_value:
+        print(f"Parent: {hash_value}")
+    for name, check_hash in new_checks:
+        print(f"Check: {check_hash} {name}")
+
+
 def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str = None):
     """
     Replace a dependency hash with another in a function.
@@ -4629,6 +5068,8 @@ def command_skills():
         'translate': command_translate,
         'rm': command_rm,
         'run': command_run,
+        'edit': command_edit,
+        'check': command_check,
         'review': command_review,
         'log': command_log,
         'search': command_search,
@@ -4806,6 +5247,15 @@ def _build_parser():
     run_parser.add_argument('identifier', help='Hash or name, with optional @lang (e.g., compute_pi@eng)')
     run_parser.add_argument('func_args', nargs='*', help='Arguments to pass to function')
 
+    # Edit command
+    edit_parser = subparsers.add_parser('edit', help='Edit a function and its checks, then save a fork')
+    edit_parser.add_argument('identifier', help='Hash or name, with optional @lang (e.g., compute_pi@eng)')
+    edit_parser.add_argument('--comment', '-m', default=None, help='Comment for the new version (asked when omitted)')
+
+    # Check command
+    check_parser = subparsers.add_parser('check', help='Run the checks attached to a function')
+    check_parser.add_argument('identifier', help='Hash or name, with optional @lang')
+
     # Review command
     review_parser = subparsers.add_parser('review', help='Interactively review function and dependencies')
     review_parser.add_argument('identifier', help='Hash or name, with optional @lang')
@@ -4864,8 +5314,6 @@ def _build_parser():
     tree_parser = subparsers.add_parser('tree', help='Display dependency tree of a function')
     tree_parser.add_argument('identifier', help='Hash or name, with optional @lang')
 
-    # Check command
-
     # Refactor command
     refactor_parser = subparsers.add_parser('refactor', help='Replace a dependency in a function')
     refactor_parser.add_argument('what', help='Function hash to modify')
@@ -4910,6 +5358,10 @@ def main():
         command_rm(args.identifier)
     elif args.command == 'run':
         command_run(args.identifier, func_args=args.func_args)
+    elif args.command == 'edit':
+        command_edit(args.identifier, comment=args.comment)
+    elif args.command == 'check':
+        command_check(args.identifier)
     elif args.command == 'review':
         command_review(args.identifier)
     elif args.command == 'log':
