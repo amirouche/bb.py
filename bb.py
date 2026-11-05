@@ -34,7 +34,6 @@ import json
 import os
 import subprocess
 import sys
-import sqlite3
 import struct
 import time
 import uuid
