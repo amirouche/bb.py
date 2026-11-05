@@ -45,8 +45,9 @@ Writing functions for the pool:
   parameters or **kwargs. `bb add` and `bb edit` refuse such code.
 - A function is named by `name@lang` (or its hash). Changing it with
   `bb add` or `bb edit` stores a new function with a new hash; functions
-  importing the old one keep using it until they are added again with
-  the new hash, or switched with `bb refactor`.
+  importing the old one keep using it until they are updated:
+  `bb edit name@lang --refactor app@lang` saves the change and updates
+  everything between app and it (or run `bb refactor` later).
 
 Functions are stored in $BB_DIRECTORY/pool/ (default: ~/.local/bb/pool/)
 as JSON objects containing normalized code and per-language name mappings.
@@ -4612,7 +4613,8 @@ def helper_ask_yes(question: str) -> bool:
     return answer in ('', 'y', 'yes')
 
 
-def command_edit(identifier: str, comment: str = None, unreviewed: bool = False):
+def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
+                 refactor: str = None, at: str = None):
     """
     Edit a function and its checks as one markdown file, then save a fork.
 
@@ -4631,6 +4633,13 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False)
     changed checks record their own parents. The comment (asked for when
     --comment is not given) is stored in the new mappings.
 
+    --refactor ROOT then updates ROOT to the new version: every function
+    between ROOT and the edited one gets a new version using it, as
+    `bb refactor ROOT OLD NEW` does (with --at AT, only along the path from
+    AT to ROOT). ROOT and AT are names (resolved by lineage) or hashes, and
+    ROOT must use the edited function. Without --refactor, functions using
+    it keep the version they were saved with.
+
     A name no function has yet (in any language) starts a new function
     from a template; it is saved with no parent. The language is then
     required, as in `bb edit slugify@eng`.
@@ -4641,6 +4650,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False)
     bb edit compute_pi@eng
     bb edit compute_pi@eng --comment "Faster convergence"
     bb edit slugify@eng          # a new function
+    bb edit parse_amount@eng --refactor app@eng   # and update app to it
     ```
     """
     name, _, requested_lang = identifier.partition('@')
@@ -4665,6 +4675,21 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False)
         # Load the function and the checks attached to it
         original = edit_load_section(hash_value, lang)
         original_checks = []
+    refactor_root = refactor_at = None
+    if refactor:
+        # Checked before the editor opens, so a mistake costs no work
+        if hash_value is None:
+            print("Error: --refactor needs an existing function: nothing uses a new one yet", file=sys.stderr)
+            sys.exit(1)
+        refactor_root = helper_parse_identifier(refactor)[0]
+        refactor_at = helper_parse_identifier(at)[0] if at else None
+        if refactor_root == hash_value or hash_value not in code_resolve_dependencies(refactor_root):
+            print(f"Error: {refactor} does not use {identifier}: give a function that imports it, "
+                  f"directly or not (e.g. the app)", file=sys.stderr)
+            sys.exit(1)
+    elif at:
+        print("Error: --at goes with --refactor", file=sys.stderr)
+        sys.exit(1)
     for check_hash in (object_load_checks(hash_value) if hash_value else []):
         if code_detect_schema(check_hash) is None:
             print(f"Error: Check {check_hash[:12]}... is attached to this function "
@@ -4756,6 +4781,17 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False)
         print(f"Check: {check_hash} {name}")
     for name, func_hash in sorted(plan.get('resolved', {}).items()):
         print(f"Import: {name} -> {func_hash}")
+
+    if refactor_root and prepared['hash'] != hash_value:
+        print(f"Updating {refactor} to it:")
+        try:
+            command_refactor(refactor_root, hash_value, prepared['hash'], refactor_at, comment=comment)
+        except SystemExit as stop:
+            if stop.code:
+                print(f"The edit is saved as {prepared['hash']}, but {refactor} was not updated. To retry:\n"
+                      f"  bb refactor {refactor_root} {hash_value} {prepared['hash']}"
+                      + (f" {refactor_at}" if refactor_at else ""), file=sys.stderr)
+            raise
 
     if prepared['hash'] != hash_value:
         helper_report_similar(prepared['hash'], helper_lineage(prepared['hash']) | set(check_hashes))
@@ -5831,6 +5867,10 @@ def _build_parser():
     edit_parser = subparsers.add_parser('edit', help='Edit a function and its checks, then save a fork')
     edit_parser.add_argument('identifier', help='Hash or name, with optional @lang (e.g., compute_pi@eng)')
     edit_parser.add_argument('--comment', '-m', default=None, help='Comment for the new version (asked when omitted)')
+    edit_parser.add_argument('--refactor', metavar='ROOT', default=None,
+                             help='Then update ROOT (a function using it, e.g. app@eng) to the new version')
+    edit_parser.add_argument('--at', metavar='AT', default=None,
+                             help='With --refactor: only along the path from AT to ROOT')
     edit_parser.add_argument('--dangerously-unreviewed', dest='unreviewed', action='store_true',
                              help='Run imported functions nobody reviewed (for experiments)')
 
@@ -5960,7 +6000,8 @@ def main():
     elif args.command == 'run':
         command_run(args.identifier, func_args=args.func_args)
     elif args.command == 'edit':
-        command_edit(args.identifier, comment=args.comment, unreviewed=args.unreviewed)
+        command_edit(args.identifier, comment=args.comment, unreviewed=args.unreviewed,
+                     refactor=args.refactor, at=args.at)
     elif args.command == 'review':
         command_review(args.identifier, comment=args.comment)
     elif args.command == 'reviews':
