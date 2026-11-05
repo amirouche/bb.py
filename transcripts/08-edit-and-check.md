@@ -448,6 +448,40 @@ $ EDITOR=cat bb edit e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa9919
 
 ---
 
+# Chapter 6: Two Forks of the Same Version
+
+Another agent starts from the checked loop version too, and sums a list
+instead of a generator. Both rewrites now descend from the same parent,
+so `compute_pi` has two current versions. bb does not pick one by date:
+commands that take a name refuse it and ask for a hash.
+
+## Workflow
+
+### Step 12: A second fork of the checked version
+```bash
+$ sed 's/sum((-1)/sum([(-1)/; s/range(n))$/range(n)])/' pi_sum.md > pi_list.md
+$ EDITOR="cp pi_list.md" bb edit 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885@eng -m "Sum a list"
+PASS check_pi_n1
+PASS check_pi_n2
+PASS check_pi_n3
+PASS check_pi_n5
+PASS check_pi_n8
+5 checks: 5 passed
+Hash: 166d4a9cdf95cc983e6d9bbc77a71512cc5877210d5a4453b2aa89791cba47e3
+Parent: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
+```
+
+### Step 13: The name now has two current versions
+```bash
+$ bb latest compute_pi eng | grep "^Hash:" | sort
+Hash: 166d4a9cdf95cc983e6d9bbc77a71512cc5877210d5a4453b2aa89791cba47e3
+Hash: 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670
+$ (bb show compute_pi@eng 2>&1 || true) | head -1
+Error: 'compute_pi@eng' is ambiguous: it has 2 current versions. Use a hash:
+```
+
+---
+
 ## Summary
 
 | Command | Purpose |
@@ -469,3 +503,5 @@ $ EDITOR=cat bb edit e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa9919
 5. **Documentation lives in the mapping**: Prose and examples around the `python def` block are stored per language, outside the hash, like docstrings.
 
 6. **A check forked alone applies to nothing** until it is pasted into a function's Checks section.
+
+7. **Names never guess**: a name resolves to the versions nobody forked. When forks diverge, commands that take the name stop and list the hashes.

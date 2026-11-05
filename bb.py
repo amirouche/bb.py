@@ -1603,150 +1603,182 @@ def helper_format_author(metadata: Dict[str, Any]) -> str:
     return f"{name} <{email}>" if email else name
 
 
-def helper_find_latest_by_name(name: str, lang: str = None) -> Tuple[str, str, str]:
+def storage_scan_functions() -> Dict[str, Dict[str, Any]]:
     """
-    Find the most recent version of a function by name.
-
-    Args:
-        name: Function name to search for
-        lang: Optional language code to filter results
+    Read every function in the pool once: metadata, plus the name and
+    comment of its current mapping in each language.
 
     Returns:
-        Tuple of (hash, lang, created) for the latest version
-
-    Raises:
-        SystemExit: If no function found with the given name
+        {hash: {'hash', 'metadata', 'names': {lang: name}, 'comments': {lang: comment}}}
     """
+    functions: Dict[str, Dict[str, Any]] = {}
     pool_dir = storage_get_pool_directory()
-
     if not pool_dir.exists():
-        print("No functions in pool", file=sys.stderr)
-        sys.exit(1)
+        return functions
 
-    matches = []
-
-    # Scan for functions
-    for hash_prefix_dir in pool_dir.iterdir():
-        if not hash_prefix_dir.is_dir():
+    for prefix_dir in pool_dir.iterdir():
+        if not prefix_dir.is_dir():
             continue
-
-        for func_dir in hash_prefix_dir.iterdir():
-            if not func_dir.is_dir():
-                continue
-
+        for func_dir in prefix_dir.iterdir():
             object_json = func_dir / 'object.json'
             if not object_json.exists():
                 continue
-
-            # Load function
             try:
                 with open(object_json, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-
-                func_hash = data['hash']
-                metadata = data.get('metadata', {})
-                created = metadata.get('created', '1970-01-01T00:00:00Z')
-
-                # Get available languages and check name
-                for lang_dir in func_dir.iterdir():
-                    if lang_dir.is_dir() and len(lang_dir.name) == 3:
-                        func_lang = lang_dir.name
-
-                        # Skip if language filter specified and doesn't match
-                        if lang and func_lang != lang:
-                            continue
-
-                        try:
-                            _, name_mapping, _, docstring = code_load(func_hash, func_lang)
-                            func_name = name_mapping.get('_bb_v_0', 'unknown')
-
-                            if func_name == name:
-                                matches.append({
-                                    'hash': func_hash,
-                                    'name': func_name,
-                                    'lang': func_lang,
-                                    'created': created,
-                                    'parent': metadata.get('parent'),
-                                    'docstring': docstring[:100]
-                                })
-                                break
-                        except SystemExit:
-                            continue
             except (IOError, json.JSONDecodeError):
                 continue
+            func_hash = data['hash']
+            names, comments = {}, {}
+            for lang_dir in func_dir.iterdir():
+                if not lang_dir.is_dir():
+                    continue
+                mapping_hash = mapping_select(func_hash, lang_dir.name)
+                if mapping_hash is None:
+                    continue
+                mapping = mapping_load_json(func_hash, lang_dir.name, mapping_hash)
+                names[lang_dir.name] = mapping.get('name_mapping', {}).get('_bb_v_0')
+                comments[lang_dir.name] = mapping.get('comment', '')
+            functions[func_hash] = {
+                'hash': func_hash,
+                'metadata': data.get('metadata', {}),
+                'names': names,
+                'comments': comments,
+            }
+    return functions
 
-    if not matches:
-        lang_str = f"@{lang}" if lang else ""
+
+def helper_find_heads_by_name(name: str, lang: str = None) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
+    """
+    Find the current versions of the functions called name.
+
+    Matches functions named name in lang (or in any language), then
+    follows their lineage forward, in every language, to the versions no
+    other function names as its parent. A fork that renamed the function
+    still supersedes it. Creation time plays no part, so two agents
+    forking the same function give two current versions.
+
+    Returns:
+        (current version hashes, newest first; the scan from storage_scan_functions)
+    """
+    functions = storage_scan_functions()
+
+    children: Dict[str, List[str]] = {}
+    for function in functions.values():
+        parent = function['metadata'].get('parent')
+        if parent:
+            children.setdefault(parent, []).append(function['hash'])
+
+    if lang:
+        matches = [h for h, f in functions.items() if f['names'].get(lang) == name]
+    else:
+        matches = [h for h, f in functions.items() if name in f['names'].values()]
+
+    heads, seen, stack = set(), set(), list(matches)
+    while stack:
+        func_hash = stack.pop()
+        if func_hash in seen:
+            continue
+        seen.add(func_hash)
+        descendants = children.get(func_hash, [])
+        if descendants:
+            stack.extend(descendants)
+        else:
+            heads.add(func_hash)
+
+    ordered = sorted(heads, key=lambda h: (functions[h]['metadata'].get('created', ''), h), reverse=True)
+    return ordered, functions
+
+
+def helper_describe_function(function: Dict[str, Any], lang: str = None) -> str:
+    """One line describing a function: hash, date, author, languages and comment."""
+    comment = function['comments'].get(lang) or next((c for c in function['comments'].values() if c), '')
+    parts = [function['hash'], function['metadata'].get('created', 'unknown'),
+             helper_format_author(function['metadata']), ', '.join(sorted(function['names']))]
+    if comment:
+        parts.append(comment)
+    return '  '.join(parts)
+
+
+def helper_resolve_name(name: str, lang: str = None) -> Tuple[str, str]:
+    """
+    Resolve a function name to its single current version.
+
+    Exits with an error, instead of guessing, when the name has no
+    current version, several of them, or when the current version lacks
+    the requested language.
+
+    Returns:
+        (hash, lang) where lang is the requested one, or a language the
+        function has (one where it is called name when possible)
+    """
+    lang_str = f"@{lang}" if lang else ""
+    heads, functions = helper_find_heads_by_name(name, lang)
+
+    if not heads:
         print(f"No function found with name: {name}{lang_str}", file=sys.stderr)
         sys.exit(1)
 
-    # A version that was forked is never the latest: this holds even when
-    # parent and fork share the same creation second
-    forked = {m['parent'] for m in matches if m['parent']}
-    matches = [m for m in matches if m['hash'] not in forked] or matches
+    if len(heads) > 1:
+        print(f"Error: '{name}{lang_str}' is ambiguous: it has {len(heads)} current versions. "
+              f"Use a hash:", file=sys.stderr)
+        for func_hash in heads:
+            print(f"  {helper_describe_function(functions[func_hash], lang)}", file=sys.stderr)
+        sys.exit(1)
 
-    # Sort by creation date (newest first) and get the latest
-    matches.sort(key=lambda x: x['created'], reverse=True)
-    latest = matches[0]
+    head = heads[0]
+    names = functions[head]['names']
 
-    return latest['hash'], latest['lang'], latest['created']
+    if lang and lang not in names:
+        # Walk back to the newest ancestor that has the language
+        ancestor = functions[head]['metadata'].get('parent')
+        while ancestor in functions and lang not in functions[ancestor]['names']:
+            ancestor = functions[ancestor]['metadata'].get('parent')
+        source = helper_pick_language(head)
+        print(f"Error: The current version of '{name}', {head}, has no '{lang}' translation.", file=sys.stderr)
+        print(f"Translate it with: bb translate {head}@{source} {lang}", file=sys.stderr)
+        if ancestor in functions:
+            print(f"Or use the last version that has one: {ancestor}@{lang}", file=sys.stderr)
+        sys.exit(1)
+
+    matching = [l for l, n in sorted(names.items()) if n == name]
+    return head, lang or (matching[0] if matching else helper_pick_language(head))
 
 
 def command_latest(name: str, lang: str = None):
     """
-    Find the most recent version of a function by name.
+    List the current versions of a function by name.
+
+    A current version is one that no other function names as its parent.
+    One line per version means the name is unambiguous; several mean
+    forks diverged (or unrelated functions share the name) and commands
+    need a hash.
 
     Args:
         name: Function name to search for
         lang: Optional language code to filter results
     """
-    # Use helper to find latest
-    func_hash, func_lang, created = helper_find_latest_by_name(name, lang)
+    heads, functions = helper_find_heads_by_name(name, lang)
+    lang_str = f"@{lang}" if lang else ""
+    if not heads:
+        print(f"No function found with name: {name}{lang_str}", file=sys.stderr)
+        sys.exit(1)
 
-    # Load function to get docstring for display
-    _, name_mapping, _, docstring = code_load(func_hash, func_lang)
-    func_name = name_mapping.get('_bb_v_0', 'unknown')
-
-    # Count total matches
-    pool_dir = storage_get_pool_directory()
-    total_matches = 0
-    for hash_prefix_dir in pool_dir.iterdir():
-        if not hash_prefix_dir.is_dir():
-            continue
-        for func_dir in hash_prefix_dir.iterdir():
-            if not func_dir.is_dir():
-                continue
-            object_json = func_dir / 'object.json'
-            if not object_json.exists():
-                continue
-            try:
-                for lang_dir in func_dir.iterdir():
-                    if lang_dir.is_dir() and len(lang_dir.name) == 3:
-                        try:
-                            _, nm, _, _ = code_load(hash_prefix_dir.name + func_dir.name, lang_dir.name)
-                            if nm.get('_bb_v_0') == name:
-                                total_matches += 1
-                                break
-                        except:
-                            pass
-            except:
-                pass
-
-    # Display the latest version
-    print(f"Latest version of '{name}':")
-    print("=" * 80)
+    print(f"Current versions of '{name}{lang_str}': {len(heads)}")
     print()
-    print(f"Name: {func_name} ({func_lang})")
-    print(f"Hash: {func_hash}")
-    print(f"Created: {created}")
-    if docstring:
-        print(f"Description: {docstring[:100]}...")
-    print()
-    print(f"View: bb show {func_hash}@{func_lang}")
-
-    if total_matches > 1:
+    for func_hash in heads:
+        function = functions[func_hash]
+        metadata = function['metadata']
+        print(f"Hash: {func_hash}")
+        print(f"Date: {metadata.get('created', 'unknown')}")
+        print(f"Author: {helper_format_author(metadata)}")
+        if metadata.get('parent'):
+            print(f"Parent: {metadata['parent']}")
+        print(f"Languages: {', '.join(sorted(function['names']))}")
         print()
-        print(f"Note: Found {total_matches} version(s) total. Showing most recent.")
+
+    if len(heads) > 1:
+        print("Several current versions: use a hash to pick one.")
 
 
 def command_search(query: List[str]):
@@ -3222,7 +3254,7 @@ def helper_parse_identifier(identifier: str) -> Tuple[str, Optional[str]]:
     Parse a function identifier into (hash, lang).
 
     Accepts: hash, hash@lang, name, name@lang.
-    Resolves names to their latest hash via pool lookup.
+    Resolves names to their single current version (see helper_resolve_name).
 
     Examples:
         helper_parse_identifier("abc123...")        → ("abc123...", None)
@@ -3244,12 +3276,8 @@ def helper_parse_identifier(identifier: str) -> Tuple[str, Optional[str]]:
             sys.exit(1)
         return part, lang
 
-    # It's a name — resolve via helper_find_latest_by_name
-    try:
-        hash_value, found_lang, _ = helper_find_latest_by_name(part, lang)
-        return hash_value, lang or found_lang
-    except SystemExit:
-        sys.exit(1)
+    # It's a name — resolve it to its single current version
+    return helper_resolve_name(part, lang)
 
 
 def helper_resolve_to_hash(identifier: str) -> str:

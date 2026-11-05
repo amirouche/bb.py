@@ -432,20 +432,60 @@ def test_mapping_select(mock_bb_dir):
     assert bb.mapping_select(func_hash, "eng") == min(first, second)
 
 
-def test_find_latest_by_name_prefers_fork_over_parent(mock_bb_dir):
+def _save_version(func_hash, names, parent=None, created='2026-01-01T00:00:00Z'):
+    """Save a function object with one mapping per language: {lang: name}."""
+    metadata = {'created': created}
+    if parent:
+        metadata['parent'] = parent
+    bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), metadata)
+    for lang, name in names.items():
+        bb.mapping_save(func_hash, lang, "", {"_bb_v_0": name}, {}, "")
+
+
+def test_resolve_name_prefers_fork_over_parent(mock_bb_dir):
     """A fork wins over its parent even when both share the same creation time"""
-    parent_hash = "aaaa" + "0" * 60
-    child_hash = "bbbb" + "0" * 60
-    created = '2026-01-01T00:00:00Z'
-    code = normalize_code_for_test("def _bb_v_0(): pass")
-
+    parent_hash, child_hash = "aaaa" + "0" * 60, "bbbb" + "0" * 60
     # Save the fork first so directory order cannot explain the result
-    bb.object_save(child_hash, code, {'created': created, 'parent': parent_hash})
-    bb.object_save(parent_hash, code, {'created': created})
-    for func_hash in (child_hash, parent_hash):
-        bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "")
+    _save_version(child_hash, {"eng": "f"}, parent=parent_hash)
+    _save_version(parent_hash, {"eng": "f"})
+    assert bb.helper_resolve_name("f", "eng") == (child_hash, "eng")
 
-    assert bb.helper_find_latest_by_name("f")[0] == child_hash
+
+def test_resolve_name_refuses_diverged_forks(mock_bb_dir, capsys):
+    """Two forks of one function leave the name ambiguous: no guessing by time"""
+    root, one, two = "aaaa" + "0" * 60, "bbbb" + "0" * 60, "cccc" + "0" * 60
+    _save_version(root, {"eng": "f"})
+    _save_version(one, {"eng": "f"}, parent=root, created='2026-01-02T00:00:00Z')
+    _save_version(two, {"eng": "f"}, parent=root, created='2026-01-03T00:00:00Z')
+    with pytest.raises(SystemExit):
+        bb.helper_resolve_name("f", "eng")
+    err = capsys.readouterr().err
+    assert "ambiguous" in err and one in err and two in err
+
+
+def test_resolve_name_follows_lineage_across_languages(mock_bb_dir, capsys):
+    """A French name finds the current version even if it was forked in English only"""
+    root, fork = "aaaa" + "0" * 60, "bbbb" + "0" * 60
+    _save_version(root, {"eng": "double", "fra": "doubler"})
+    _save_version(fork, {"eng": "double"}, parent=root)
+
+    # The fork has no French mapping: say so instead of returning the old version
+    with pytest.raises(SystemExit):
+        bb.helper_resolve_name("doubler", "fra")
+    err = capsys.readouterr().err
+    assert f"bb translate {fork}@eng fra" in err
+    assert f"{root}@fra" in err
+
+    # Without a language, the French name still leads to the fork
+    assert bb.helper_resolve_name("doubler") == (fork, "eng")
+
+
+def test_resolve_name_rename_supersedes(mock_bb_dir):
+    """A fork that renamed the function is the current version of the old name"""
+    root, renamed = "aaaa" + "0" * 60, "bbbb" + "0" * 60
+    _save_version(root, {"eng": "old_name"})
+    _save_version(renamed, {"eng": "new_name"}, parent=root)
+    assert bb.helper_resolve_name("old_name", "eng") == (renamed, "eng")
 
 
 # ============================================================================

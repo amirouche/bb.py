@@ -14,7 +14,7 @@ This transcript tells the story of a developer discovering Beyond Babel's pool n
 The story demonstrates:
 - Setting user preferences with `bb whoami`
 - Finding functions by content with `bb search`
-- Finding the latest version of a function by name with `bb latest`
+- Finding the current versions of a function by name with `bb latest`
 - Finding reverse dependencies with `bb caller`
 
 These commands help answer questions like "Who am I?", "What's in this pool?", "Where's the latest version of X?", and "What depends on Y?"
@@ -175,7 +175,7 @@ All three functions contain both "word" (in various docstrings) and "count" some
 
 # Chapter 4: Finding the Latest Version
 
-As projects evolve, you might have multiple versions of a function with the same name. The `bb latest` command finds the most recent version by modification time.
+As projects evolve, you might have multiple versions of a function with the same name. The `bb latest` command lists the current versions: those no other function was forked from.
 
 ### Step 14: Find latest "tokenize"
 ```bash
