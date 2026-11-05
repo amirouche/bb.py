@@ -429,3 +429,19 @@ def test_mapping_select(mock_bb_dir):
     first = bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "one")
     second = bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "two")
     assert bb.mapping_select(func_hash, "eng") == min(first, second)
+
+
+def test_find_latest_by_name_prefers_fork_over_parent(mock_bb_dir):
+    """A fork wins over its parent even when both share the same creation time"""
+    parent_hash = "aaaa" + "0" * 60
+    child_hash = "bbbb" + "0" * 60
+    created = '2026-01-01T00:00:00Z'
+    code = normalize_code_for_test("def _bb_v_0(): pass")
+
+    # Save the fork first so directory order cannot explain the result
+    bb.object_save(child_hash, code, {'created': created, 'parent': parent_hash})
+    bb.object_save(parent_hash, code, {'created': created})
+    for func_hash in (child_hash, parent_hash):
+        bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "")
+
+    assert bb.helper_find_latest_by_name("f")[0] == child_hash

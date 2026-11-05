@@ -362,9 +362,14 @@ Hash: 26cffe126df6c7b35ab70a72c9fb6e743564ff66c30482d74e8fc27904bd3cc2
 Parent: ddda76213f839382c1f0df754b73d47214cf05859da05a14fe690eff32c24015
 ```
 
-### Step 8: Both versions carry the same checks
+### Step 8: The name now points to the rewrite, which carries the same checks
+A version that was forked is never the latest, so `compute_pi@eng`
+resolves to the rewrite.
+
 ```bash
-$ bb check 26cffe126df6c7b35ab70a72c9fb6e743564ff66c30482d74e8fc27904bd3cc2@eng
+$ bb latest compute_pi eng | grep Hash
+Hash: 26cffe126df6c7b35ab70a72c9fb6e743564ff66c30482d74e8fc27904bd3cc2
+$ bb check compute_pi@eng
 PASS check_pi_n1
 PASS check_pi_n2
 PASS check_pi_n3

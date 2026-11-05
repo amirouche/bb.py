@@ -2132,6 +2132,7 @@ def helper_find_latest_by_name(name: str, lang: str = None) -> Tuple[str, str, s
                                     'name': func_name,
                                     'lang': func_lang,
                                     'created': created,
+                                    'parent': metadata.get('parent'),
                                     'docstring': docstring[:100]
                                 })
                                 break
@@ -2144,6 +2145,11 @@ def helper_find_latest_by_name(name: str, lang: str = None) -> Tuple[str, str, s
         lang_str = f"@{lang}" if lang else ""
         print(f"No function found with name: {name}{lang_str}", file=sys.stderr)
         sys.exit(1)
+
+    # A version that was forked is never the latest: this holds even when
+    # parent and fork share the same creation second
+    forked = {m['parent'] for m in matches if m['parent']}
+    matches = [m for m in matches if m['hash'] not in forked] or matches
 
     # Sort by creation date (newest first) and get the latest
     matches.sort(key=lambda x: x['created'], reverse=True)
