@@ -50,7 +50,7 @@ def test_a_new_function_needs_its_language_and_the_template_alone_saves_nothing(
     assert 'No function found' in bb(env, 'show', 'slugify@eng').stderr
 
 
-def test_editing_a_function_importing_unreviewed_code_needs_the_flag(tmp_path):
+def test_saving_runs_nothing_without_checks_and_checks_need_reviewed_imports(tmp_path):
     draft = tmp_path / 'draft.md'
     read = editor_env(tmp_path, f'sh -c \'cp "$0" {draft}\'')
     write = editor_env(tmp_path, f'cp {draft}')
@@ -60,12 +60,20 @@ def test_editing_a_function_importing_unreviewed_code_needs_the_flag(tmp_path):
         'def double(n):\n    """Twice n."""\n    return 2 * n'))
     helper = bb(write, 'edit', 'double@eng', '-m', 'new').stdout.split('Hash:')[1].split()[0]
 
+    # No checks: saved without running it, though double was never reviewed
     bb(read, 'edit', 'quadruple@eng')
     draft.write_text(draft.read_text().replace(
         'def quadruple():\n    """Say what quadruple does."""\n    raise NotImplementedError',
         f'from bb.pool import object_{helper} as double\n\n\ndef quadruple(n):\n    """Four times n."""\n'
         '    return double(double(n))'))
-    refused = bb(write, 'edit', 'quadruple@eng', '-m', 'new')
+    saved = bb(write, 'edit', 'quadruple@eng', '-m', 'new')
+    assert saved.returncode == 0 and 'Hash:' in saved.stdout and 'reviewed' not in saved.stderr
+
+    # A check runs the code: it needs double reviewed, or the flag
+    bb(read, 'edit', 'quadruple@eng')
+    draft.write_text(draft.read_text().rstrip('\n') + '\n\n### check_quadruple\n\n```python def\n'
+                     'def check_quadruple(quadruple):\n    """Four times one."""\n    return quadruple(1) == 4\n```\n')
+    refused = bb(write, 'edit', 'quadruple@eng', '-m', 'with a check')
     assert refused.returncode == 1 and 'not reviewed' in refused.stderr
-    allowed = bb(write, 'edit', 'quadruple@eng', '-m', 'new', '--dangerously-unreviewed')
-    assert allowed.returncode == 0 and 'nobody reviewed' in allowed.stderr and 'Hash:' in allowed.stdout
+    allowed = bb(write, 'edit', 'quadruple@eng', '-m', 'with a check', '--dangerously-unreviewed')
+    assert allowed.returncode == 0 and 'nobody reviewed' in allowed.stderr and 'Parent:' in allowed.stdout

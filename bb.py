@@ -4417,6 +4417,11 @@ def edit_prepare(text: str, lang: str, unreviewed: bool = False) -> Dict[str, An
     checks = [(check, code_prepare_source(check['source'], lang, where=f"check '{check['title']}'"))
               for check in parsed['checks']]
 
+    # Saving is not running: only checks run the code. Without them nothing
+    # is executed, so nothing it imports needs to have been reviewed.
+    if not checks:
+        return {'implementation': (implementation, prepared_implementation), 'checks': [], 'results': []}
+
     # The sections were in front of you; what they import from the pool was
     # not. Refuse to run imports you have not approved with bb review.
     imported = {dep for _, p in [(implementation, prepared_implementation)] + checks
@@ -4510,9 +4515,11 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False)
     takes the implementation as its only argument and returns True when it
     passes.
 
-    Saving requires the file to parse and every check to pass. Checks run
-    the code, so pool functions it imports must be reviewed first, unless
-    --dangerously-unreviewed (for experiments) runs them anyway. The new
+    Saving requires the file to parse and every check to pass. Only checks
+    run the code: a function without checks is saved without running it,
+    whatever it imports. With checks, the pool functions it imports must be
+    reviewed first, unless --dangerously-unreviewed (for experiments) runs
+    them anyway. The new
     function records the edited one as its parent and lists its checks;
     changed checks record their own parents. The comment (asked for when
     --comment is not given) is stored in the new mappings.

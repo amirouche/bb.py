@@ -1184,16 +1184,20 @@ def test_code_load_normalized_runs_the_hashed_code(mock_bb_dir):
     assert bb.code_load_normalized(func).__name__ == '_bb_v_0'
 
 
-def test_edit_refuses_unreviewed_imports(mock_bb_dir):
-    """bb edit does not run pool functions you have not reviewed"""
+def test_edit_runs_nothing_without_checks_and_checks_need_reviewed_imports(mock_bb_dir):
+    """bb edit runs nothing without checks; with checks, not pool functions you have not reviewed"""
     helper = _pool_add("def six():\n    return 6\n")
-    text = (f"## Implementation\n\n```python def\nfrom bb.pool import object_{helper} as six\n\n"
-            f"def twelve():\n    return six() * 2\n```\n")
+    implementation = (f"## Implementation\n\n```python def\nfrom bb.pool import object_{helper} as six\n\n"
+                      f"def twelve():\n    return six() * 2\n```\n")
+    assert bb.edit_prepare(implementation, 'eng')['results'] == []  # saved without running
+
+    with_check = implementation + ("\n## Checks\n\n### check_twelve\n\n```python def\n"
+                                   "def check_twelve(twelve):\n    return twelve() == 12\n```\n")
     with pytest.raises(ValueError, match=f"bb review {helper}"):
-        bb.edit_prepare(text, 'eng')
+        bb.edit_prepare(with_check, 'eng')
 
     bb.review_save_state({helper})
-    assert bb.edit_prepare(text, 'eng')['results'] == []
+    assert [status for status, _, _ in bb.edit_prepare(with_check, 'eng')['results']] == ['PASS']
 
 
 def test_review_order_puts_dependencies_and_checks_first(mock_bb_dir):
