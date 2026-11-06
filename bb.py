@@ -153,6 +153,14 @@ Writing functions for the pool:
           return parse('12') == 1200 and parse('12.5') == 1250 and (parse('12,50') == 1250) and (parse(' 1 200.00 ') == 120000)
       ```
 
+- `bb scratchpad a@lang b@lang FILE` does the same for several functions
+  in one file: the sections are edit files one after another, each from
+  its own `# name` heading. When FILE is missing bb writes them all
+  (`--tree name@lang` adds a function and everything it uses); when it
+  exists, bb saves every section that changed, functions before the
+  sections that use them, and stops at the first that cannot be saved.
+  Add a function by adding a `# new_name` section. Edit related functions
+  together this way rather than one draft each.
 - Context: `bb tree name@lang` shows what a function uses, down to the
   leaves, with each one's docstring, and marks what is `[out of date]`,
   `[behind]`, `[pinned]` or `[not yet translated ...]`; `bb caller
