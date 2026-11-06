@@ -22,7 +22,7 @@ Functions with identical logic but different naming (e.g., English vs French var
 3. **Bidirectional mapping**: Original names preserved for reconstruction in target language
 4. **Content-addressed storage**: Functions stored by hash in `$HOME/.local/bb/pool/xx/yy.../object.json` (configurable via `BB_DIRECTORY` environment variable)
 5. **Single-file architecture**: All code resides in `bb.py` - no modularization into separate packages. This keeps the tool simple, self-contained, and easy to distribute as a single script.
-6. **Pool references by hash**: stored code refers to a pool function as `bb.ref("<hash>")` where it is used (normalization 4). Authors import by name (`from bb.pool import func`), resolved to a hash when saving; older objects use `from bb.pool import object_<hash>` and keep loading
+6. **Pool references by hash**: stored code refers to a pool function as `bb.ref("<hash>")` where it is used (normalization 4). Authors import by name (`from bb.pool import func`), resolved to a hash when saving, or pin a version with `import bb` and `func = bb.ref("<hash>")`. Writing `from bb.pool import object_<hash>` is refused; objects stored that way keep loading
 
 ### Storage Location Configuration
 
@@ -148,11 +148,11 @@ Understanding how imports are processed is critical to the normalization system.
 - **Usage**: Names like `math`, `Counter`, `np` are **never renamed** to `_bb_v_X`
 
 #### 2. BB Imports (Pool Functions)
-**Examples**: `from bb.pool import helper` (by name), `helper = bb.ref("<hash>")` (an exact version)
+**Examples**: `from bb.pool import helper` (by name), `import bb` with `helper = bb.ref("<hash>")` (an exact version). `from bb.pool import object_<hash>` is no longer accepted.
 
 **Before storage (normalization)**:
 ```python
-from bb.pool import helper            # resolved when saving to: object_<hash> as helper
+from bb.pool import helper            # resolved when saving to: import bb; helper = bb.ref("<hash>")
 ```
 ↓ becomes ↓
 ```python
@@ -164,7 +164,7 @@ def _bb_v_0(_bb_v_1):
 - `bb` is reserved: never renamed, and only `bb.ref("<64 hex>")` is allowed
 
 **From storage (denormalization)**:
-- Each `bb.ref('<hash>')` becomes its alias, bound once after the imports: `helper = bb.ref('<hash>')`
+- Each `bb.ref('<hash>')` becomes its alias, bound once after the imports (`import bb`, then `helper = bb.ref('<hash>')`)
 - `bb show` and `bb edit` turn that binding into `from bb.pool import helper` when `helper@lang` has exactly that hash as its one current version
 
 Objects stored before normalization 4 hold `from bb.pool import object_<hash>` and `object_<hash>._bb_v_0(...)`; they load, display and refactor as before.

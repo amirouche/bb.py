@@ -82,8 +82,9 @@ def markdown_to_html(text):
 
 ### Post Renderer `render_post_eng.py`
 ```python
-from bb.pool import object_25f5b25a43080344597fea475adc88ecb0fc56e05b843a8668a1eb1822219df9 as parse_frontmatter
-from bb.pool import object_1085d7f5f9104a833c0ec8f9c095a836712e257636da67dbff473bc0bed64ea7 as markdown_to_html
+import bb
+parse_frontmatter = bb.ref("25f5b25a43080344597fea475adc88ecb0fc56e05b843a8668a1eb1822219df9")
+markdown_to_html = bb.ref("1085d7f5f9104a833c0ec8f9c095a836712e257636da67dbff473bc0bed64ea7")
 
 
 def render_post(file_content, site_title):
@@ -107,9 +108,10 @@ def render_post(file_content, site_title):
 ### Blog Builder `build_blog_eng.py`
 ```python
 import os
-from bb.pool import object_25f5b25a43080344597fea475adc88ecb0fc56e05b843a8668a1eb1822219df9 as parse_frontmatter
-from bb.pool import object_1085d7f5f9104a833c0ec8f9c095a836712e257636da67dbff473bc0bed64ea7 as markdown_to_html
-from bb.pool import object_b093d0f0140640938cc41216c2c113cd87c75b0580330fae1ca30885acb7b4bf as render_post
+import bb
+parse_frontmatter = bb.ref("25f5b25a43080344597fea475adc88ecb0fc56e05b843a8668a1eb1822219df9")
+markdown_to_html = bb.ref("1085d7f5f9104a833c0ec8f9c095a836712e257636da67dbff473bc0bed64ea7")
+render_post = bb.ref("b093d0f0140640938cc41216c2c113cd87c75b0580330fae1ca30885acb7b4bf")
 
 
 def build_blog(source_dir, output_dir, site_title, site_url):
@@ -284,11 +286,12 @@ def render_tag_page(tag, posts, site_title):
 ### Updated Blog Builder `build_blog_with_tags_eng.py`
 ```python
 import os
-from bb.pool import object_25f5b25a43080344597fea475adc88ecb0fc56e05b843a8668a1eb1822219df9 as parse_frontmatter
-from bb.pool import object_1085d7f5f9104a833c0ec8f9c095a836712e257636da67dbff473bc0bed64ea7 as markdown_to_html
-from bb.pool import object_b093d0f0140640938cc41216c2c113cd87c75b0580330fae1ca30885acb7b4bf as render_post
-from bb.pool import object_7be41b434e25f5904709f0c6c3b907bc0768c45259c3de49928346e6debfdc99 as collect_tags
-from bb.pool import object_da4b01118cdbdc7bab7dabf52630f6db1ca25a259e7457e2fd7daeae6e269e40 as render_tag_page
+import bb
+parse_frontmatter = bb.ref("25f5b25a43080344597fea475adc88ecb0fc56e05b843a8668a1eb1822219df9")
+markdown_to_html = bb.ref("1085d7f5f9104a833c0ec8f9c095a836712e257636da67dbff473bc0bed64ea7")
+render_post = bb.ref("b093d0f0140640938cc41216c2c113cd87c75b0580330fae1ca30885acb7b4bf")
+collect_tags = bb.ref("7be41b434e25f5904709f0c6c3b907bc0768c45259c3de49928346e6debfdc99")
+render_tag_page = bb.ref("da4b01118cdbdc7bab7dabf52630f6db1ca25a259e7457e2fd7daeae6e269e40")
 
 
 def build_blog(source_dir, output_dir, site_title, site_url):
@@ -504,8 +507,9 @@ def markdown_vers_html(texte):
 
 ### Post Renderer `render_post_fra.py`
 ```python
-from bb.pool import object_25f5b25a43080344597fea475adc88ecb0fc56e05b843a8668a1eb1822219df9 as analyser_entete
-from bb.pool import object_1085d7f5f9104a833c0ec8f9c095a836712e257636da67dbff473bc0bed64ea7 as markdown_vers_html
+import bb
+analyser_entete = bb.ref("25f5b25a43080344597fea475adc88ecb0fc56e05b843a8668a1eb1822219df9")
+markdown_vers_html = bb.ref("1085d7f5f9104a833c0ec8f9c095a836712e257636da67dbff473bc0bed64ea7")
 
 
 def generer_page_article(contenu_fichier, titre_site):
@@ -564,11 +568,12 @@ def generer_page_etiquette(etiquette, articles, titre_site):
 ### Updated Blog Builder `build_blog_with_tags_fra.py`
 ```python
 import os
-from bb.pool import object_25f5b25a43080344597fea475adc88ecb0fc56e05b843a8668a1eb1822219df9 as analyser_entete
-from bb.pool import object_1085d7f5f9104a833c0ec8f9c095a836712e257636da67dbff473bc0bed64ea7 as markdown_vers_html
-from bb.pool import object_b093d0f0140640938cc41216c2c113cd87c75b0580330fae1ca30885acb7b4bf as generer_page_article
-from bb.pool import object_7be41b434e25f5904709f0c6c3b907bc0768c45259c3de49928346e6debfdc99 as regrouper_etiquettes
-from bb.pool import object_da4b01118cdbdc7bab7dabf52630f6db1ca25a259e7457e2fd7daeae6e269e40 as generer_page_etiquette
+import bb
+analyser_entete = bb.ref("25f5b25a43080344597fea475adc88ecb0fc56e05b843a8668a1eb1822219df9")
+markdown_vers_html = bb.ref("1085d7f5f9104a833c0ec8f9c095a836712e257636da67dbff473bc0bed64ea7")
+generer_page_article = bb.ref("b093d0f0140640938cc41216c2c113cd87c75b0580330fae1ca30885acb7b4bf")
+regrouper_etiquettes = bb.ref("7be41b434e25f5904709f0c6c3b907bc0768c45259c3de49928346e6debfdc99")
+generer_page_etiquette = bb.ref("da4b01118cdbdc7bab7dabf52630f6db1ca25a259e7457e2fd7daeae6e269e40")
 
 
 def construire_blog(repertoire_source, repertoire_sortie, titre_site, url_site):

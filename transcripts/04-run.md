@@ -60,7 +60,8 @@ entry-point function prints the result.
 
 ### Print Pi `print_pi_eng.py`
 ```python
-from bb.pool import object_ddda76213f839382c1f0df754b73d47214cf05859da05a14fe690eff32c24015 as compute_pi
+import bb
+compute_pi = bb.ref("ddda76213f839382c1f0df754b73d47214cf05859da05a14fe690eff32c24015")
 
 
 def print_pi(n):

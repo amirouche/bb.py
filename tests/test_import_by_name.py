@@ -73,7 +73,7 @@ def test_two_unrelated_functions_with_one_name_are_refused_with_both_listed(tmp_
                         '    return helper(n)\n')
     assert refused.returncode == 1
     assert '2 current versions' in refused.stderr and one in refused.stderr and two in refused.stderr
-    chosen = pool.edit('user', f'from bb.pool import object_{two} as helper\n\n\ndef user(n):\n    """Use helper."""\n'
+    chosen = pool.edit('user', f'import bb\nhelper = bb.ref("{two}")\n\n\ndef user(n):\n    """Use helper."""\n'
                        '    return helper(n)\n')
     assert chosen.returncode == 0 and pool.run(hash_of(chosen), 4) == '40'
 

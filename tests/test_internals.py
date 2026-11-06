@@ -411,58 +411,6 @@ def foo(x):
     assert "x" in forward
 
 
-# ============================================================================
-# Tests for imports_rewrite_bb function
-# ============================================================================
-
-def test_rewrite_bb_imports_with_alias():
-    """Test rewriting bb import with alias"""
-    code = "from bb.pool import abc123 as helper"
-    tree = ast.parse(code)
-    imports = tree.body
-
-    new_imports, alias_mapping = bb.code_rewrite_bb_imports(imports)
-
-    # Should remove alias but keep bb.pool module name
-    result = ast.unparse(ast.Module(body=new_imports, type_ignores=[]))
-    assert "from bb.pool import abc123" in result
-    assert "as helper" not in result
-
-    # Should track the alias
-    assert alias_mapping["abc123"] == "helper"
-
-
-def test_rewrite_bb_imports_without_alias():
-    """Test rewriting bb import without alias"""
-    code = "from bb.pool import abc123"
-    tree = ast.parse(code)
-    imports = tree.body
-
-    new_imports, alias_mapping = bb.code_rewrite_bb_imports(imports)
-
-    result = ast.unparse(ast.Module(body=new_imports, type_ignores=[]))
-    assert "from bb.pool import abc123" in result
-    assert len(alias_mapping) == 0
-
-
-def test_rewrite_bb_imports_non_bb_imports_unchanged():
-    """Test that non-bb imports remain unchanged"""
-    code = "import math\nfrom collections import Counter"
-    tree = ast.parse(code)
-    imports = tree.body
-
-    new_imports, alias_mapping = bb.code_rewrite_bb_imports(imports)
-
-    result = ast.unparse(ast.Module(body=new_imports, type_ignores=[]))
-    assert "import math" in result
-    assert "from collections import Counter" in result
-    assert len(alias_mapping) == 0
-
-
-# ============================================================================
-# Tests for calls_replace_bb function
-# ============================================================================
-
 def test_replace_bb_calls_aliased_call():
     """Test replacing aliased bb function calls"""
     code = """
@@ -625,7 +573,8 @@ def test_normalize_ast_with_bb_import():
     """Test normalizing function with bb import"""
     helper_hash = "abc123" + "0" * 58
     code = f"""
-from bb.pool import object_{helper_hash} as helper
+import bb
+helper = bb.ref('{helper_hash}')
 
 def foo(x):
     \"\"\"Process with helper\"\"\"
@@ -648,12 +597,18 @@ def test_normalize_names_a_pool_function_once_in_any_form():
     """An import, a bb.ref binding and a bb.ref call of the same function hash alike"""
     helper_hash = "abc123" + "0" * 58
     forms = [
-        f"from bb.pool import object_{helper_hash} as helper\n\ndef foo(x):\n    return helper(x)\n",
+        f"import bb\nhelper = bb.ref('{helper_hash}')\n\ndef foo(x):\n    return helper(x)\n",
         f"helper = bb.ref('{helper_hash}')\n\ndef foo(x):\n    return helper(x)\n",
         f"import bb\n\ndef foo(x):\n    return bb.ref('{helper_hash}')(x)\n",
     ]
     hashes = {bb.code_compute_function_hash(bb.code_normalize(ast.parse(f), "eng")[1]) for f in forms}
     assert len(hashes) == 1
+
+
+def test_normalize_refuses_imports_by_hash():
+    """from bb.pool import object_<hash> is gone: bb.ref names an exact version"""
+    with pytest.raises(ValueError, match="import bb"):
+        bb.code_normalize(ast.parse(f"from bb.pool import object_{'a' * 64} as h\n\ndef f():\n    return h()\n"), "eng")
 
 
 @pytest.mark.parametrize("code, message", [
@@ -1188,7 +1143,7 @@ def test_checks_do_not_run_until_everything_is_approved(mock_bb_dir, tmp_path):
 def test_review_closure_includes_check_dependencies(mock_bb_dir):
     """A check's own imports must be approved too"""
     helper = _pool_add("def six():\n    return 6\n")
-    check = _pool_add(f"from bb.pool import object_{helper} as six\n\n"
+    check = _pool_add(f"import bb\nsix = bb.ref('{helper}')\n\n"
                       f"def check_double(f):\n    return f(3) == six()\n")
     func = _pool_add("def double(x):\n    return x * 2\n", checks=[check])
     assert set(bb.review_closure(func)) == {func, helper, check}
@@ -1207,7 +1162,7 @@ def test_code_load_normalized_runs_the_hashed_code(mock_bb_dir):
 def test_edit_runs_nothing_without_checks_and_checks_need_reviewed_imports(mock_bb_dir):
     """bb edit runs nothing without checks; with checks, not pool functions you have not reviewed"""
     helper = _pool_add("def six():\n    return 6\n")
-    implementation = (f"## Implementation\n\n```python def\nfrom bb.pool import object_{helper} as six\n\n"
+    implementation = (f"## Implementation\n\n```python def\nimport bb\nsix = bb.ref('{helper}')\n\n"
                       f"def twelve():\n    return six() * 2\n```\n")
     assert bb.edit_prepare(implementation, 'eng')['results'] == []  # saved without running
 
@@ -1223,10 +1178,10 @@ def test_edit_runs_nothing_without_checks_and_checks_need_reviewed_imports(mock_
 def test_review_order_puts_dependencies_and_checks_first(mock_bb_dir):
     """Levels follow the dependency order; a function's checks come before it"""
     helper = _pool_add("def six():\n    return 6\n")
-    check = _pool_add(f"from bb.pool import object_{helper} as six\n\n"
+    check = _pool_add(f"import bb\nsix = bb.ref('{helper}')\n\n"
                       f"def check_double(f):\n    return f(3) == six()\n")
     leaf = _pool_add("def two():\n    return 2\n")
-    func = _pool_add(f"from bb.pool import object_{leaf} as two\n\n"
+    func = _pool_add(f"import bb\ntwo = bb.ref('{leaf}')\n\n"
                      f"def double(x):\n    return x * two()\n", checks=[check])
 
     levels = bb.review_order(func)
@@ -1238,7 +1193,7 @@ def test_review_order_puts_dependencies_and_checks_first(mock_bb_dir):
 def test_review_require_refuses_unreviewed_code(mock_bb_dir, capsys):
     """bb run and bb compile stop unless the function and its dependencies are approved"""
     leaf = _pool_add("def two():\n    return 2\n")
-    func = _pool_add(f"from bb.pool import object_{leaf} as two\n\ndef four():\n    return two() * 2\n")
+    func = _pool_add(f"import bb\ntwo = bb.ref('{leaf}')\n\ndef four():\n    return two() * 2\n")
 
     bb.review_save_state({func})
     with pytest.raises(SystemExit):

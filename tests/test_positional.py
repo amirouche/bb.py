@@ -19,8 +19,8 @@ def refused(source):
 
 
 @pytest.mark.parametrize('source, shown', [
-    (f'from bb.pool import object_{HASH} as parse\n\ndef f(text):\n    return parse(text, height=3)\n',
-     'line 4: parse(text, height=3): keyword arguments (height=) to parse'),
+    (f'import bb\nparse = bb.ref("{HASH}")\n\ndef f(text):\n    return parse(text, height=3)\n',
+     'line 5: parse(text, height=3): keyword arguments (height=) to parse'),
     ('def f(n, step=1):\n    return f(n - 1, step=2) if n else 0\n', 'keyword arguments (step=) to f'),
     ('def f(text):\n    def inner(value, height=1):\n        return value * height\n    return inner(text, height=3)\n',
      'line 4: inner(text, height=3)'),

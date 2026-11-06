@@ -40,7 +40,8 @@ def format_name(first, last):
 
 ### Greeting `greet_eng.py`
 ```python
-from bb.pool import object_4e66d6c3a6a9c634af0611c545711a35a02e924498f413d78251d95dd63d8fd1 as format_name
+import bb
+format_name = bb.ref("4e66d6c3a6a9c634af0611c545711a35a02e924498f413d78251d95dd63d8fd1")
 
 
 def greet(first, last):
@@ -51,7 +52,8 @@ def greet(first, last):
 
 ### Farewell `farewell_eng.py`
 ```python
-from bb.pool import object_4e66d6c3a6a9c634af0611c545711a35a02e924498f413d78251d95dd63d8fd1 as format_name
+import bb
+format_name = bb.ref("4e66d6c3a6a9c634af0611c545711a35a02e924498f413d78251d95dd63d8fd1")
 
 
 def farewell(first, last):
@@ -62,8 +64,9 @@ def farewell(first, last):
 
 ### Ceremony `ceremony_eng.py`
 ```python
-from bb.pool import object_3bfa21c578f56a0926eb4ad65589f200094a1a054987dc34fe79a8f3aa1995ac as greet
-from bb.pool import object_d819752004c2f8ffebe5b06fb19a39aa3f88122887a3dfa1785d9d4048713bbe as farewell
+import bb
+greet = bb.ref("3bfa21c578f56a0926eb4ad65589f200094a1a054987dc34fe79a8f3aa1995ac")
+farewell = bb.ref("d819752004c2f8ffebe5b06fb19a39aa3f88122887a3dfa1785d9d4048713bbe")
 
 
 def ceremony(first, last):

@@ -57,7 +57,8 @@ def obtenir_pi():
 
 ### Addition Operation `add_numbers_eng.py`
 ```python
-from bb.pool import object_110c5390f421d6505106542ade387e1bfd34618b4cc9eba70d8ac07d32f8c039 as get_pi
+import bb
+get_pi = bb.ref("110c5390f421d6505106542ade387e1bfd34618b4cc9eba70d8ac07d32f8c039")
 
 def add_numbers(a, b):
     """Add two numbers and a constant pi."""
@@ -66,7 +67,8 @@ def add_numbers(a, b):
 
 ### Multiplication Operation `multiply_numbers_eng.py`
 ```python
-from bb.pool import object_110c5390f421d6505106542ade387e1bfd34618b4cc9eba70d8ac07d32f8c039 as get_pi
+import bb
+get_pi = bb.ref("110c5390f421d6505106542ade387e1bfd34618b4cc9eba70d8ac07d32f8c039")
 
 def multiply_numbers(a, b):
     """Multiply two numbers by pi."""
@@ -75,8 +77,9 @@ def multiply_numbers(a, b):
 
 ### Calculator Main `calculator_main_eng.py`
 ```python
-from bb.pool import object_787f49c0f1dda4e9b962de4e79a2353cb134a2f0285e74159f94d52b3d8f17ae as add_numbers
-from bb.pool import object_0b33195070de0a53ecc52f3f66084b23b2829a9eb78fc8ad54bc96c56733db24 as multiply_numbers
+import bb
+add_numbers = bb.ref("787f49c0f1dda4e9b962de4e79a2353cb134a2f0285e74159f94d52b3d8f17ae")
+multiply_numbers = bb.ref("0b33195070de0a53ecc52f3f66084b23b2829a9eb78fc8ad54bc96c56733db24")
 
 def calculator_main(x, y):
     """Perform calculations using add and multiply."""

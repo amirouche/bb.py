@@ -74,7 +74,8 @@ def تشفير_لغة_النار(نص):
 
 ### Fire Language Printer `afficher_fra.py`
 ```python
-from bb.pool import object_5fe367ff2488ad9083034991a28db92f9be781f409adc395844a36e930bf3589 as encoder_langue_du_feu
+import bb
+encoder_langue_du_feu = bb.ref("5fe367ff2488ad9083034991a28db92f9be781f409adc395844a36e930bf3589")
 
 
 def afficher_langue_du_feu(texte):
@@ -84,7 +85,8 @@ def afficher_langue_du_feu(texte):
 
 ### Fire Language Printer `afficher_jpn.py`
 ```python
-from bb.pool import object_5fe367ff2488ad9083034991a28db92f9be781f409adc395844a36e930bf3589 as 火の言葉に変換
+import bb
+火の言葉に変換 = bb.ref("5fe367ff2488ad9083034991a28db92f9be781f409adc395844a36e930bf3589")
 
 
 def 火の言葉を表示(文章):
@@ -94,7 +96,8 @@ def 火の言葉を表示(文章):
 
 ### Fire Language Printer `afficher_ara.py`
 ```python
-from bb.pool import object_5fe367ff2488ad9083034991a28db92f9be781f409adc395844a36e930bf3589 as تشفير_لغة_النار
+import bb
+تشفير_لغة_النار = bb.ref("5fe367ff2488ad9083034991a28db92f9be781f409adc395844a36e930bf3589")
 
 
 def عرض_لغة_النار(نص):

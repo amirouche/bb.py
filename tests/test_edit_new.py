@@ -64,7 +64,7 @@ def test_saving_runs_nothing_without_checks_and_checks_need_reviewed_imports(tmp
     bb(read, 'edit', 'quadruple@eng')
     draft.write_text(draft.read_text().replace(
         'def quadruple():\n    """Say what quadruple does."""\n    raise NotImplementedError',
-        f'from bb.pool import object_{helper} as double\n\n\ndef quadruple(n):\n    """Four times n."""\n'
+        f'import bb\ndouble = bb.ref("{helper}")\n\n\ndef quadruple(n):\n    """Four times n."""\n'
         '    return double(double(n))'))
     saved = bb(write, 'edit', 'quadruple@eng', '-m', 'new')
     assert saved.returncode == 0 and 'Hash:' in saved.stdout and 'reviewed' not in saved.stderr

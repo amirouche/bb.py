@@ -30,7 +30,7 @@ def test_version_3_objects_still_load_and_refactor(mock_bb_dir):
 
 def test_refs_are_loaded_and_swapped(mock_bb_dir):
     leaf = _pool_add("def leaf(n):\n    return 2 * n\n")
-    caller = _pool_add(f"from bb.pool import object_{leaf} as leaf\n\ndef caller(n):\n    return leaf(n) + 1\n")
+    caller = _pool_add(f"import bb\nleaf = bb.ref('{leaf}')\n\ndef caller(n):\n    return leaf(n) + 1\n")
     code = bb.object_load(caller)['normalized_code']
     assert f"bb.ref('{leaf}')" in code and 'bb.pool' not in code
     assert bb.code_load_normalized(caller)(3) == 7

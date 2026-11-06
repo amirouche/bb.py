@@ -55,7 +55,8 @@ def lancer_des(nombre_des, faces=6):
 
 ### High-Low Game `game_eng.py`
 ```python
-from bb.pool import object_32bf70674802add86d266677a6b3d2322e8340d4bb9a77ded6272387303568e7 as roll_dice
+import bb
+roll_dice = bb.ref("32bf70674802add86d266677a6b3d2322e8340d4bb9a77ded6272387303568e7")
 
 def play_high_low(bet):
     """Play a high-low dice game. Returns True if you win."""
@@ -68,7 +69,8 @@ def play_high_low(bet):
 
 ### High-Low Game `game_fra.py`
 ```python
-from bb.pool import object_32bf70674802add86d266677a6b3d2322e8340d4bb9a77ded6272387303568e7 as lancer_des
+import bb
+lancer_des = bb.ref("32bf70674802add86d266677a6b3d2322e8340d4bb9a77ded6272387303568e7")
 
 def jouer_haut_bas(pari):
     """Joue au jeu de dés haut-bas. Retourne True si vous gagnez."""

@@ -29,7 +29,9 @@ Writing functions for the pool:
 - Use another pool function by importing it by name, at the top of the
   file (or name an exact version by its hash):
 
-      from bb.pool import parse_amount
+      from bb.pool import parse_amount        # by name
+
+      import bb                               # an exact version, by hash
       parse_amount = bb.ref("<hash>")
 
   A name is resolved when you save (bb add, bb edit), in the language you
@@ -107,6 +109,8 @@ BB_IMPORT_PREFIX = "object_"
 NORMALIZATION_VERSION = 4
 
 _HASH_RE = re.compile(r'^[0-9a-f]{64}$')
+BB_HASH_IMPORT_HINT = ("importing by hash (from bb.pool import object_<hash>) is gone: "
+                       "write `import bb` and `NAME = bb.ref(\"<hash>\")`, or import by name")
 
 
 def code_ref_hash(node: ast.AST) -> Optional[str]:
@@ -367,63 +371,14 @@ def code_create_name_mapping(function_def: Union[ast.FunctionDef, ast.AsyncFunct
     return forward_mapping, reverse_mapping
 
 
-def code_rewrite_bb_imports(imports: List[ast.stmt]) -> Tuple[List[ast.stmt], Dict[str, str]]:
-    """
-    Remove aliases from 'bb' imports and track them for later restoration.
-    Returns (new_imports, alias_mapping)
-    alias_mapping maps: actual_function_hash (without prefix) -> alias_in_lang
-
-    Input format expected:
-        from bb.pool import object_c0ff33 as kawa
-
-    Output:
-        - import becomes: from bb.pool import object_c0ff33
-        - alias_mapping stores: {"c0ff33...": "kawa"} (actual hash without object_ prefix)
-    """
-    new_imports = []
-    alias_mapping = {}
-
-    for imp in imports:
-        if isinstance(imp, ast.ImportFrom) and imp.module == 'bb.pool':
-            # Rewrite: from bb.pool import object_c0ffeebad as kawa
-            # To: from bb.pool import object_c0ffeebad
-            new_names = []
-            for alias in imp.names:
-                import_name = alias.name  # e.g., "object_c0ff33..."
-
-                # Extract actual hash by stripping the prefix
-                if import_name.startswith(BB_IMPORT_PREFIX):
-                    actual_hash = import_name[len(BB_IMPORT_PREFIX):]
-                else:
-                    # Backward compatibility: no prefix (shouldn't happen in new code)
-                    actual_hash = import_name
-
-                # Track the alias mapping using actual hash
-                if alias.asname:
-                    alias_mapping[actual_hash] = alias.asname
-
-                # Create new import without alias (but keep object_ prefix in import name)
-                new_names.append(ast.alias(name=import_name, asname=None))
-
-            new_imp = ast.ImportFrom(
-                module='bb.pool',
-                names=new_names,
-                level=0
-            )
-            new_imports.append(new_imp)
-        else:
-            new_imports.append(imp)
-
-    return new_imports, alias_mapping
-
-
 def code_collect_pool_refs(tree: ast.Module) -> Tuple[ast.Module, Dict[str, str]]:
     """
     Take the pool functions a module names out of its top level.
 
-    They are named by `from bb.pool import object_<hash> as alias` (an
-    import by name is resolved to this form first) or `alias = bb.ref("<hash>")`;
-    `import bb` is dropped, as bb is always there. Every use is then
+    They are named by `alias = bb.ref("<hash>")` (an import by name is
+    resolved to this form first, see code_resolve_pool_names) or used as
+    bb.ref("<hash>") directly; `import bb` is dropped, as the loader
+    provides bb. Every use is then
     written bb.ref("<hash>") (see code_replace_bb_calls).
 
     Returns:
@@ -444,12 +399,10 @@ def code_collect_pool_refs(tree: ast.Module) -> Tuple[ast.Module, Dict[str, str]
     body = []
     for node in tree.body:
         if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
-            for alias in node.names:
-                func_hash = code_pool_import_hash(alias.name)
-                if func_hash is None:
-                    raise ValueError(f"from bb.pool import {alias.name}: not a pool function's hash")
-                bind(func_hash, alias.asname)
-            continue
+            names = ', '.join(alias.name for alias in node.names)
+            if any(code_pool_import_hash(alias.name) for alias in node.names):
+                raise ValueError(f"from bb.pool import {names}: {BB_HASH_IMPORT_HINT}")
+            raise ValueError(f"from bb.pool import {names}: not resolved to a pool function")
         if isinstance(node, ast.Import) and [(a.name, a.asname) for a in node.names] == [('bb', None)]:
             continue
         if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
@@ -477,8 +430,7 @@ def code_replace_bb_calls(tree: ast.AST, alias_mapping: Dict[str, str], name_map
     """
     Write every use of a pool function as bb.ref("<hash>").
 
-    E.g. kawa(...) becomes bb.ref("c0ffeebad...")(...), and so does
-    object_c0ffeebad..._bb_v_0(...) (an import without alias).
+    E.g. kawa(...) becomes bb.ref("c0ffeebad...")(...).
 
     alias_mapping maps hash -> alias name
     """
@@ -488,12 +440,6 @@ def code_replace_bb_calls(tree: ast.AST, alias_mapping: Dict[str, str], name_map
         def visit_Name(self, node):
             if node.id in by_alias and isinstance(node.ctx, ast.Load):
                 return code_make_ref(by_alias[node.id])
-            return node
-
-        def visit_Attribute(self, node):
-            if isinstance(node.value, ast.Name) and node.attr == '_bb_v_0' and code_pool_import_hash(node.value.id):
-                return code_make_ref(code_pool_import_hash(node.value.id))
-            self.generic_visit(node)
             return node
 
     replacer = BBCallReplacer()
@@ -1234,6 +1180,9 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
 
     # Each pool function used is named once, after the imports: alias = bb.ref("<hash>")
     if bound:
+        if not code_imports_bb(tree):
+            tree.body.insert(0, ast.Import(names=[ast.alias(name='bb')]))
+            tree = code_sort_imports(tree)
         position = sum(1 for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom)))
         bindings = [ast.Assign(targets=[ast.Name(id=alias, ctx=ast.Store())], value=code_make_ref(func_hash))
                     for func_hash, alias in bound.items()]
@@ -3159,20 +3108,34 @@ def helper_lineage(func_hash: str) -> Set[str]:
     return seen
 
 
+def code_uses_bb(tree: ast.AST) -> bool:
+    """Whether code calls bb.ref."""
+    return any(isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == 'bb'
+               for node in ast.walk(tree))
+
+
+def code_imports_bb(tree: ast.Module) -> bool:
+    """Whether a module has `import bb` at its top level."""
+    return any(isinstance(node, ast.Import) and ('bb', None) in [(a.name, a.asname) for a in node.names]
+               for node in tree.body)
+
+
 def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") -> Tuple[str, Dict[str, str]]:
     """
-    Turn imports of pool functions by name into imports by hash.
+    Turn imports of pool functions by name into references by hash.
 
     `from bb.pool import helper` (or `... import helper as h`) names
     `helper@lang`, resolved by lineage to its single current version (the
     one no other function names as its parent); the import becomes
-    `from bb.pool import object_<hash> as helper`. Stored code always
-    holds a hash, so a function keeps the version it was saved with.
-    Never resolved by time: a name with several current versions (two
-    unrelated functions, or a fork) or none is refused.
+    `helper = bb.ref("<hash>")`, and `import bb` is added. Stored code
+    always holds a hash, so a function keeps the version it was saved
+    with. Never resolved by time: a name with several current versions
+    (two unrelated functions, or a fork) or none is refused, and so are
+    the old imports by hash (from bb.pool import object_<hash>), pool
+    imports inside the function, and bb.ref without `import bb`.
 
     Returns:
-        (source with every pool import by hash, {name: hash} resolved)
+        (source with every pool function named by bb.ref, {name: hash} resolved)
 
     Raises:
         ValueError: naming each import that does not resolve to one version
@@ -3185,6 +3148,8 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
     problems: List[str] = []
     replacements = []
     top = {id(node) for node in tree.body}
+    if code_uses_bb(tree) and not code_imports_bb(tree):
+        problems.append("  bb.ref is used without `import bb`: add it at the top of the file")
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool' and id(node) not in top:
             problems.append(f"  line {node.lineno}: {ast.unparse(node)}: pool imports go at the top of the "
@@ -3192,25 +3157,33 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
     for node in tree.body:
         if not (isinstance(node, ast.ImportFrom) and node.module == 'bb.pool'):
             continue
-        names = [alias for alias in node.names if code_pool_import_hash(alias.name) is None]
-        if not names:
-            continue
-        for alias in names:
+        bindings = []
+        for alias in node.names:
+            if code_pool_import_hash(alias.name):
+                problems.append(f"  line {node.lineno}: {BB_HASH_IMPORT_HINT}")
+                continue
             heads, functions = helper_find_heads_by_name(alias.name, lang)
             if len(heads) == 1:
                 resolved[alias.name] = heads[0]
-                alias.asname, alias.name = alias.asname or alias.name, BB_IMPORT_PREFIX + heads[0]
+                bindings.append(f"{alias.asname or alias.name} = bb.ref({heads[0]!r})")
             elif not heads:
                 problems.append(f"  {alias.name}: no function called '{alias.name}' in {lang}")
             else:
-                problems.append(f"  {alias.name}: {len(heads)} current versions; import one by its hash:")
+                problems.append(f"  {alias.name}: {len(heads)} current versions; name one by its hash "
+                                f"(`import bb`, then `{alias.asname or alias.name} = bb.ref(\"<hash>\")`):")
                 problems += [f"    {helper_describe_function(functions[h], lang)}" for h in heads]
-        replacements.append((node.lineno, node.end_lineno, ast.unparse(node)))
+        replacements.append((node.lineno, node.end_lineno, '\n'.join(bindings)))
     if problems:
-        raise ValueError(f"{where}: pool imports must be at the top of the file and name one current version:\n" + '\n'.join(problems))
+        raise ValueError(f"{where}: pool imports must be at the top of the file and name one current version:\n"
+                         + '\n'.join(problems))
+    if not replacements:
+        return source_code, resolved
     lines = source_code.splitlines(keepends=True)
     for start, end, text in sorted(replacements, reverse=True):
-        lines[start - 1:end] = [text + '\n']
+        lines[start - 1:end] = [text + '\n'] if text else []
+    if not code_imports_bb(tree):
+        first = replacements[0][0]
+        lines[first - 1:first - 1] = ['import bb\n']
     return ''.join(lines), resolved
 
 
@@ -3248,9 +3221,19 @@ def code_show_pool_names(source_code: str, lang: str) -> str:
               and all(code_pool_import_hash(a.name) and a.asname for a in node.names)):
             replacements.append((node.lineno, node.end_lineno, '\n'.join(
                 as_text(code_pool_import_hash(a.name), a.asname) for a in node.names)))
+    pinned = any(text.endswith(')') for _, _, text in replacements)
+    if not pinned:
+        # Nothing pinned is left: the `import bb` that came with the bindings goes too
+        replacements += [(node.lineno, node.end_lineno, None) for node in tree.body
+                         if isinstance(node, ast.Import) and [(a.name, a.asname) for a in node.names] == [('bb', None)]
+                         and not code_uses_bb(ast.Module(body=[n for n in tree.body if not (
+                             isinstance(n, ast.Assign) and code_ref_hash(n.value))], type_ignores=[]))]
+    elif not code_imports_bb(tree):
+        first = min(start for start, _, _ in replacements)
+        replacements.append((first, first - 1, 'import bb'))
     lines = source_code.splitlines(keepends=True)
-    for start, end, text in sorted(replacements, reverse=True):
-        lines[start - 1:end] = [text + '\n']
+    for start, end, text in sorted(replacements, key=lambda r: (r[0], r[1]), reverse=True):
+        lines[start - 1:end] = [text + '\n'] if text is not None else []
     return ''.join(lines)
 
 
@@ -3342,6 +3325,8 @@ def code_prepare_source(source_code: str, lang: str, where: str = None) -> Dict[
     # Only imports and the one function are stored: refuse rather than drop the rest
     dropped = [node for node in tree.body
                if not isinstance(node, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.AsyncFunctionDef))
+               and not (isinstance(node, ast.Assign) and len(node.targets) == 1
+                        and isinstance(node.targets[0], ast.Name) and code_ref_hash(node.value))
                and not (node is tree.body[0] and isinstance(node, ast.Expr)
                         and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str))]
     if dropped:
