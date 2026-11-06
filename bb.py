@@ -96,7 +96,8 @@ Writing functions for the pool:
   block, and an optional `## Checks` section.
   - For a new name you may write FILE yourself in that format.
   - For an existing function, start from the file bb writes and keep its
-    `<!-- bb:parent <hash> -->` line: it says which version you changed.
+    `<!-- bb:parent <step> -->` line: it names the lineage step you
+    drafted from (a step id from bb log, not the function's hash).
     A file without it, or drafted from a version that is no longer the
     current one, is refused: write a new file and make the change there.
   - After a save, bb rewrites FILE in stored form (single quotes, its own
