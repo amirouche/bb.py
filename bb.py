@@ -187,6 +187,7 @@ import shlex
 import subprocess
 import sys
 import struct
+import shutil
 import tempfile
 import time
 import types
@@ -6647,6 +6648,179 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         helper_report_similar(prepared['hash'], helper_lineage(prepared['hash']) | set(check_hashes))
 
 
+SCRATCHPAD_REF = re.compile(r"""bb\.(?:resolve|latest)\(\s*['"]([A-Za-z_]\w*)['"]""")
+
+
+def scratchpad_split(text: str) -> List[Tuple[str, str]]:
+    """
+    The (name, section) pairs of a scratchpad: one edit file per function, in order.
+
+    A section starts at a level-1 heading `# name` outside code blocks and
+    runs to the next one, so a scratchpad of one section is a bb edit file.
+    """
+    sections: List[List[Any]] = []
+    fence = False
+    for line in text.split('\n'):
+        if line.lstrip().startswith('```'):
+            fence = not fence
+        if not fence and line.startswith('# '):
+            sections.append([line[2:].strip(), [line]])
+        elif sections:
+            sections[-1][1].append(line)
+        elif line.strip():
+            raise ValueError("a scratchpad starts with a '# name' heading")
+    return [(name, '\n'.join(lines).rstrip('\n') + '\n') for name, lines in sections]
+
+
+def scratchpad_tree_names(identifier: str) -> List[str]:
+    """NAME@lang and everything it uses, top down as bb tree shows them, as names in lang."""
+    func_hash, lang = helper_parse_identifier(identifier)
+    functions = storage_scan_functions()
+    order, seen = [], set()
+
+    def visit(h):
+        if h in seen or h not in functions:
+            return
+        seen.add(h)
+        name = functions[h]['names'].get(lang)
+        if name is None:
+            print(f"Error: {helper_function_label(h)} ({h[:12]}...) has no '{lang}' name: translate it "
+                  f"first with bb translate", file=sys.stderr)
+            sys.exit(1)
+        if name not in order:
+            order.append(name)
+        for dep in code_extract_dependencies(functions[h]['normalized_code']):
+            visit(dep)
+
+    visit(func_hash)
+    return [f"{name}@{lang}" for name in order]
+
+
+def command_scratchpad(identifiers: List[str], file: str, comment: str = None, tree: str = None,
+                       unreviewed: bool = False):
+    """
+    Edit several functions in one markdown file, then save every one that changed.
+
+    The file is bb edit files one after another, each starting at its own
+    `# name` heading: Implementation (with its bb:parent line and
+    documentation) and Checks. When FILE is missing, bb writes every named
+    function into it, in the order given (--tree NAME@lang adds NAME and
+    everything it uses, top down as bb tree shows them), and saves nothing.
+    When FILE exists, bb saves each section as bb edit would: unchanged
+    sections are skipped, a section added under a new `# name` is created,
+    a section removed is simply not saved. A function is saved before the
+    sections that use it (bb.resolve), and saving stops at the first
+    section that cannot be saved (a stale draft, a failing check), saying
+    what was saved and what was not. bb then rewrites FILE: saved sections
+    in stored form, the others as they were. One language per scratchpad.
+
+    ```
+    bb scratchpad login_page@eng register_page@eng pages.md   # writes pages.md
+    bb scratchpad login_page@eng register_page@eng pages.md -m "sign-up pages"   # saves it
+    bb scratchpad --tree checkout_page@eng checkout.md   # a page and all it uses
+    ```
+    """
+    names = list(identifiers)
+    if tree:
+        names = scratchpad_tree_names(tree) + [n for n in names if n not in scratchpad_tree_names(tree)]
+    langs = {n.rsplit('@', 1)[1] for n in names if '@' in n}
+    if any('@' not in n for n in names) or len(langs) > 1:
+        print("Error: name every function with one language, e.g. bb scratchpad a@eng b@eng FILE "
+              "(one language per scratchpad)", file=sys.stderr)
+        sys.exit(1)
+    if not names and not os.path.exists(file):
+        print("Error: name the functions to write into the scratchpad", file=sys.stderr)
+        sys.exit(1)
+    lang = langs.pop() if langs else None
+    work = Path(tempfile.mkdtemp(prefix='bb-scratchpad-'))
+
+    try:
+        if not os.path.exists(file):
+            parts = []
+            for identifier in names:
+                draft = work / f"{identifier.split('@')[0]}.md"
+                with contextlib.redirect_stdout(io.StringIO()):
+                    command_edit(identifier, file=str(draft))
+                parts.append(draft.read_text(encoding='utf-8').rstrip('\n') + '\n')
+            with open(file, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(parts))
+            print(f"Wrote {file} with {len(parts)} function(s): {', '.join(n.split('@')[0] for n in names)}. "
+                  f"Change it, then run the same command again to save it.")
+            return
+
+        try:
+            sections = scratchpad_split(Path(file).read_text(encoding='utf-8'))
+        except ValueError as e:
+            print(f"Error: {file}: {e}", file=sys.stderr)
+            sys.exit(1)
+        if lang is None:
+            print("Error: give the scratchpad's language with at least one NAME@lang", file=sys.stderr)
+            sys.exit(1)
+        titles = [name for name, _ in sections]
+        if len(set(titles)) != len(titles):
+            print(f"Error: {file} has the same function twice", file=sys.stderr)
+            sys.exit(1)
+
+        # A function is saved before the sections that use it
+        uses = {name: {ref for ref in SCRATCHPAD_REF.findall(text) if ref in titles and ref != name}
+                for name, text in sections}
+        order, placed = [], set()
+        while len(order) < len(titles):
+            ready = [n for n in titles if n not in placed and uses[n] <= placed]
+            if not ready:
+                stuck = [n for n in titles if n not in placed]
+                print(f"Error: these sections use each other, so none can be saved first: {', '.join(stuck)}",
+                      file=sys.stderr)
+                sys.exit(1)
+            order.append(ready[0])
+            placed.add(ready[0])
+
+        if comment is None:
+            try:
+                comment = input("Comment (press Enter to skip): ").strip()
+            except EOFError:
+                comment = ""
+        text_of = dict(sections)
+        saved, unchanged, failed = {}, [], None
+        for name in order:
+            draft = work / f"{name}.md"
+            draft.write_text(text_of[name], encoding='utf-8')
+            print(f"── {name}")
+            output, errors = io.StringIO(), io.StringIO()
+            where = f"{file} (section {name})"
+            try:
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    command_edit(f"{name}@{lang}", comment=comment, unreviewed=unreviewed, file=str(draft))
+            except SystemExit as stop:
+                if stop.code:
+                    failed = name
+            finally:
+                # bb's own draft file stands for a section of the scratchpad
+                print(output.getvalue().replace(str(draft), where), end='')
+                print(errors.getvalue().replace(str(draft), where).replace(
+                    f"bb edit {name}@{lang} NEW_FILE", f"bb scratchpad {' '.join(n for n in names) or name + '@' + lang} NEW_FILE"),
+                    end='', file=sys.stderr)
+            if failed:
+                break
+            if re.search(r'^(No changes\.|Nothing saved)', output.getvalue(), re.M):
+                unchanged.append(name)
+            saved[name] = draft.read_text(encoding='utf-8').rstrip('\n') + '\n'
+
+        with open(file, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(saved.get(name, text_of[name]) for name in titles))
+        untouched = [n for n in order if n not in saved and n != failed]
+        changed = [n for n in saved if n not in unchanged]
+        summary = (f"saved {', '.join(changed) or 'nothing'}"
+                   + (f"; unchanged {', '.join(unchanged)}" if unchanged else ""))
+        if failed:
+            print(f"Stopped at {failed}: {summary}; not tried: {', '.join(untouched) or 'nothing'}. "
+                  f"{file} keeps your text for {failed} and those.", file=sys.stderr)
+            sys.exit(1)
+        print(f"Scratchpad {file}: {summary}")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def refactor_save(old_hash: str, new_hash: str, new_code: str, checks: List[str], comment: str,
                   hash_map: Dict[str, str], keep: Callable[[Dict[str, Any]], bool] = None) -> str:
     """
@@ -7535,6 +7709,7 @@ def command_skills():
         'caller': command_caller,
         'tree': command_tree,
         'refactor': command_refactor,
+        'scratchpad': command_scratchpad,
         'update': command_update,
         'compile': command_compile,
         'migrate': command_migrate,
@@ -7722,6 +7897,15 @@ def _build_parser():
     run_parser.add_argument('func_args', nargs='*', help='Arguments to pass to function')
 
     # Edit command
+    scratchpad_parser = subparsers.add_parser('scratchpad', help='Edit several functions in one file, then save them')
+    scratchpad_parser.add_argument('names', nargs='*', metavar='NAME@lang', help='Functions to put in the file')
+    scratchpad_parser.add_argument('file', metavar='FILE', help='The scratchpad: written when missing, saved when present')
+    scratchpad_parser.add_argument('--tree', metavar='NAME@lang', default=None,
+                                   help='Add NAME and everything it uses, as bb tree shows them')
+    scratchpad_parser.add_argument('--comment', '-m', default=None, help='Comment for every version saved')
+    scratchpad_parser.add_argument('--dangerously-unreviewed', dest='unreviewed', action='store_true',
+                                   help='Run checks even on unreviewed functions they import')
+
     edit_parser = subparsers.add_parser('edit', help='Edit a function and its checks, then save a fork')
     edit_parser.add_argument('identifier', help='Hash or name, with optional @lang (e.g., compute_pi@eng)')
     edit_parser.add_argument('file', nargs='?', default=None,
@@ -7878,6 +8062,8 @@ def main():
         command_rm(args.identifier, force=args.force)
     elif args.command == 'run':
         command_run(args.identifier, func_args=args.func_args)
+    elif args.command == 'scratchpad':
+        command_scratchpad(args.names, args.file, comment=args.comment, tree=args.tree, unreviewed=args.unreviewed)
     elif args.command == 'edit':
         command_edit(args.identifier, comment=args.comment, unreviewed=args.unreviewed,
                      refactor=args.refactor, at=args.at, file=args.file)
