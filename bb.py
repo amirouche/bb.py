@@ -5816,18 +5816,83 @@ def code_execute_source(source_code: str, lang: str) -> Callable:
     return namespace[function_def.name]
 
 
-def check_run(check: Callable, implementation: Callable) -> Tuple[str, str]:
+def check_explain(source: str, captured: Dict[str, Any], result: Any) -> str:
+    """
+    Say why a check failed, from the expression it returned.
+
+    captured holds the check's frame at its return (locals, globals, line).
+    The return statement on that line is evaluated again piece by piece:
+    the first false part of an `and` chain, and for a comparison both of
+    its sides, so `parse('12,50') == 1250` shows `1200 == 1250`. Anything
+    that cannot be evaluated is left out; the returned value is always shown.
+    """
+    detail = f"returned {result!r}"
+    if not source or not captured:
+        return detail
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return detail
+    returns = [node for node in ast.walk(tree) if isinstance(node, ast.Return) and node.value is not None]
+    on_line = [node for node in returns if node.lineno <= captured['line'] <= node.end_lineno]
+    node = (on_line or returns[-1:] or [None])[0]
+    if node is None:
+        return detail
+
+    def evaluate(expression: ast.expr):
+        code = compile(ast.fix_missing_locations(ast.Expression(expression)), '<check>', 'eval')
+        return eval(code, captured['globals'], captured['locals'])
+
+    try:
+        part = node.value
+        while isinstance(part, ast.BoolOp) and isinstance(part.op, ast.And):
+            part = next((value for value in part.values if not evaluate(value)), None)
+            if part is None:
+                return detail
+        if isinstance(part, ast.Call) and getattr(part.func, 'id', None) == 'all' and len(part.args) == 1:
+            return f"{detail}: {ast.unparse(part)} is False"
+        if part is not node.value:
+            detail += f": {ast.unparse(part)} is false"
+        if isinstance(part, ast.Compare) and len(part.ops) == 1:
+            left, right = evaluate(part.left), evaluate(part.comparators[0])
+            operator = ast.unparse(ast.Compare(left=ast.Name('a'), ops=part.ops, comparators=[ast.Name('b')]))[2:-2]
+            detail += f" ({left!r} {operator} {right!r})"
+    except Exception:
+        pass
+    return detail
+
+
+def check_run(check: Callable, implementation: Callable, source: str = None) -> Tuple[str, str]:
     """
     Run one check against an implementation.
+
+    source, the check's code as it was compiled, lets a failure say which
+    part of the returned expression was false and what it compared
+    (check_explain).
 
     Returns:
         (status, detail) where status is PASS, FAIL or ERROR
     """
+    captured: Dict[str, Any] = {}
+    code = getattr(check, '__code__', None)
+
+    def watch(frame, event, arg):
+        if event == 'return':
+            captured.update(locals=dict(frame.f_locals), globals=frame.f_globals, line=frame.f_lineno)
+        return watch
+
+    def calls(frame, event, arg):
+        return watch if frame.f_code is code else None
+
+    previous = sys.gettrace()
+    sys.settrace(calls if code is not None and source else previous)
     try:
         result = check(implementation)
     except Exception as e:
         return 'ERROR', f"{type(e).__name__}: {e}"
-    return ('PASS', '') if result else ('FAIL', '')
+    finally:
+        sys.settrace(previous)
+    return ('PASS', '') if result else ('FAIL', check_explain(source, captured, result))
 
 
 def check_report(results: List[Tuple[str, str, str]], indent: str = "") -> bool:
@@ -5993,7 +6058,7 @@ def check_run_reviewed(func_hash: str, reviewed: set) -> Tuple[Optional[List[Tup
         except ValueError as e:
             results.append(('ERROR', name, str(e)))
             continue
-        status, detail = check_run(check, implementation)
+        status, detail = check_run(check, implementation, object_load(check_hash).get('normalized_code'))
         results.append((status, name, detail))
 
     results.sort(key=lambda r: r[1])
@@ -6210,7 +6275,7 @@ def edit_prepare(text: str, lang: str, unreviewed: bool = False) -> Dict[str, An
     for check, prepared in checks:
         name = prepared['name_mapping']['_bb_v_0']
         try:
-            status, detail = check_run(code_execute_source(check['source'], lang), function)
+            status, detail = check_run(code_execute_source(check['source'], lang), function, check['source'])
         except ValueError as e:
             status, detail = 'ERROR', str(e)
         results.append((status, name, detail))

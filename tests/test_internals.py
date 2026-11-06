@@ -1049,7 +1049,7 @@ def test_check_run_statuses():
         return x * 2
 
     assert bb.check_run(lambda f: f(3) == 6, double) == ('PASS', '')
-    assert bb.check_run(lambda f: f(3) == 7, double) == ('FAIL', '')
+    assert bb.check_run(lambda f: f(3) == 7, double) == ('FAIL', 'returned False')
     status, detail = bb.check_run(lambda f: f(), double)
     assert status == 'ERROR'
     assert detail.startswith('TypeError:')
@@ -1469,3 +1469,22 @@ def test_code_pretty_leaves_short_code_and_lone_tuple_children_alone():
     lone_tuple = 'def f(h):\n    """F."""\n    return h.div()[(' + ', '.join(f"'item number {i}'" for i in range(12)) + '),]\n'
     pretty = bb.code_pretty(lone_tuple)
     assert ast.dump(ast.parse(pretty)) == ast.dump(ast.parse(lone_tuple))
+
+
+def test_a_failing_check_says_which_part_was_false_and_what_it_compared():
+    source = ('def check_double(double):\n    """Doubles."""\n    expected = 4\n'
+              '    return double(1) == 2 and double(2) == expected\n')
+    namespace = {}
+    exec(compile(source, '<check>', 'exec'), namespace)
+    status, detail = bb.check_run(namespace['check_double'], lambda n: n * 3, source)
+    assert status == 'FAIL'
+    assert detail == 'returned False: double(1) == 2 is false (3 == 2)'
+
+
+def test_a_failing_check_without_source_still_shows_what_it_returned():
+    assert bb.check_run(lambda f: f(0), lambda n: n) == ('FAIL', 'returned 0')
+    source = 'def check_all(f):\n    """All."""\n    return all(f(x) for x in [1, 2])\n'
+    namespace = {}
+    exec(compile(source, '<check>', 'exec'), namespace)
+    assert bb.check_run(namespace['check_all'], lambda n: n > 1, source) == \
+        ('FAIL', 'returned False: all((f(x) for x in [1, 2])) is False')

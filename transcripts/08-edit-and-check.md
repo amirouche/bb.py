@@ -288,11 +288,11 @@ def check_pi_n8(compute_pi):
 ### Step 6: Try to save the broken version
 ```bash
 $ (EDITOR="cp pi_broken.md" bb edit compute_pi@eng -m "Skip the first term" 2>/dev/null || true)
-FAIL check_pi_n1
+FAIL check_pi_n1: returned False (0.0 == 4.0)
 PASS check_pi_n2
-FAIL check_pi_n3
-FAIL check_pi_n5
-FAIL check_pi_n8
+FAIL check_pi_n3: returned False (-0.5333333333333332 > 3.0)
+FAIL check_pi_n5: returned False
+FAIL check_pi_n8: returned False
 5 checks: 1 passed, 4 failed
 ```
 
