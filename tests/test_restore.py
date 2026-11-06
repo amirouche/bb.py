@@ -64,7 +64,7 @@ def test_refactoring_to_an_older_dependency_restores_the_caller(tmp_path):
     assert f'restored: {app1}' in back.stdout
     assert current(pool, 'app') == app1
     assert current(pool, 'qux') == v2  # the name qux itself still picks v2
-    assert f"qux = bb.ref('{v1}')" in pool.bb('show', 'app@eng').stdout  # so app shows v1 pinned
+    assert f"out of date: uses {v1[:12]}..." in pool.bb('show', 'app@eng').stdout  # app's debt, shown
 
 
 def test_editing_into_another_functions_code_is_refused(tmp_path):
@@ -89,3 +89,26 @@ def test_a_restore_is_in_the_log_and_not_a_language(tmp_path):
     assert '1 restores' in log and f'Restored: {v1}' in log and 'v2 broke the totals' in log
     assert 'Languages: eng\n' in log
     assert list((tmp_path / 'bb' / 'restore').glob('*.json'))
+
+
+def test_names_show_debt_and_editing_pays_it_while_pins_stay(tmp_path):
+    pool = Pool(tmp_path)
+    draft = tmp_path / 'qux.md'
+    pool.bb('edit', 'qux@eng', str(draft))
+    set_code(draft, QUX.format(1))
+    v1 = hash_of(pool.bb('edit', 'qux@eng', str(draft), '-m', 'v1'))
+    pool.edit('app', APP)
+    pinned = 'import bb\nqux = bb.ref("{}")\n\n\ndef keep(n):\n    """Keep."""\n    return qux(n) + 0\n'.format(v1)
+    pool.edit('keep', pinned)
+    set_code(draft, QUX.format(2))
+    v2 = hash_of(pool.bb('edit', 'qux@eng', str(draft), '-m', 'v2'))
+    # app is behind: listed as debt; keep pinned v1 on purpose: not listed
+    outdated = pool.bb('search', '--outdated').stdout
+    assert 'app' in outdated and 'keep' not in outdated.split('Search Results')[1].split('\n', 2)[2]
+    assert f"qux = bb.ref('{v1}')" in pool.bb('show', 'keep@eng').stdout
+    # Editing app (no change of its own) brings it up to date
+    app_draft = tmp_path / 'app.md'
+    pool.bb('edit', 'app@eng', str(app_draft))
+    saved = pool.bb('edit', 'app@eng', str(app_draft), '-m', 'catch up')
+    assert f'Import: qux -> {v2} (was {v1})' in saved.stdout
+    assert 'No matches found' in pool.bb('search', '--outdated').stdout

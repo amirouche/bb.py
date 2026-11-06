@@ -42,8 +42,12 @@ Writing functions for the pool:
   called alike, or a fork) is refused: name one of them with bb.ref
   (`bb search name` shows hashes). bb.latest is never looked up when the
   function runs. So add helpers before the functions
-  that use them. Stored code refers to each one as bb.ref("<hash>"); bb
-  show and bb edit display it by name when the name picks that version.
+  that use them. Stored code refers to each one as bb.ref("<hash>"). bb
+  show and bb edit display references by name (bb.latest), so saving an
+  edit brings a function up to date: a function keeps the versions it was
+  saved with until someone edits it (its debt, listed by bb search
+  --outdated and noted in drafts as `# bb: out of date`). What you write
+  with bb.ref stays pinned across edits.
 - Arguments are positional: bb stores parameters as placeholders
   (_bb_v_0, ...), so a keyword cannot reach them. Call pool functions,
   the function itself and functions defined inside it without keywords
@@ -598,7 +602,7 @@ def code_compute_function_hash(normalized_code: str, checks: List[str] = None) -
 
 def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
                         alias_mapping: Dict[str, str], comment: str = "",
-                        markdown: str = "", parent: str = "") -> str:
+                        markdown: str = "", parent: str = "", pinned: List[str] = None) -> str:
     """
     Compute content-addressed hash for a mapping.
 
@@ -609,6 +613,8 @@ def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
     - comment
     - markdown (only when non-empty, so older mappings keep their hash)
     - parent (only when set, same reason)
+    - pinned (only when set): pool functions the author named by hash on
+      purpose, bb.ref("<hash>"), so displays keep them pinned
 
     This enables deduplication: identical mappings share the same hash and storage.
 
@@ -633,6 +639,8 @@ def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
         mapping_dict['markdown'] = markdown
     if parent:
         mapping_dict['parent'] = parent
+    if pinned:
+        mapping_dict['pinned'] = sorted(set(pinned))
 
     # Create canonical JSON (sorted keys, no whitespace)
     canonical_json = json.dumps(mapping_dict, sort_keys=True, ensure_ascii=False)
@@ -961,7 +969,7 @@ def object_load_checks(hash_value: str) -> List[str]:
 
 def mapping_save(func_hash: str, lang: str, docstring: str,
                  name_mapping: Dict[str, str], alias_mapping: Dict[str, str],
-                 comment: str = "", markdown: str = "", parent: str = "") -> str:
+                 comment: str = "", markdown: str = "", parent: str = "", pinned: List[str] = None) -> str:
     """
     Save language mapping to bb directory.
 
@@ -987,7 +995,7 @@ def mapping_save(func_hash: str, lang: str, docstring: str,
     pool_dir = storage_get_pool_directory()
 
     # Compute mapping hash
-    mapping_hash = code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment, markdown, parent)
+    mapping_hash = code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment, markdown, parent, pinned)
 
     # Create mapping directory: pool/XX/Y.../lang/ZZ/W.../
     func_dir = pool_dir / func_hash[:2] / func_hash[2:]
@@ -1007,6 +1015,8 @@ def mapping_save(func_hash: str, lang: str, docstring: str,
         data['markdown'] = markdown
     if parent:
         data['parent'] = parent
+    if pinned:
+        data['pinned'] = sorted(set(pinned))
 
     with open(mapping_json, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -1018,7 +1028,7 @@ def mapping_save(func_hash: str, lang: str, docstring: str,
 
 def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
                   name_mapping: Dict[str, str], alias_mapping: Dict[str, str], comment: str = "",
-                  parent: str = None):
+                  parent: str = None, pinned: List[str] = None):
     """
     Save function to bb directory.
 
@@ -1041,7 +1051,7 @@ def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
     object_save(hash_value, normalized_code, metadata)
 
     # Save mapping (mapping.json)
-    mapping_save(hash_value, lang, docstring, name_mapping, alias_mapping, comment)
+    mapping_save(hash_value, lang, docstring, name_mapping, alias_mapping, comment, pinned=pinned)
 
 
 def _ast_unparser_class():
@@ -2709,6 +2719,10 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
     root = search_lineage_root(index, func_hash)
     forks = head_counts.get((lang, name, root), 0)
     namesakes = sum(count for (l, n, r), count in head_counts.items() if (l, n) == (lang, name) and r != root)
+    # Versions it uses that are no longer current, except those pinned on purpose
+    pinned = set(mapping.get('pinned') or [])
+    outdated_refs = [dep for dep in code_extract_dependencies(function['normalized_code'])
+                     if dep in index['functions'] and dep not in index['current'] and dep not in pinned]
     return {
         'hash': func_hash,
         'name': name,
@@ -2719,6 +2733,8 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
         'parent': function['metadata'].get('parent'),
         'current': is_current,
         'diverged': is_current and forks > 1,
+        'outdated': outdated_refs,
+        'pinned': sorted(set(mapping.get('pinned') or [])),
         'forks': forks,
         'namesakes': namesakes,
         'checks': len(function['checks']),
@@ -2733,7 +2749,7 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
 
 def command_search(query: List[str], all_versions: bool = False, as_json: bool = False,
                    untested: bool = False, unreviewed: bool = False, diverged: bool = False,
-                   unused: bool = False, uses: str = None):
+                   unused: bool = False, uses: str = None, outdated: bool = False):
     """
     Search the pool by words, by status, and by architecture.
 
@@ -2751,14 +2767,16 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     --diverged    forks: one lineage with several current versions (not
                   unrelated functions that share a name)
     --unused      functions nothing imports and no function uses as a check
+    --outdated    functions using versions that are no longer current (their
+                  debt: editing one brings it up to date; pins are kept)
     --uses X      functions that import X directly
     --json        machine-readable output
     ```
     """
-    filters = untested or unreviewed or diverged or unused or uses
+    filters = untested or unreviewed or diverged or unused or uses or outdated
     if not query and not filters:
         print("Error: Give search terms, a filter (--untested, --unreviewed, --diverged, "
-              "--unused, --uses), or both (bb log lists every function)", file=sys.stderr)
+              "--unused, --outdated, --uses), or both (bb log lists every function)", file=sys.stderr)
         sys.exit(1)
 
     uses_hash = helper_resolve_to_hash(uses) if uses else None
@@ -2812,6 +2830,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
         results = [r for r in results if r['diverged']]
     if unused:
         results = [r for r in results if r['callers'] == 0 and not r['is_check']]
+    if outdated:
+        results = [r for r in results if r['outdated']]
     if uses_hash:
         results = [r for r in results if r['hash'] in index['importers'].get(uses_hash, [])]
 
@@ -2822,7 +2842,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
         return
 
     asked = ' '.join(query + [flag for flag, on in (('--untested', untested), ('--unreviewed', unreviewed),
-                                                    ('--diverged', diverged), ('--unused', unused)) if on]
+                                                    ('--diverged', diverged), ('--unused', unused),
+                                                    ('--outdated', outdated)) if on]
                      + ([f"--uses {uses}"] if uses else []))
     print(f"Search Results ({len(results)} matches for: {asked})")
     print("=" * 80)
@@ -2843,6 +2864,11 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
             status.append("superseded")
         if r['diverged']:
             status.append(f"name diverged: {r['forks']} current versions")
+        if r['outdated']:
+            names = ', '.join(helper_function_label(dep) for dep in r['outdated'])
+            status.append(f"uses {len(r['outdated'])} out-of-date version(s): {names}")
+        if r['pinned']:
+            status.append(f"{len(r['pinned'])} pinned")
         if r['current'] and r['namesakes']:
             status.append(f"{r['namesakes']} unrelated function(s) also called {r['name']}: "
                           f"bb.latest(\"{r['name']}\") is ambiguous")
@@ -3001,8 +3027,9 @@ def command_translate(identifier_with_lang: str, target_lang: str, recursive: bo
     comment = input("Optional comment for this translation (press Enter to skip): ").strip()
 
     # Save the translation
+    source_pins = mapping_load_json(hash_value, source_lang, mapping_select(hash_value, source_lang)).get('pinned')
     mapping_hash = mapping_save(hash_value, target_lang, target_docstring, name_mapping_target, alias_mapping_target,
-                                comment, parent=source_translation)
+                                comment, parent=source_translation, pinned=source_pins)
 
     print(f"Mapping hash: {mapping_hash}")
     print()
@@ -3132,15 +3159,17 @@ def code_add(file_path_with_lang: str, comment: str = ""):
         source_code = f.read()
 
     try:
+        pins = code_pinned_refs(source_code)
         source_code, resolved = code_resolve_pool_names(source_code, lang, where=file_path)
         prepared = code_prepare_source(source_code, lang, where=file_path)
+        prepared['pinned'] = sorted(pins & set(code_extract_dependencies(prepared['normalized_code'])))
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     # Save to v1 format (docstring stored separately in mapping.json)
     code_save(prepared['hash'], lang, prepared['normalized_code'], prepared['docstring'],
-              prepared['name_mapping'], prepared['alias_mapping'], comment)
+              prepared['name_mapping'], prepared['alias_mapping'], comment, pinned=prepared['pinned'])
 
     for name, func_hash in sorted(resolved.items()):
         print(f"Import: {name} -> {func_hash}")
@@ -3263,6 +3292,15 @@ def helper_lineage(func_hash: str) -> Set[str]:
     return {lineage_code(node, restores) for node in seen}
 
 
+def code_pinned_refs(source_code: str) -> Set[str]:
+    """Hashes the author named with bb.ref("<hash>") (not bb.latest): versions pinned on purpose."""
+    try:
+        tree = ast.parse(source_code)
+    except SyntaxError:
+        return set()
+    return {code_ref_hash(node) for node in ast.walk(tree) if code_ref_hash(node)}
+
+
 def code_uses_bb(tree: ast.AST) -> bool:
     """Whether code calls bb.ref."""
     return any(isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == 'bb'
@@ -3324,29 +3362,42 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
     return code_replace_spans(source_code, spans), resolved
 
 
-def code_show_pool_names(source_code: str, lang: str) -> str:
+def code_show_pool_names(source_code: str, lang: str, pinned: List[str] = ()) -> str:
     """
-    Write the pool functions a displayed function uses by name where possible.
+    Write the pool functions a displayed function uses by name.
 
-    `alias = bb.ref("<hash>")` (and the older `from bb.pool import
-    object_<hash> as alias`) becomes `alias = bb.latest("NAME")` when
-    NAME@lang has exactly that hash as its one current version, so saving
-    it back picks the same function. Otherwise it stays pinned, as
-    `alias = bb.ref("<hash>")`. Either way the code has `import bb`.
+    Each `alias = bb.ref("<hash>")` (and the older `from bb.pool import
+    object_<hash> as alias`) is shown as `alias = bb.latest("NAME")`, so
+    that saving the draft brings the function up to date with the current
+    version of every name: editing a function is when its debt is paid,
+    and a function nobody edits keeps the versions it was saved with.
+    Kept as `bb.ref("<hash>")`: hashes the author pinned on purpose
+    (pinned, from the mapping) and functions whose name does not pick one
+    current version. A `# bb:` comment line says when a reference is out
+    of date; comments are not stored, so it goes when saving.
     """
     try:
         tree = ast.parse(source_code)
     except SyntaxError:
         return source_code
+    pinned = set(pinned or ())
 
     def as_text(func_hash, alias):
         name = None
         if lang in storage_list_languages(func_hash):
             mapping = mapping_load_json(func_hash, lang, mapping_select(func_hash, lang))
             name = mapping.get('name_mapping', {}).get('_bb_v_0')
-        if name and helper_find_heads_by_name(name, lang)[0] == [func_hash]:
-            return f"{alias} = bb.latest({name!r})"
-        return f"{alias} = bb.ref({func_hash!r})"
+        heads = helper_find_heads_by_name(name, lang)[0] if name else []
+        if func_hash in pinned:
+            note = (f"# bb: pinned; the current {name} is {heads[0][:12]}...\n"
+                    if len(heads) == 1 and heads[0] != func_hash else "")
+            return f"{note}{alias} = bb.ref({func_hash!r})"
+        if len(heads) == 1:
+            note = (f"# bb: out of date: uses {func_hash[:12]}..., saving picks {heads[0][:12]}...\n"
+                    if heads[0] != func_hash else "")
+            return f"{note}{alias} = bb.latest({name!r})"
+        why = f"{name} has {len(heads)} current versions" if heads else f"no current version is called {name}"
+        return f"# bb: {why}\n{alias} = bb.ref({func_hash!r})"
 
     replacements = []
     for node in tree.body:
@@ -4065,7 +4116,8 @@ def code_show(identifier: str):
     # Replace docstring and denormalize
     try:
         normalized_code = code_replace_docstring(normalized_code, docstring)
-        original_code = code_show_pool_names(code_denormalize(normalized_code, name_mapping, alias_mapping), lang)
+        pinned = mapping_load_json(hash_value, lang, selected_hash).get('pinned') or []
+        original_code = code_show_pool_names(code_denormalize(normalized_code, name_mapping, alias_mapping), lang, pinned)
     except Exception as e:
         print(f"Error: Failed to denormalize code: {e}", file=sys.stderr)
         sys.exit(1)
@@ -4781,8 +4833,9 @@ def edit_load_section(func_hash: str, lang: str) -> Dict[str, Any]:
 
     mapping_hash = mapping_select(func_hash, section_lang)
     normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, section_lang, mapping_hash)
+    pinned = mapping_load_json(func_hash, section_lang, mapping_hash).get('pinned') or []
     source = code_denormalize(code_replace_docstring(normalized_code, docstring), name_mapping, alias_mapping)
-    source = code_show_pool_names(source, section_lang)
+    source = code_show_pool_names(source, section_lang, pinned)
     markdown = mapping_load_markdown(func_hash, section_lang, mapping_hash)
 
     return {
@@ -4791,7 +4844,7 @@ def edit_load_section(func_hash: str, lang: str) -> Dict[str, Any]:
         'markdown': markdown,
         'parent': func_hash,
         'mapping': f"{func_hash}@{section_lang}@{mapping_hash}",
-        'fingerprint': edit_fingerprint(func_hash, docstring, name_mapping, alias_mapping, markdown),
+        'fingerprint': edit_fingerprint(func_hash, docstring, name_mapping, alias_mapping, markdown, pinned),
     }
 
 
@@ -4801,9 +4854,9 @@ def edit_section_name(section: Dict[str, Any], prepared: Dict[str, Any]) -> str:
 
 
 def edit_fingerprint(func_hash: str, docstring: str, name_mapping: Dict[str, str],
-                     alias_mapping: Dict[str, str], markdown: str) -> Tuple[str, str]:
+                     alias_mapping: Dict[str, str], markdown: str, pinned: List[str] = None) -> Tuple[str, str]:
     """Identify a section by function hash and mapping content (comment excluded)."""
-    return func_hash, code_compute_mapping_hash(docstring, name_mapping, alias_mapping, "", markdown)
+    return func_hash, code_compute_mapping_hash(docstring, name_mapping, alias_mapping, "", markdown, "", pinned)
 
 
 def edit_assign_parents(checks: List[Tuple[str, Optional[str]]], originals: List[Tuple[str, str]]) -> List[Optional[str]]:
@@ -4857,12 +4910,16 @@ def edit_prepare(text: str, lang: str, unreviewed: bool = False) -> Dict[str, An
     implementation = parsed['implementation']
     # Pool imports by name become imports by hash before anything else reads the code
     resolved = {}
+    pins = {}
     for section, where in [(implementation, "Implementation")] + [(c, f"check '{c['title']}'") for c in parsed['checks']]:
+        pins[id(section)] = code_pinned_refs(section['source'])
         section['source'], names = code_resolve_pool_names(section['source'], lang, where=where)
         resolved.update(names)
     prepared_implementation = code_prepare_source(implementation['source'], lang, where="Implementation")
     checks = [(check, code_prepare_source(check['source'], lang, where=f"check '{check['title']}'"))
               for check in parsed['checks']]
+    for section, prepared in [(implementation, prepared_implementation)] + checks:
+        prepared['pinned'] = sorted(pins[id(section)] & set(code_extract_dependencies(prepared['normalized_code'])))
 
     # Saving is not running: only checks run the code. Without them nothing
     # is executed, so nothing it imports needs to have been reviewed.
@@ -4926,7 +4983,8 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
 
     if is_new or not unchanged:
         mapping_save(func_hash, lang, prepared['docstring'], prepared['name_mapping'],
-                     prepared['alias_mapping'], comment, section['markdown'], mapping_parent)
+                     prepared['alias_mapping'], comment, section['markdown'], mapping_parent,
+                     pinned=prepared.get('pinned'))
         return True
 
     return False
@@ -5142,7 +5200,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
 
     def unchanged(sec, prep):
         return edit_fingerprint(prep['hash'], prep['docstring'], prep['name_mapping'],
-                                prep['alias_mapping'], sec['markdown']) in original_prints
+                                prep['alias_mapping'], sec['markdown'], prep.get('pinned')) in original_prints
 
     if (prepared['hash'] == hash_value and unchanged(section, prepared)
             and all(unchanged(s, p) for s, p in plan['checks'])):
@@ -5205,8 +5263,17 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         print(f"Parent: {section['parent']}")
     for name, check_hash in new_checks:
         print(f"Check: {check_hash} {name}")
+    was = {}
+    if hash_value:
+        # The version of each name the edited function used, to show what saving changed
+        for old_hash in code_extract_dependencies(object_load(hash_value)['normalized_code']):
+            if lang in storage_list_languages(old_hash):
+                old_name = mapping_load_json(old_hash, lang, mapping_select(old_hash, lang)).get(
+                    'name_mapping', {}).get('_bb_v_0')
+                was.setdefault(old_name, old_hash)
     for name, func_hash in sorted(plan.get('resolved', {}).items()):
-        print(f"Import: {name} -> {func_hash}")
+        changed = was.get(name) and was[name] != func_hash
+        print(f"Import: {name} -> {func_hash}" + (f" (was {was[name]})" if changed else ""))
 
     if refactor_root and prepared['hash'] != hash_value:
         print(f"Updating {refactor} to it:")
@@ -5370,9 +5437,10 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
             for mapping_hash in mapping_leaves(old_hash, lang):
                 docstring, name_mapping, alias_mapping, _ = mapping_load(old_hash, lang, mapping_hash)
                 new_alias_mapping = {hash_map.get(h, h): alias for h, alias in alias_mapping.items()}
+                pins = mapping_load_json(old_hash, lang, mapping_hash).get('pinned') or []
                 mapping_save(new_hash, lang, docstring, name_mapping, new_alias_mapping, comment,
                              mapping_load_markdown(old_hash, lang, mapping_hash),
-                             f"{old_hash}@{lang}@{mapping_hash}")
+                             f"{old_hash}@{lang}@{mapping_hash}", pinned=[hash_map.get(h, h) for h in pins])
         return 'new'
 
     # Process functions in topological order (dependencies first)
@@ -6224,6 +6292,8 @@ def _build_parser():
     search_parser.add_argument('--unused', action='store_true',
                                help='Only functions nothing imports and nothing uses as a check')
     search_parser.add_argument('--uses', metavar='X', default=None, help='Only functions that import X directly')
+    search_parser.add_argument('--outdated', action='store_true',
+                               help='Only functions using versions that are no longer current (pins excluded)')
     search_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
 
     # Latest command
@@ -6337,7 +6407,7 @@ def main():
     elif args.command == 'search':
         command_search(args.query, all_versions=args.all_versions, as_json=args.as_json,
                        untested=args.untested, unreviewed=args.unreviewed, diverged=args.diverged,
-                       unused=args.unused, uses=args.uses)
+                       unused=args.unused, uses=args.uses, outdated=args.outdated)
     elif args.command == 'latest':
         name, lang = args.name, args.lang
         if '@' in name and not lang:

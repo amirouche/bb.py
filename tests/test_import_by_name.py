@@ -61,8 +61,10 @@ def test_a_name_resolves_to_its_one_current_version_and_follows_edits(tmp_path):
     again = pool.edit('octuple', 'import bb\ntwice = bb.latest("double")\n\n\ndef octuple(n):\n    """Eight times n."""\n'
                       '    return twice(twice(twice(n)))\n')
     assert f'Import: double -> {second}' in again.stdout and pool.run(hash_of(again), 1) == '8'
-    # double now names another version: quadruple shows the one it uses, pinned
-    assert f"double = bb.ref('{first}')" in pool.bb('show', 'quadruple@eng').stdout
+    # double now names another version: quadruple still uses the first, shown as debt
+    shown = pool.bb('show', 'quadruple@eng').stdout
+    assert f"# bb: out of date: uses {first[:12]}..., saving picks {second[:12]}..." in shown
+    assert "double = bb.latest('double')" in shown
 
 
 def test_two_unrelated_functions_with_one_name_are_refused_with_both_listed(tmp_path):

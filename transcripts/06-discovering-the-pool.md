@@ -266,7 +266,7 @@ Hash: $COUNT_HASH
 ### Step 23: Each result tells its status
 ```bash
 $ bb search frequency | grep "^Status:"
-Status: no checks, not reviewed
+Status: no checks, not reviewed, 1 pinned
 ```
 
 ### Step 24: Machine-readable output for agents

@@ -115,9 +115,8 @@ different hashes
 
 ### Step 6: Verify the diamond call graph
 ```bash
-$ bb show $CEREMONY@eng | grep 'bb.latest'
-greet = bb.latest('greet')
-farewell = bb.latest('farewell')
+$ bb show $CEREMONY@eng | grep -c 'bb.ref'
+2
 ```
 
 ---
