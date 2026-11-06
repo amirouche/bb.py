@@ -2577,8 +2577,21 @@ def helper_display_language(function: Dict[str, Any], prefer: List[str] = None) 
     return None
 
 
+def search_lineage_root(index: Dict[str, Any], func_hash: str) -> str:
+    """The first version of a function's lineage (following parents in the local pool)."""
+    functions = index['functions']
+    seen = set()
+    while func_hash not in seen:
+        seen.add(func_hash)
+        parent = functions[func_hash]['metadata'].get('parent')
+        if parent not in functions:
+            break
+        func_hash = parent
+    return func_hash
+
+
 def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
-                    head_counts: Dict[Tuple[str, str], int], match: List[str] = None,
+                    head_counts: Dict[Tuple[str, str, str], int], match: List[str] = None,
                     prefer: List[str] = None) -> Dict[str, Any]:
     """Everything search shows about one function, as a dict (also the --json form)."""
     function = index['functions'][func_hash]
@@ -2587,6 +2600,9 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
     mapping = function['mappings'].get(lang, {}) if lang else {}
     docstring = mapping.get('docstring', '')
     is_current = func_hash not in index['children']
+    root = search_lineage_root(index, func_hash)
+    forks = head_counts.get((lang, name, root), 0)
+    namesakes = sum(count for (l, n, r), count in head_counts.items() if (l, n) == (lang, name) and r != root)
     return {
         'hash': func_hash,
         'name': name,
@@ -2596,7 +2612,9 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
         'author': helper_format_author(function['metadata']),
         'parent': function['metadata'].get('parent'),
         'current': is_current,
-        'diverged': is_current and head_counts.get((lang, name), 0) > 1,
+        'diverged': is_current and forks > 1,
+        'forks': forks,
+        'namesakes': namesakes,
         'checks': len(function['checks']),
         'normalization': function['normalization'],
         'is_check': func_hash in index['checked_by'],
@@ -2624,7 +2642,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     ```
     --untested    functions without checks (checks themselves excluded)
     --unreviewed  functions you have not approved (see bb review)
-    --diverged    names that have several current versions
+    --diverged    forks: one lineage with several current versions (not
+                  unrelated functions that share a name)
     --unused      functions nothing imports and no function uses as a check
     --uses X      functions that import X directly
     --json        machine-readable output
@@ -2641,11 +2660,14 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     index = storage_pool_index()
     functions = index['functions']
 
-    head_counts: Dict[Tuple[str, str], int] = {}
+    # A name diverged when one lineage has several current versions (a fork);
+    # unrelated functions that happen to share a name are counted apart
+    head_counts: Dict[Tuple[str, str, str], int] = {}
     for func_hash, function in functions.items():
         if func_hash not in index['children']:
+            root = search_lineage_root(index, func_hash)
             for lang, name in function['names'].items():
-                head_counts[(lang, name)] = head_counts.get((lang, name), 0) + 1
+                head_counts[(lang, name, root)] = head_counts.get((lang, name, root), 0) + 1
 
     candidates = []
     for func_hash, function in functions.items():
@@ -2714,7 +2736,10 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
         if not r['current']:
             status.append("superseded")
         if r['diverged']:
-            status.append(f"name diverged: {head_counts[(r['lang'], r['name'])]} current versions")
+            status.append(f"name diverged: {r['forks']} current versions")
+        if r['current'] and r['namesakes']:
+            status.append(f"{r['namesakes']} unrelated function(s) also called {r['name']}: "
+                          f"bb.latest(\"{r['name']}\") is ambiguous")
         print(f"Status: {', '.join(status)}")
         if r['match']:
             print(f"Match: {', '.join(r['match'])}")
@@ -4939,20 +4964,22 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     while file is not None:
         try:
             with open(path, 'r', encoding='utf-8') as f:
-                plan = edit_prepare(f.read(), lang, unreviewed)
+                edited = f.read()
+            # A stale file is refused before anything runs
+            drafted_from = markdown_parse_edit(edited)['implementation']['parent']
+            if drafted_from != hash_value:
+                what = f"the current version of {name} is {hash_value}" if hash_value else f"{name} has no version"
+                since = f"{file} was drafted from {drafted_from}" if drafted_from else f"{file} has no bb:parent marker"
+                print(f"Error: {since}, but {what}. Nothing saved: write a new draft with "
+                      f"bb edit {identifier} NEW_FILE and make your change there.", file=sys.stderr)
+                sys.exit(1)
+            plan = edit_prepare(edited, lang, unreviewed)
             passed = check_report(plan['results'])
         except ValueError as e:
             print(f"Error: {e}", file=sys.stderr)
             passed = False
         if not passed:
             print(f"Nothing saved; {file} is unchanged.", file=sys.stderr)
-            sys.exit(1)
-        drafted_from = plan['implementation'][0]['parent']
-        if drafted_from != hash_value:
-            what = f"the current version of {name} is {hash_value}" if hash_value else f"{name} has no version"
-            since = f"{file} was drafted from {drafted_from}" if drafted_from else f"{file} has no bb:parent marker"
-            print(f"Error: {since}, but {what}. Nothing saved: write a new draft with "
-                  f"bb edit {identifier} NEW_FILE and make your change there.", file=sys.stderr)
             sys.exit(1)
         break
     while file is None:
@@ -6077,7 +6104,7 @@ def _build_parser():
                                help='Include superseded versions (forked by another function)')
     search_parser.add_argument('--untested', action='store_true', help='Only functions without checks')
     search_parser.add_argument('--unreviewed', action='store_true', help='Only functions you have not approved')
-    search_parser.add_argument('--diverged', action='store_true', help='Only names with several current versions')
+    search_parser.add_argument('--diverged', action='store_true', help='Only forks: one lineage with several current versions')
     search_parser.add_argument('--unused', action='store_true',
                                help='Only functions nothing imports and nothing uses as a check')
     search_parser.add_argument('--uses', metavar='X', default=None, help='Only functions that import X directly')

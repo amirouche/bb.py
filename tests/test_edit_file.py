@@ -45,6 +45,7 @@ def test_a_stale_file_is_refused(tmp_path):
     set_code(old, 'def double(n):\n    """Twice n."""\n    return n * 2\n')
     refused = pool.bb('edit', 'double@eng', str(old), '-m', 'late')
     assert refused.returncode == 1 and 'was drafted from' in refused.stderr
+    assert refused.stdout == ''  # refused before anything runs
     assert "Current versions of 'double@eng': 1" in pool.bb('latest', 'double@eng').stdout
 
 
@@ -71,3 +72,26 @@ def test_a_bare_newline_stays_escaped():
     import bb
     assert bb.code_unparse_readable(ast.parse('x = "\\n"\n')) == "x = '\\n'"
     assert bb.code_unparse_readable(ast.parse('x = "a\\nb"\n')) == 'x = """a\nb"""'
+
+
+def test_diverged_lists_forks_not_unrelated_namesakes(tmp_path):
+    pool = Pool(tmp_path)
+    # Two unrelated functions called validates (as two checks often are)
+    one = tmp_path / 'one.md'
+    pool.bb('edit', 'validates@eng', str(one))
+    set_code(one, 'def validates(f):\n    """First."""\n    return f(1) == 2\n')
+    pool.bb('edit', 'validates@eng', str(one), '-m', 'one')
+    other = hash_of(pool.add('validates', 'def validates(f):\n    """Second."""\n    return f(2) == 4\n'))
+    diverged = pool.bb('search', '--diverged')
+    assert other not in diverged.stdout
+    assert 'unrelated function(s) also called validates' in pool.bb('search', 'validates').stdout
+    # A fork: two saves from the same version
+    first = tmp_path / 'first.md'
+    second = tmp_path / 'second.md'
+    pool.bb('edit', f'{other}@eng', str(first))
+    pool.bb('edit', f'{other}@eng', str(second))
+    set_code(first, 'def validates(f):\n    """Second."""\n    return f(2) == 4 and True\n')
+    set_code(second, 'def validates(f):\n    """Second."""\n    return f(3) == 6\n')
+    assert pool.bb('edit', f'{other}@eng', str(first), '-m', 'a').returncode == 0
+    assert pool.bb('edit', f'{other}@eng', str(second), '-m', 'b').returncode == 0
+    assert 'name diverged: 2 current versions' in pool.bb('search', '--diverged').stdout
