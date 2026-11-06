@@ -275,3 +275,14 @@ def test_outdated_names_each_dependency_by_the_callers_own_name(tmp_path):
               if 'out-of-date version' in line]
     # The old code also carries login_page: the caller's own name is shown
     assert status and status[0].endswith('out-of-date version(s): register_page')
+
+
+def test_caller_by_name_lists_only_the_callers_that_use_that_name(tmp_path):
+    pool = Pool(tmp_path)
+    shared = hash_of(pool.edit('login_page', PAGE.format(name='login_page')))
+    assert hash_of(pool.edit('register_page', PAGE.format(name='register_page'))) == shared
+    uses_login = hash_of(pool.edit('show_login', USES.format(name='show_login', dep='login_page')))
+    by_login = pool.bb('caller', 'login_page@eng').stdout
+    by_register = pool.bb('caller', 'register_page@eng').stdout
+    assert uses_login in by_login and uses_login not in by_register
+    assert uses_login in pool.bb('caller', shared).stdout  # by hash: every caller

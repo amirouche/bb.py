@@ -5596,11 +5596,24 @@ def command_caller(identifier: str, as_json: bool = False):
 
     Accepts a hash or function name (with optional @lang suffix).
     Scans all functions in the pool and lists each function that
-    imports the given hash. --json gives hash, name and language.
+    imports the given hash. By name, when one code carries several
+    names, only the callers that use it under that name are listed (so
+    `bb caller old_name@eng` shows when nothing uses an old name any
+    more). --json gives hash, name and language.
     """
-    hash_value = helper_resolve_to_hash(identifier)
-    callers = sorted(func_hash for func_hash, function in storage_scan_functions().items()
+    hash_value, lang = helper_parse_identifier(identifier)
+    functions = storage_scan_functions()
+    callers = sorted(func_hash for func_hash, function in functions.items()
                      if hash_value in code_extract_dependencies(function['normalized_code']))
+    name = identifier.split('@')[0]
+    if not re.fullmatch(r'[0-9a-f]{64}', name) and lang:
+        # One code may carry several names: by name, keep the callers that use it under that name
+        def uses_name(caller_hash):
+            aliases = [m.get('alias_mapping', {}).get(hash_value)
+                       for m in functions[caller_hash]['all_mappings'].get(lang, [])]
+            aliases = [alias for alias in aliases if alias]
+            return not aliases or name in aliases
+        callers = [c for c in callers if uses_name(c)]
 
     if as_json:
         out = []
