@@ -58,6 +58,19 @@ Writing functions for the pool:
   importing the old one keep using it until they are updated:
   `bb edit name@lang --refactor app@lang` saves the change and updates
   everything between app and it (or run `bb refactor` later).
+- `bb edit name@lang FILE` works on an edit file instead of an editor:
+  when FILE is missing, bb writes the function there (a template for a
+  new name) and saves nothing; when it exists, bb saves it. The file is
+  markdown: a `## Implementation` section holding one ```python def
+  block, and an optional `## Checks` section.
+  - For a new name you may write FILE yourself in that format.
+  - For an existing function, start from the file bb writes and keep its
+    `<!-- bb:parent <hash> -->` line: it says which version you changed.
+    A file without it, or drafted from a version that is no longer the
+    current one, is refused: write a new file and make the change there.
+  - After a save, bb rewrites FILE in stored form (single quotes, its own
+    line breaks, `# bb:` notes) so you can go on editing it: read it again
+    before changing it rather than editing the text you remember.
 
 Functions are stored in $BB_DIRECTORY/pool/ (default: ~/.local/bb/pool/)
 as JSON objects containing normalized code and per-language name mappings.
