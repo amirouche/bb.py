@@ -2869,7 +2869,7 @@ def lineage_newer_version(func_hash: str, lang: str = None, name: str = None) ->
 
 
 def lineage_continue(old_hash: str, new_hash: str, comment: str, hash_map: Dict[str, str] = None,
-                     relation: str = 'refactor') -> str:
+                     relation: str = 'refactor', keep: Callable[[Dict[str, Any]], bool] = None) -> str:
     """
     Move every name of old_hash on to new_hash, copying their mappings.
 
@@ -2877,8 +2877,8 @@ def lineage_continue(old_hash: str, new_hash: str, comment: str, hash_map: Dict[
     when old_hash is current nowhere, its latest step per language and
     name, new_hash gets a copy of the step's mapping (references renamed
     through hash_map) and a step after it. Names that share the code move
-    together. A step on a function its lineage already went through is a
-    restore.
+    together, unless keep (given a step record) says a name stays. A step
+    on a function its lineage already went through is a restore.
 
     Returns:
         'restored' when new_hash was an older version, 'new' otherwise
@@ -2899,6 +2899,8 @@ def lineage_continue(old_hash: str, new_hash: str, comment: str, hash_map: Dict[
     moves = []
     for step_id in starts:
         record = steps[step_id]
+        if keep is not None and not keep(record):
+            continue
         lang, mapping_hash = record['lang'], record['mapping']
         data = mapping_load_json(old_hash, lang, mapping_hash)
         if not data:
@@ -3191,13 +3193,18 @@ def search_outdated_refs(index: Dict[str, Any], func_hash: str) -> List[str]:
         if dep in pins or dep not in functions or dep in outdated:
             continue
         for lang in langs:
-            alias = function['mappings'].get(lang, {}).get('alias_mapping', {}).get(dep)
-            if lineage_steps_on(dep, lang):
-                heads = {steps[s]['function'] for s in lineage_follow(dep, lang, lineage_name_for(dep, lang, alias))}
-            else:
-                heads = {steps[s]['function'] for s in lineage_follow(dep)}
-            if heads and dep not in heads:
-                outdated.append(dep)
+            # Every mapping of the language: two names of one code may use dep by two names
+            mappings = function['all_mappings'].get(lang) or [function['mappings'].get(lang, {})]
+            for alias in {m.get('alias_mapping', {}).get(dep) for m in mappings}:
+                if lineage_steps_on(dep, lang):
+                    heads = {steps[s]['function']
+                             for s in lineage_follow(dep, lang, lineage_name_for(dep, lang, alias))}
+                else:
+                    heads = {steps[s]['function'] for s in lineage_follow(dep)}
+                if heads and dep not in heads:
+                    outdated.append(dep)
+                    break
+            if dep in outdated:
                 break
     memo[func_hash] = outdated
     return outdated
@@ -6335,7 +6342,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
 
 
 def refactor_save(old_hash: str, new_hash: str, new_code: str, checks: List[str], comment: str,
-                  hash_map: Dict[str, str]) -> str:
+                  hash_map: Dict[str, str], keep: Callable[[Dict[str, Any]], bool] = None) -> str:
     """
     Save new_hash as the version after old_hash; returns 'new', 'restored' or 'existing'.
 
@@ -6353,7 +6360,7 @@ def refactor_save(old_hash: str, new_hash: str, new_code: str, checks: List[str]
     if not existed:
         object_save(new_hash, new_code, code_create_metadata(), checks=checks,
                     normalization=object_normalization(old_hash))
-    if lineage_continue(old_hash, new_hash, comment, hash_map) == 'restored':
+    if lineage_continue(old_hash, new_hash, comment, hash_map, keep=keep) == 'restored':
         return 'restored'
     return 'existing' if existed else 'new'
 
@@ -6424,9 +6431,18 @@ def command_update(identifier: str, comment: str = None):
             new_code = ast.unparse(code_swap_refs(ast.parse(code), swaps))
             checks = object_load_checks(base)
             result = code_hash_rewritten(new_code, checks)
+            followed = {dep: lineage_name_for(dep, lang, aliases.get(dep)) for dep in swaps}
+
+            def keep(record):
+                """Names of base that use the swapped functions by other names stay (two names, one code)."""
+                if record['lang'] != lang:
+                    return True
+                theirs = mapping_load_json(base, lang, record['mapping']).get('alias_mapping', {})
+                return all(lineage_name_for(dep, lang, theirs.get(dep)) == followed[dep] for dep in swaps)
+
             if result != base:
                 with contextlib.redirect_stdout(io.StringIO()):  # its own Hash: lines would mislead
-                    refactor_save(base, result, new_code, checks, comment, swaps)
+                    refactor_save(base, result, new_code, checks, comment, swaps, keep=keep)
                 rewritten.append((base, result))
         done[(func_hash, name)] = done[(base, name)] = result
         return result
