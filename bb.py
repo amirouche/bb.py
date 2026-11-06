@@ -4339,7 +4339,9 @@ def code_shape_tokens(normalized_code: str) -> List[str]:
             return
         label = type(node).__name__
         if isinstance(node, ast.Constant):
-            label += f":{type(node.value).__name__}"
+            # The value counts too: two helpers that differ only in the store
+            # they name ('orders', 'products') are not the same function
+            label += f":{type(node.value).__name__}:{str(node.value)[:40]}"
         elif isinstance(node, ast.Name):
             label += f":{node.id}"
         elif isinstance(node, ast.Attribute):
@@ -4364,14 +4366,17 @@ def code_shingles(normalized_code: str, size: int = 3) -> Set[Tuple[str, ...]]:
 
 
 def code_find_similar(func_hash: str, exclude: Set[str] = None,
-                      threshold: float = 0.4, min_size: int = 20) -> List[Tuple[float, str]]:
+                      threshold: float = 0.5, min_size: int = 20) -> List[Tuple[float, str]]:
     """
     Find current functions whose structure is close to func_hash.
 
     Similarity is the Jaccard index of 3-grams of the code's shape: AST
-    node types, with variables encoded by distance (see code_shape_tokens).
-    On the transcripts, small edits of a function score 0.48 to 0.88 and
-    unrelated functions or real rewrites at most 0.31, hence 0.4.
+    node types and constant values, with variables encoded by distance (see
+    code_shape_tokens). On the transcripts, small edits of a function score
+    0.48 to 0.88 and unrelated functions or real rewrites at most 0.31. On
+    seven sites built by agents, pages of the same form (login and register)
+    scored 0.41 to 0.45, which is noise to an author, hence 0.5; a helper
+    copied for another store scored 0.81.
     Small functions (under min_size 3-grams, about a three-line body) are
     never reported: they look alike by nature (two stores that each return
     shared(name, factory) score 100%). Checks are left out on both sides for the same reason.
