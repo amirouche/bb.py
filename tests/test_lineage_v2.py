@@ -263,3 +263,15 @@ def test_every_command_but_migrate_refuses_an_old_pool(tmp_path):
         refused = pool.bb(*args)
         assert refused.returncode == 1, args
         assert 'This pool uses the old layout: run `bb migrate`' in refused.stderr
+
+
+def test_outdated_names_each_dependency_by_the_callers_own_name(tmp_path):
+    pool = Pool(tmp_path)
+    pool.edit('login_page', PAGE.format(name='login_page'))
+    pool.edit('register_page', PAGE.format(name='register_page'))
+    pool.edit('show_register', USES.format(name='show_register', dep='register_page'))
+    pool.edit('register_page', 'def register_page():\n    """Sign up."""\n    return "register"\n')
+    status = [line for line in pool.bb('search', '--outdated').stdout.splitlines()
+              if 'out-of-date version' in line]
+    # The old code also carries login_page: the caller's own name is shown
+    assert status and status[0].endswith('out-of-date version(s): register_page')

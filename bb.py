@@ -3290,6 +3290,8 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
         'current': is_current,
         'diverged': is_current and forks > 1,
         'outdated': search_outdated_refs(index, func_hash),
+        # The names this function calls them by (a hash may carry several names)
+        'aliases': dict(mapping.get('alias_mapping') or {}),
         'behind': (behind or {}).get(func_hash, []),
         'untranslated': [list(pair) for pair in search_untranslated(func_hash)],
         'pinned': sorted(set(mapping.get('pinned') or [])),
@@ -3433,7 +3435,7 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
         if r['diverged']:
             status.append(f"name diverged: {r['forks']} current versions")
         if r['outdated']:
-            names = ', '.join(helper_function_label(dep) for dep in r['outdated'])
+            names = ', '.join(r['aliases'].get(dep) or helper_function_label(dep) for dep in r['outdated'])
             status.append(f"uses {len(r['outdated'])} out-of-date version(s): {names}")
         if r['behind']:
             names = ', '.join(helper_function_label(dep) for dep in r['behind'])
