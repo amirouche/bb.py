@@ -57,3 +57,13 @@ def test_rm_name_without_lang_removes_the_whole_function(tmp_path):
     assert removed.returncode == 0 and 'Removed function' in removed.stdout, removed.stdout + removed.stderr
     assert 'No language mappings remain' not in removed.stdout
     assert 'Functions (0 current versions)' in pool.bb('search').stdout
+
+
+def test_refactor_lists_the_functions_it_rewrote(tmp_path):
+    pool, _, _ = chain(tmp_path)
+    pool.bb('update', 'top@eng', '-m', 'catch up')
+    draft = tmp_path / 'qux3.md'
+    pool.bb('edit', 'qux@eng', str(draft))
+    set_code(draft, QUX.format(3))
+    out = pool.bb('edit', 'qux@eng', str(draft), '-m', 'v3', '--refactor', 'top@eng').stdout
+    assert 'Rewrote 1 function(s) on the way' in out and 'mid:' in out and 'stale' in out

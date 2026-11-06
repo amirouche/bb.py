@@ -5579,6 +5579,8 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     # The saved hash last, where a reader (or `tail -1`) looks for it
     if hash_value and prepared['hash'] != hash_value:
         print(f"Parent: {section['parent']}")
+    elif hash_value:
+        print("Documentation saved: the code did not change, so the hash stays the same.")
     print(f"Hash: {prepared['hash']}")
 
     if refactor_root and prepared['hash'] != hash_value:
@@ -5863,6 +5865,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
     # Build hash replacement map for recursive refactoring
     # We need to refactor all functions in the chain that depend on from_hash
     hash_map = {from_hash: to_hash}  # Maps old_hash -> new_hash
+    rewritten: List[Tuple[str, str]] = []
 
     # Process functions in topological order (dependencies first)
     for dep_hash in all_deps:
@@ -5910,6 +5913,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
             new_dep_hash = code_compute_function_hash(code_without_docstring, dep_checks)
 
             refactor_save(dep_hash, new_dep_hash, new_dep_code, dep_checks, comment, hash_map)
+            rewritten.append((dep_hash, new_dep_hash))
 
             # Track this replacement for subsequent functions
             hash_map[dep_hash] = new_dep_hash
@@ -5937,7 +5941,13 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
     what_checks = object_load_checks(what_hash)
     new_hash = code_compute_function_hash(code_without_docstring, what_checks)
 
-    if refactor_save(what_hash, new_hash, new_normalized_code, what_checks, comment, hash_map) == 'restored':
+    saved = refactor_save(what_hash, new_hash, new_normalized_code, what_checks, comment, hash_map)
+    if rewritten:
+        print(f"Rewrote {len(rewritten)} function(s) on the way, deepest first:")
+        for old, new in rewritten:
+            print(f"  {helper_function_label(new)}: {old[:12]}... -> {new[:12]}...")
+        print("Drafts open on these functions are now stale: write them again.")
+    if saved == 'restored':
         print(f'restored: {new_hash}')
     else:
         print(f'new hash: {new_hash}')
