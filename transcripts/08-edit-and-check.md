@@ -152,13 +152,13 @@ PASS check_pi_n3
 PASS check_pi_n5
 PASS check_pi_n8
 5 checks: 5 passed
-Hash: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
-Parent: ddda76213f839382c1f0df754b73d47214cf05859da05a14fe690eff32c24015
 Check: 1a98a8c92e2e8401f5b39ea51a5a3729eb756882860c54e8ec5c653fc6b5e620 check_pi_n1
 Check: a658651655db54709ff2e2490f4ba96ebfd3ccbf27b45e043079177ad365ccd7 check_pi_n2
 Check: 6ace86da1614319cf367ee008158c90486c224f0c9282f570d1dde66683a8b26 check_pi_n3
 Check: 4487a0ba57b01c388b6edc53718257681a237607e616e3e765afa0b496159892 check_pi_n5
 Check: 451a1d221bbeb6e40daa71aedbb82fea0a94eb3738dfa59c3b0aef94faa51025 check_pi_n8
+Parent: ddda76213f839382c1f0df754b73d47214cf05859da05a14fe690eff32c24015
+Hash: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
 ```
 
 ### Step 4: Read before running
@@ -399,8 +399,8 @@ PASS check_pi_n3
 PASS check_pi_n5
 PASS check_pi_n8
 5 checks: 5 passed
-Hash: 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670
 Parent: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
+Hash: 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670
 ```
 
 ### Step 9: The name now points to the rewrite, which carries the same checks
@@ -485,8 +485,8 @@ def check_pi_n8(compute_pi):
 ```bash
 $ EDITOR="cp n8_tighter.md" bb edit check_pi_n8@eng -m "Tighter bound"
 No checks.
-Hash: e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f
 Parent: 451a1d221bbeb6e40daa71aedbb82fea0a94eb3738dfa59c3b0aef94faa51025
+Hash: e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f
 ```
 
 ### Step 12: Editing the fork again shows where it came from
@@ -516,8 +516,8 @@ PASS check_pi_n3
 PASS check_pi_n5
 PASS check_pi_n8
 5 checks: 5 passed
-Hash: 166d4a9cdf95cc983e6d9bbc77a71512cc5877210d5a4453b2aa89791cba47e3
 Parent: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
+Hash: 166d4a9cdf95cc983e6d9bbc77a71512cc5877210d5a4453b2aa89791cba47e3
 ```
 
 ### Step 14: The name now has two current versions

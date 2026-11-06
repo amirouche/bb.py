@@ -5276,9 +5276,6 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     discard()
     rewrite_file(prepared['hash'])
 
-    print(f"Hash: {prepared['hash']}")
-    if hash_value and prepared['hash'] != hash_value:
-        print(f"Parent: {section['parent']}")
     for name, check_hash in new_checks:
         print(f"Check: {check_hash} {name}")
     was = {}
@@ -5292,6 +5289,10 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     for name, func_hash in sorted(plan.get('resolved', {}).items()):
         changed = was.get(name) and was[name] != func_hash
         print(f"Import: {name} -> {func_hash}" + (f" (was {was[name]})" if changed else ""))
+    # The saved hash last, where a reader (or `tail -1`) looks for it
+    if hash_value and prepared['hash'] != hash_value:
+        print(f"Parent: {section['parent']}")
+    print(f"Hash: {prepared['hash']}")
 
     if refactor_root and prepared['hash'] != hash_value:
         print(f"Updating {refactor} to it:")
