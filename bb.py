@@ -47,7 +47,8 @@ Writing functions for the pool:
   edit brings a function up to date: a function keeps the versions it was
   saved with until someone edits it (its debt, listed by bb search
   --outdated and noted in drafts as `# bb: out of date`). What you write
-  with bb.ref stays pinned across edits.
+  with bb.ref stays pinned across edits. `bb update app@lang` pays the
+  debt of app and everything it uses at once.
 - Checks run the function they test, with what it imports from the pool.
   bb runs only code you have read: functions you saved yourself (bb add,
   bb edit, recorded in your private state) and functions you approved
@@ -63,7 +64,20 @@ Writing functions for the pool:
   `bb add` or `bb edit` stores a new function with a new hash; functions
   importing the old one keep using it until they are updated:
   `bb edit name@lang --refactor app@lang` saves the change and updates
-  everything between app and it (or run `bb refactor` later).
+  everything between app and it, and lists what it rewrote (or run
+  `bb update app@lang` later: it brings app and everything it uses to
+  their current versions in one step, keeping pins).
+- Finding functions: `bb search` alone lists every current function;
+  `bb search WORDS` searches names, docs and code; `bb latest
+  name@lang --hash` prints only the current hash (for scripts); `bb log`
+  is the history, with names. After a save, a note may list other
+  functions whose code looks like the one you saved ("NAME looks like
+  these other functions"): use one instead, or ignore the note if yours
+  is meant to be different. Small functions are never compared.
+- Two names cannot share identical code: bb follows versions by
+  function, so a second name on the same code would follow the first
+  one's edits. Give each its own code (a placeholder can say which page
+  it stands for).
 - `bb translate name@lang TARGET FILE` translates through a file: when
   FILE is missing, bb writes the function in its language with a
   `- name -> ` line to fill in for each name (and for each pool function
@@ -2880,7 +2894,9 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
                   unrelated functions that share a name)
     --unused      functions nothing imports and no function uses as a check
     --outdated    functions using versions that are no longer current (their
-                  debt: editing one brings it up to date; pins are kept)
+                  debt: editing one brings it up to date; pins are kept),
+                  and the functions above them that must follow (behind);
+                  ends with the `bb update` commands that settle it all
     --uses X      functions that import X directly
     --json        machine-readable output
     ```

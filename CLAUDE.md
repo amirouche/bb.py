@@ -166,7 +166,7 @@ def _bb_v_0(_bb_v_1):
 
 **From storage (denormalization)**:
 - Each `bb.ref('<hash>')` becomes its alias, bound once after the imports (`import bb`, then `helper = bb.ref('<hash>')`)
-- `bb show` and `bb edit` write that binding by name, `helper = bb.latest('helper')`, whenever `helper@lang` has one current version, so saving an edit brings the function up to date (gradual propagation: a function nobody edits keeps its versions, its debt; `bb search --outdated` lists it, drafts note it with `# bb: out of date`)
+- `bb show` and `bb edit` write that binding by name, `helper = bb.latest('helper')`, whenever `helper@lang` has one current version, so saving an edit brings the function up to date (gradual propagation: a function nobody edits keeps its versions, its debt; `bb search --outdated` lists it and what must follow it, `bb update NAME@lang` pays it at once, drafts note it with `# bb: out of date`)
 - References the author wrote as `bb.ref("<hash>")` are recorded in the mapping's `pinned` list (not in the hash) and stay pinned in drafts
 
 Objects stored before normalization 4 hold `from bb.pool import object_<hash>` and `object_<hash>._bb_v_0(...)`; they load, display and refactor as before.
