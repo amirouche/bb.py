@@ -5444,18 +5444,57 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
                              f"{old_hash}@{lang}@{mapping_hash}", pinned=[hash_map.get(h, h) for h in pins])
         return 'new'
 
+    def newer_version(func_hash):
+        """
+        The one current version of func_hash's lineage, when it is not func_hash.
+
+        The root may use a function that was edited since (saved without
+        --refactor): rewriting the version the root uses would fork it beside
+        that edit, so the refactor builds on the current version instead.
+        With several current versions (a fork) there is no single one: None.
+        """
+        functions, restores = storage_scan_functions(), storage_scan_restores()
+        successors = lineage_successors(functions, restores)
+        heads, stack, seen = set(), [func_hash], set()
+        while stack:
+            node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            if successors.get(node):
+                stack.extend(successors[node])
+            else:
+                heads.add(lineage_code(node, restores))
+        if len(heads) > 1:
+            print(f"Warning: {helper_function_label(func_hash)} has {len(heads)} current versions; "
+                  f"refactoring the one the root uses ({func_hash[:12]}...)", file=sys.stderr)
+            return None
+        head = heads.pop() if heads else func_hash
+        return head if head != func_hash and head in functions else None
+
     # Process functions in topological order (dependencies first)
     for dep_hash in all_deps:
         if dep_hash == what_hash:
             break  # Stop before processing what_hash itself
 
-        # Load this dependency's code
-        dep_data = object_load(dep_hash)
+        if dep_hash in hash_map:
+            continue  # what is being replaced (FROM), or already rewritten
+        # Build on the function's current version when it was edited since the root saw it
+        base = newer_version(dep_hash) or dep_hash
+        dep_data = object_load(base)
         dep_code = dep_data['normalized_code']
 
         # Check if this function depends on any hash in our replacement map
         direct_deps = code_extract_dependencies(dep_code)
         needs_refactor = any(d in hash_map for d in direct_deps)
+
+        if base != dep_hash:
+            print(f"  {helper_function_label(dep_hash)}: using its current version {base[:12]}... "
+                  f"(the root used {dep_hash[:12]}...)")
+            if not needs_refactor:
+                hash_map[dep_hash] = base
+                continue
+        dep_hash_used, dep_hash = dep_hash, base
 
         if needs_refactor:
             # Refactor this function with all accumulated replacements
@@ -5482,6 +5521,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
 
             # Track this replacement for subsequent functions
             hash_map[dep_hash] = new_dep_hash
+            hash_map[dep_hash_used] = new_dep_hash
 
     # Now refactor what_hash itself with all accumulated replacements
     tree = code_swap_refs(ast.parse(normalized_code), hash_map)
