@@ -64,6 +64,12 @@ Writing functions for the pool:
   importing the old one keep using it until they are updated:
   `bb edit name@lang --refactor app@lang` saves the change and updates
   everything between app and it (or run `bb refactor` later).
+- `bb translate name@lang TARGET FILE` translates through a file: when
+  FILE is missing, bb writes the function in its language with a
+  `- name -> ` line to fill in for each name (and for each pool function
+  it uses, prefilled when that one is already translated), and sections
+  for the docstring and documentation; when FILE exists, bb saves it as
+  TARGET's translation. The code and its hash do not change.
 - `bb edit name@lang FILE` works on an edit file instead of an editor:
   when FILE is missing, bb writes the function there (a template for a
   new name) and saves nothing; when it exists, bb saves it. The file is
@@ -3011,16 +3017,144 @@ def command_run(identifier: str, func_args: list = None):
         sys.exit(1)
 
 
-def command_translate(identifier_with_lang: str, target_lang: str, recursive: bool = False):
+TRANSLATE_MARKER_RE = re.compile(r'^<!--\s*bb:translate\s+([0-9a-f]{64})@(\w+)@([0-9a-f]{64})\s+(\w+)\s*-->$')
+TRANSLATE_LINE_RE = re.compile(r'^-\s+(\S+)(?:\s+\(([0-9a-f]{12,64})\.*\))?\s*->\s*(.*?)\s*$')
+
+
+def translate_render_file(hash_value: str, source_lang: str, target_lang: str) -> str:
+    """
+    A translation file: the function in its source language, then what to fill in.
+
+    `## Names` and `## Aliases` hold one `- source -> target` line per
+    variable name and per pool function the code names; `## Docstring` and
+    `## Documentation` hold the target text. The marker says which
+    translation the file was made from.
+    """
+    mapping_hash = mapping_select(hash_value, source_lang)
+    normalized_code, names, aliases, docstring = code_load(hash_value, source_lang, mapping_hash)
+    markdown = mapping_load_markdown(hash_value, source_lang, mapping_hash)
+    source = code_denormalize(code_replace_docstring(normalized_code, docstring), names, aliases)
+    title = names.get('_bb_v_0', hash_value[:12])
+    out = [f"# Translate {title} from {source_lang} into {target_lang}", '',
+           f"<!-- bb:translate {hash_value}@{source_lang}@{mapping_hash} {target_lang} -->", '',
+           f"Fill in each name after `->`, then the docstring and the documentation in {target_lang},",
+           f"and run the same bb translate command again to save. The code does not change.", '',
+           f"## Source ({source_lang})", '', '```python', source.rstrip('\n'), '```', '']
+    if markdown:
+        out += [markdown.rstrip('\n'), '']
+    out += ['## Names', '']
+    out += [f"- {names[k]} -> " for k in sorted(names, key=lambda k: int(k.rsplit('_', 1)[1]))]
+    if aliases:
+        out += ['', '## Aliases', '']
+        for dep, alias in sorted(aliases.items(), key=lambda kv: kv[1]):
+            # A pool function's name in the target language, when it has one
+            known = ''
+            if target_lang in storage_list_languages(dep):
+                known = mapping_load_json(dep, target_lang, mapping_select(dep, target_lang)).get(
+                    'name_mapping', {}).get('_bb_v_0', '')
+            out.append(f"- {alias} ({dep[:12]}...) -> {known}")
+    out += ['', f"## Docstring ({target_lang})", '', '', f"## Documentation ({target_lang})", '', '']
+    return '\n'.join(out)
+
+
+def translate_parse_file(text: str, hash_value: str, source_lang: str, target_lang: str) -> Dict[str, Any]:
+    """
+    Read a filled-in translation file into a mapping for target_lang.
+
+    Raises:
+        ValueError: listing every missing or invalid name, a marker for
+        another function or language, or a source translation that changed
+    """
+    lines = text.split('\n')
+    marker = next((TRANSLATE_MARKER_RE.match(l.strip()) for l in lines if TRANSLATE_MARKER_RE.match(l.strip())), None)
+    if marker is None:
+        raise ValueError("no <!-- bb:translate ... --> line: start from the file bb translate writes")
+    if (marker.group(1), marker.group(2), marker.group(4)) != (hash_value, source_lang, target_lang):
+        raise ValueError(f"the file translates {marker.group(1)[:12]}...@{marker.group(2)} into "
+                         f"{marker.group(4)}, not this function and these languages")
+    if marker.group(3) != mapping_select(hash_value, source_lang):
+        raise ValueError(f"the {source_lang} translation changed since the file was written: write a new file")
+
+    sections: Dict[str, List[str]] = {}
+    current = None
+    fence = None
+    for line in lines:
+        opening = re.match(r'^(`{3,}|~{3,})', line.strip())
+        if fence is None and line.startswith('## '):
+            current = line[3:].strip()
+            sections[current] = []
+            continue
+        if opening:
+            fence = None if fence and opening.group(1)[0] == fence[0] and len(opening.group(1)) >= len(fence) \
+                else (fence or opening.group(1))
+        if current is not None:
+            sections[current].append(line)
+
+    _, names, aliases, _ = code_load(hash_value, source_lang, marker.group(3))
+    by_source = {v: k for k, v in names.items()}
+    by_alias = {v: k for k, v in aliases.items()}
+    problems = []
+
+    def read(section, known):
+        found = {}
+        for line in sections.get(section, []):
+            m = TRANSLATE_LINE_RE.match(line.strip())
+            if not m:
+                continue
+            source_name, target = m.group(1), m.group(3)
+            if source_name not in known:
+                problems.append(f"{section}: '{source_name}' is not in the function")
+            elif not target:
+                problems.append(f"{section}: '{source_name}' has no {target_lang} name")
+            elif not target.isidentifier() or keyword.iskeyword(target):
+                problems.append(f"{section}: '{target}' is not a valid name")
+            else:
+                found[known[source_name]] = target
+        for source_name, key in known.items():
+            if key not in found and not any(p.startswith(f"{section}: '{source_name}'") for p in problems):
+                problems.append(f"{section}: '{source_name}' is missing")
+        return found
+
+    target_names = read('Names', by_source)
+    target_aliases = read('Aliases', by_alias)
+    taken = {}
+    for key, target in list(target_names.items()) + [(f"alias {h[:12]}", a) for h, a in target_aliases.items()]:
+        if target in taken:
+            problems.append(f"'{target}' is given to two names")
+        taken[target] = key
+        if target in PYTHON_BUILTINS or target == 'bb':
+            problems.append(f"'{target}' would hide a Python built-in or bb")
+    if problems:
+        raise ValueError("the translation is not complete:\n" + '\n'.join(f"  {p}" for p in problems))
+
+    def text_of(section):
+        return '\n'.join(sections.get(section, [])).strip()
+
+    return {'name_mapping': target_names, 'alias_mapping': target_aliases,
+            'docstring': text_of(f"Docstring ({target_lang})"),
+            'markdown': text_of(f"Documentation ({target_lang})"),
+            'source_translation': f"{hash_value}@{source_lang}@{marker.group(3)}"}
+
+
+def command_translate(identifier_with_lang: str, target_lang: str, recursive: bool = False,
+                      file: str = None, comment: str = None):
     """
     Add a translation for an existing function.
 
     Accepts a hash or function name with required @lang suffix for source language.
     Prompts for new variable names and docstring in target language.
 
+    With FILE, no prompts: when FILE is missing, bb writes the function
+    there with a line to fill in for each name (and each pool function it
+    names), and sections for the docstring and documentation, and saves
+    nothing; when FILE exists, bb saves it as the target language's
+    translation (the code and hash do not change). A file made from a
+    source translation that changed since is refused.
+
     Examples:
         bb translate abc123...@eng fra
         bb translate compute_pi@eng fra
+        bb translate compute_pi@eng fra compute_pi.fra.md   # write, fill in, run again to save
     """
     # @lang is required for translate (source language)
     if '@' not in identifier_with_lang:
@@ -3032,6 +3166,30 @@ def command_translate(identifier_with_lang: str, target_lang: str, recursive: bo
     if len(target_lang) < 3 or len(target_lang) > 256:
         print(f"Error: Target language code must be 3-256 characters. Got: {target_lang}", file=sys.stderr)
         sys.exit(1)
+
+    if file is not None:
+        if recursive:
+            print("Error: --recursive does not go with FILE: translate one function per file", file=sys.stderr)
+            sys.exit(1)
+        if not os.path.exists(file):
+            with open(file, 'w', encoding='utf-8') as f:
+                f.write(translate_render_file(hash_value, source_lang, target_lang))
+            print(f"Wrote {file}. Fill it in, then run the same command again to save it.")
+            return
+        with open(file, 'r', encoding='utf-8') as f:
+            try:
+                parsed = translate_parse_file(f.read(), hash_value, source_lang, target_lang)
+            except ValueError as e:
+                print(f"Error: {file}: {e}\nNothing saved.", file=sys.stderr)
+                sys.exit(1)
+        pins = mapping_load_json(hash_value, source_lang, mapping_select(hash_value, source_lang)).get('pinned')
+        with contextlib.redirect_stdout(io.StringIO()):
+            mapping_hash = mapping_save(hash_value, target_lang, parsed['docstring'], parsed['name_mapping'],
+                                        parsed['alias_mapping'], comment or "", parsed['markdown'],
+                                        parent=parsed['source_translation'], pinned=pins)
+        print(f"Translation: {hash_value}@{target_lang}@{mapping_hash}")
+        print(f"Name: {parsed['name_mapping'].get('_bb_v_0')}@{target_lang}")
+        return
 
     # Load source function
     try:
@@ -6366,7 +6524,10 @@ def _build_parser():
     translate_parser = subparsers.add_parser('translate', help='Add translation for existing function')
     translate_parser.add_argument('identifier', help='Hash or name with @lang suffix (e.g., compute_pi@eng)')
     translate_parser.add_argument('target_lang', help='Target language code (e.g., fra, spa)')
+    translate_parser.add_argument('file', nargs='?', default=None,
+                                  help='Translation file instead of prompts: written when missing, saved from when present')
     translate_parser.add_argument('-r', '--recursive', action='store_true', help='Recursively translate dependencies')
+    translate_parser.add_argument('--comment', '-m', default=None, help='Comment for the translation (with FILE)')
 
     # Rm command
     rm_parser = subparsers.add_parser('rm', help='Remove function or language mapping')
@@ -6514,7 +6675,8 @@ def main():
     elif args.command == 'show':
         code_show(args.identifier)
     elif args.command == 'translate':
-        command_translate(args.identifier, args.target_lang, recursive=args.recursive)
+        command_translate(args.identifier, args.target_lang, recursive=args.recursive,
+                          file=args.file, comment=args.comment)
     elif args.command == 'rm':
         command_rm(args.identifier, force=args.force)
     elif args.command == 'run':
