@@ -28,9 +28,9 @@ def test_object_save_creates_object_json(mock_bb_dir):
 
     bb.object_save(test_hash, normalized_code, metadata)
 
-    # Check that object.json was created
+    # Check that object.json was created: pool/functions/XX/YYYY.../object.json
     pool_dir = mock_bb_dir / '.bb' / 'pool'
-    func_dir = pool_dir / test_hash[:2] / test_hash[2:]
+    func_dir = pool_dir / 'functions' / test_hash[:2] / test_hash[2:]
     object_json = func_dir / 'object.json'
 
     assert object_json.exists()
@@ -53,9 +53,7 @@ def test_object_save_no_language_data(mock_bb_dir):
 
     bb.object_save(test_hash, normalized_code, metadata)
 
-    pool_dir = mock_bb_dir / '.bb' / 'pool'
-    func_dir = pool_dir / test_hash[:2] / test_hash[2:]
-    object_json = func_dir / 'object.json'
+    object_json = mock_bb_dir / '.bb' / 'pool' / 'functions' / test_hash[:2] / test_hash[2:] / 'object.json'
 
     with open(object_json, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -83,11 +81,9 @@ def test_mapping_save_creates_mapping_json(mock_bb_dir):
     # Now save the mapping
     mapping_hash = bb.mapping_save(func_hash, lang, docstring, name_mapping, alias_mapping, comment)
 
-    # Check that mapping.json was created
+    # Check that the mapping was created: pool/mappings/XX/YYYY.../<lang>/<mapping hash>.json
     pool_dir = mock_bb_dir / '.bb' / 'pool'
-    func_dir = pool_dir / func_hash[:2] / func_hash[2:]
-    mapping_dir = func_dir / lang / mapping_hash[:2] / mapping_hash[2:]
-    mapping_json = mapping_dir / 'mapping.json'
+    mapping_json = pool_dir / 'mappings' / func_hash[:2] / func_hash[2:] / lang / f'{mapping_hash}.json'
 
     assert mapping_json.exists()
 
@@ -99,6 +95,9 @@ def test_mapping_save_creates_mapping_json(mock_bb_dir):
     assert data['name_mapping'] == name_mapping
     assert data['alias_mapping'] == alias_mapping
     assert data['comment'] == comment
+    # A mapping names what it maps, and no longer has a parent: lineage steps say that
+    assert (data['function'], data['lang']) == (func_hash, lang)
+    assert 'parent' not in data
 
 
 def test_mapping_save_returns_hash(mock_bb_dir):
@@ -121,12 +120,13 @@ def test_mapping_save_returns_hash(mock_bb_dir):
     assert all(c in '0123456789abcdef' for c in mapping_hash)
 
     # Verify it matches computed hash
-    expected_hash = bb.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment)
+    expected_hash = bb.code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment,
+                                                 function=func_hash, lang=lang)
     assert mapping_hash == expected_hash
 
 
 def test_mapping_save_deduplication(mock_bb_dir):
-    """Test that identical mappings share the same file (deduplication)"""
+    """Identical mappings of one function share one file; another function's mapping is its own"""
     func_hash1 = "aaaa" + "0" * 60
     func_hash2 = "bbbb" + "0" * 60
     lang = "eng"
@@ -143,8 +143,11 @@ def test_mapping_save_deduplication(mock_bb_dir):
     mapping_hash1 = bb.mapping_save(func_hash1, lang, docstring, name_mapping, alias_mapping, comment)
     mapping_hash2 = bb.mapping_save(func_hash2, lang, docstring, name_mapping, alias_mapping, comment)
 
-    # Hashes should be identical
-    assert mapping_hash1 == mapping_hash2
+    # The function is part of the mapping: different hashes
+    assert mapping_hash1 != mapping_hash2
+    # Saving the same mapping of the same function again is the same file
+    assert bb.mapping_save(func_hash1, lang, docstring, name_mapping, alias_mapping, comment) == mapping_hash1
+    assert len(bb.mappings_list(func_hash1, lang)) == 1
 
 
 def test_mapping_save_different_comments_different_hashes(mock_bb_dir):
@@ -200,18 +203,19 @@ def test_write_integration_full_structure(mock_bb_dir):
 
     # Verify directory structure
     pool_dir = mock_bb_dir / '.bb' / 'pool'
-    func_dir = pool_dir / func_hash[:2] / func_hash[2:]
+    func_dir = pool_dir / 'functions' / func_hash[:2] / func_hash[2:]
+    mapping_dir = pool_dir / 'mappings' / func_hash[:2] / func_hash[2:]
 
     # Check object.json exists
     assert (func_dir / 'object.json').exists()
 
     # Check language directories exist
-    assert (func_dir / 'eng').exists()
-    assert (func_dir / 'fra').exists()
+    assert (mapping_dir / 'eng').exists()
+    assert (mapping_dir / 'fra').exists()
 
     # Check mapping files exist
-    assert (func_dir / 'eng' / eng_hash[:2] / eng_hash[2:] / 'mapping.json').exists()
-    assert (func_dir / 'fra' / fra_hash[:2] / fra_hash[2:] / 'mapping.json').exists()
+    assert (mapping_dir / 'eng' / f'{eng_hash}.json').exists()
+    assert (mapping_dir / 'fra' / f'{fra_hash}.json').exists()
 
 
 # ============================================================================
@@ -414,8 +418,7 @@ def test_mapping_save_markdown_key(mock_bb_dir):
     plain = bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "")
     documented = bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "", markdown="Prose")
 
-    pool_dir = mock_bb_dir / '.bb' / 'pool' / func_hash[:2] / func_hash[2:] / 'eng'
-    with open(pool_dir / plain[:2] / plain[2:] / 'mapping.json', encoding='utf-8') as f:
+    with open(bb.storage_mapping_path(func_hash, "eng", plain), encoding='utf-8') as f:
         assert 'markdown' not in json.load(f)
     assert bb.mapping_load_markdown(func_hash, "eng", plain) == ""
     assert bb.mapping_load_markdown(func_hash, "eng", documented) == "Prose"
@@ -433,21 +436,32 @@ def test_mapping_select(mock_bb_dir):
 
 
 def _save_version(func_hash, names, parent=None, created='2026-01-01T00:00:00Z'):
-    """Save a function object with one mapping per language: {lang: name}."""
-    metadata = {'created': created}
-    if parent:
-        metadata['parent'] = parent
+    """
+    Save a function object with one mapping per language, {lang: name}, and
+    a lineage step for each: after parent's step in that language (an edit,
+    or a rename when the name differs), else an add.
+    """
+    metadata = {'created': created, 'name': '', 'email': ''}
     bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), metadata)
+    first = None
     for lang, name in names.items():
-        bb.mapping_save(func_hash, lang, "", {"_bb_v_0": name}, {}, "")
+        mapping = bb.mapping_save(func_hash, lang, "", {"_bb_v_0": name}, {}, "")
+        previous = bb.lineage_step_for(parent, lang) if parent else None
+        relation, translates = 'add', None
+        if previous:
+            relation = 'rename' if bb.lineage_index()['steps'][previous]['name'] != name else 'edit'
+        elif first:
+            relation, translates = 'translate', first  # the other languages translate the first one
+        step = bb.lineage_save(previous, func_hash, lang, mapping, relation, translates=translates, metadata=metadata)
+        first = first or step
 
 
 def test_resolve_name_prefers_fork_over_parent(mock_bb_dir):
     """A fork wins over its parent even when both share the same creation time"""
-    parent_hash, child_hash = "aaaa" + "0" * 60, "bbbb" + "0" * 60
-    # Save the fork first so directory order cannot explain the result
-    _save_version(child_hash, {"eng": "f"}, parent=parent_hash)
+    child_hash, parent_hash = "aaaa" + "0" * 60, "bbbb" + "0" * 60
+    # The fork sorts first, so hash order cannot explain the result
     _save_version(parent_hash, {"eng": "f"})
+    _save_version(child_hash, {"eng": "f"}, parent=parent_hash)
     assert bb.helper_resolve_name("f", "eng") == (child_hash, "eng")
 
 
@@ -463,29 +477,30 @@ def test_resolve_name_refuses_diverged_forks(mock_bb_dir, capsys):
     assert "ambiguous" in err and one in err and two in err
 
 
-def test_resolve_name_follows_lineage_across_languages(mock_bb_dir, capsys):
-    """A French name finds the current version even if it was forked in English only"""
+def test_resolve_name_waits_for_translation_in_other_languages(mock_bb_dir, capsys):
+    """An English edit moves the English name only: the French name waits for a translation"""
     root, fork = "aaaa" + "0" * 60, "bbbb" + "0" * 60
     _save_version(root, {"eng": "double", "fra": "doubler"})
     _save_version(fork, {"eng": "double"}, parent=root)
 
-    # The fork has no French mapping: say so instead of returning the old version
-    with pytest.raises(SystemExit):
-        bb.helper_resolve_name("doubler", "fra")
-    err = capsys.readouterr().err
-    assert f"bb translate {fork}@eng fra" in err
-    assert f"{root}@fra" in err
-
-    # Without a language, the French name still leads to the fork
-    assert bb.helper_resolve_name("doubler") == (fork, "eng")
+    assert bb.helper_resolve_name("double", "eng") == (fork, "eng")
+    assert bb.helper_resolve_name("doubler", "fra") == (root, "fra")
+    assert bb.helper_resolve_name("doubler") == (root, "fra")
+    [french] = bb.lineage_current_steps("fra", "doubler")
+    assert bb.lineage_waiting(french) == ["eng"]
+    [english] = bb.lineage_current_steps("eng", "double")
+    assert bb.lineage_waiting(english) == []
 
 
-def test_resolve_name_rename_supersedes(mock_bb_dir):
-    """A fork that renamed the function is the current version of the old name"""
+def test_resolve_name_rename_supersedes(mock_bb_dir, capsys):
+    """A rename ends the old name's lineage: only the new name is current"""
     root, renamed = "aaaa" + "0" * 60, "bbbb" + "0" * 60
     _save_version(root, {"eng": "old_name"})
     _save_version(renamed, {"eng": "new_name"}, parent=root)
-    assert bb.helper_resolve_name("old_name", "eng") == (renamed, "eng")
+    assert bb.helper_resolve_name("new_name", "eng") == (renamed, "eng")
+    with pytest.raises(SystemExit):
+        bb.helper_resolve_name("old_name", "eng")
+    assert "No function found with name: old_name@eng" in capsys.readouterr().err
 
 
 # ============================================================================
@@ -546,15 +561,16 @@ def test_worklog_pick_message_prefers_requested_then_config():
 # Tests for mapping parents
 # ============================================================================
 
-def test_mapping_hash_includes_parent_only_when_set():
-    """An empty parent keeps old hashes; a parent changes the hash"""
+def test_mapping_hash_includes_function_and_language():
+    """A mapping names what it maps: the same names for another function or language hash apart"""
     args = ("Doc", {"_bb_v_0": "f"}, {}, "", "")
-    assert bb.code_compute_mapping_hash(*args) == bb.code_compute_mapping_hash(*args, parent="")
-    assert bb.code_compute_mapping_hash(*args, parent="x@eng@y") != bb.code_compute_mapping_hash(*args)
+    one = bb.code_compute_mapping_hash(*args, function="a" * 64, lang="eng")
+    assert one != bb.code_compute_mapping_hash(*args, function="b" * 64, lang="eng")
+    assert one != bb.code_compute_mapping_hash(*args, function="a" * 64, lang="fra")
 
 
-def test_mapping_select_prefers_child_over_parent(mock_bb_dir):
-    """A mapping named as parent by another of the same function and language is superseded"""
+def test_mapping_select_prefers_documented_over_previous(mock_bb_dir):
+    """A 'document' step supersedes the mapping it comes after"""
     func_hash = "abcd" + "0" * 60
     bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
 
@@ -562,23 +578,27 @@ def test_mapping_select_prefers_child_over_parent(mock_bb_dir):
     # so only lineage (not alphabetical order) can explain the choice
     for i in range(50):
         original = bb.mapping_save(func_hash, "eng", f"v{i}", {"_bb_v_0": "f"}, {}, "")
-        child = bb.mapping_save(func_hash, "eng", "documented", {"_bb_v_0": "f"}, {}, "",
-                                parent=f"{func_hash}@eng@{original}")
+        child = bb.mapping_save(func_hash, "eng", "documented", {"_bb_v_0": "f"}, {}, "")
         if child > original:
             break
+    first = bb.lineage_save(None, func_hash, "eng", original, 'add')
+    bb.lineage_save(first, func_hash, "eng", child, 'document')
 
     assert child in bb.mapping_leaves(func_hash, "eng")
     assert original not in bb.mapping_leaves(func_hash, "eng")
-    assert bb.mapping_load_json(func_hash, "eng", child)['parent'] == f"{func_hash}@eng@{original}"
+    assert bb.mapping_select(func_hash, "eng") == child
 
 
-def test_mapping_parent_in_other_language_does_not_supersede(mock_bb_dir):
-    """A translation's parent lives in another language, so both stay current"""
+def test_translation_in_other_language_does_not_supersede(mock_bb_dir):
+    """A translation is a step in another language, so both stay current"""
     func_hash = "abcd" + "0" * 60
     bb.object_save(func_hash, normalize_code_for_test("def _bb_v_0(): pass"), bb.code_create_metadata())
     english = bb.mapping_save(func_hash, "eng", "", {"_bb_v_0": "f"}, {}, "")
-    bb.mapping_save(func_hash, "fra", "", {"_bb_v_0": "f"}, {}, "", parent=f"{func_hash}@eng@{english}")
+    french = bb.mapping_save(func_hash, "fra", "", {"_bb_v_0": "f"}, {}, "")
+    source = bb.lineage_save(None, func_hash, "eng", english, 'add')
+    bb.lineage_save(None, func_hash, "fra", french, 'translate', translates=source)
     assert bb.mapping_leaves(func_hash, "eng") == [english]
+    assert bb.helper_find_heads_by_name("f", "fra")[0] == [func_hash]
 
 
 # ============================================================================

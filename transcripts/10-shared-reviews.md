@@ -48,7 +48,7 @@ Her approval is saved privately, and published as a signed review.
 ```bash
 $ env BB_STATE_DIRECTORY=alice bb add show_double_eng.py@eng
 Hash: 622a6c87530d8dac589db37c98dc6608cff82ae935ef0805d5d354ac4b731ee8
-Mapping hash: ec15d37782441af1f3358961b820c25e6e638e40e13232caac8f3ccc3c503432
+Mapping hash: 53a63e33c5dfc91d5f7a1d4bc3bb10f0a9dec54b021510ee8ccb453e9481f92f
 $ yes | env BB_STATE_DIRECTORY=alice bb review show_double@eng -m "Read it" | grep "✓"
 Approve this function? (r to reject) [y/n/r/q]: ✓ Function approved and signed review published.
 ```

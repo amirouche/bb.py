@@ -44,7 +44,7 @@ Set language: eng
 ```bash
 $ bb add greet_eng.py@eng
 Hash: 5de04055d51c70e8e499adcbebf43621e39a43c6579fe7175639f56e5752e1e1
-Mapping hash: e70b887e507a90bfe3d960e29b2262459f3760179050dfe91ace947f7755333e
+Mapping hash: 0df0d09f8c9769983af92b4762bb81879d3c17e7ef3b08181073f6b43fc21fe2
 ```
 
 ### Step 3: Write a worklog attached to the English translation
@@ -59,7 +59,7 @@ $ WORKLOG=$(bb worklog new greet@eng -m "Wrote a first greeting" | grep '^Worklo
 ```bash
 $ bb worklog show $WORKLOG
 Worklog: $WORKLOG@eng
-Attached: 5de04055d51c70e8e499adcbebf43621e39a43c6579fe7175639f56e5752e1e1@eng@e70b887e507a90bfe3d960e29b2262459f3760179050dfe91ace947f7755333e
+Attached: 5de04055d51c70e8e499adcbebf43621e39a43c6579fe7175639f56e5752e1e1@eng@0df0d09f8c9769983af92b4762bb81879d3c17e7ef3b08181073f6b43fc21fe2
 
 Wrote a first greeting
 ```
@@ -86,7 +86,7 @@ $ bb whoami language fra eng
 Set language: fra eng
 $ bb worklog show $WORKLOG
 Worklog: $WORKLOG@fra
-Attached: 5de04055d51c70e8e499adcbebf43621e39a43c6579fe7175639f56e5752e1e1@eng@e70b887e507a90bfe3d960e29b2262459f3760179050dfe91ace947f7755333e
+Attached: 5de04055d51c70e8e499adcbebf43621e39a43c6579fe7175639f56e5752e1e1@eng@0df0d09f8c9769983af92b4762bb81879d3c17e7ef3b08181073f6b43fc21fe2
 
 Écrit une première salutation
 ```
@@ -125,7 +125,7 @@ Languages: fra
 
 Author: Alice
 Languages: eng, fra
-Attached: 5de04055d51c70e8e499adcbebf43621e39a43c6579fe7175639f56e5752e1e1@eng@e70b887e507a90bfe3d960e29b2262459f3760179050dfe91ace947f7755333e
+Attached: 5de04055d51c70e8e499adcbebf43621e39a43c6579fe7175639f56e5752e1e1@eng@0df0d09f8c9769983af92b4762bb81879d3c17e7ef3b08181073f6b43fc21fe2
 
     Écrit une première salutation
 ```
@@ -133,7 +133,7 @@ Attached: 5de04055d51c70e8e499adcbebf43621e39a43c6579fe7175639f56e5752e1e1@eng@e
 ### Step 10: The pool log counts both kinds
 ```bash
 $ bb log | head -1
-Pool Log (1 functions, 2 worklogs)
+Pool Log (1 functions, 1 lineage step, 2 worklogs)
 ```
 
 ---

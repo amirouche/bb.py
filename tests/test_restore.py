@@ -1,4 +1,4 @@
-"""Going back to an older version: a restore record makes it current again."""
+"""Going back to an older version: a restore step makes it current again."""
 from tests.test_edit_file import set_code
 from tests.test_import_by_name import Pool, hash_of
 
@@ -67,12 +67,14 @@ def test_refactoring_to_an_older_dependency_restores_the_caller(tmp_path):
     assert f"out of date: uses {v1[:12]}..." in pool.bb('show', 'app@eng').stdout  # app's debt, shown
 
 
-def test_editing_into_another_functions_code_is_refused(tmp_path):
+def test_editing_into_another_names_code_shares_it(tmp_path):
     pool = Pool(tmp_path)
-    pool.edit('double', 'def double(n):\n    """Twice."""\n    return 2 * n\n')
+    double = hash_of(pool.edit('double', 'def double(n):\n    """Twice."""\n    return 2 * n\n'))
     pool.edit('triple', 'def triple(n):\n    """Thrice."""\n    return 3 * n\n')
     same = pool.edit('triple', 'def triple(n):\n    """Twice."""\n    return 2 * n\n')
-    assert same.returncode == 1 and 'another function' in same.stderr
+    assert same.returncode == 0, same.stderr
+    # Both names are now on one code, each by its own lineage
+    assert current(pool, 'triple') == current(pool, 'double') == double
 
 
 def test_a_restore_is_in_the_log_and_not_a_language(tmp_path):
@@ -86,9 +88,9 @@ def test_a_restore_is_in_the_log_and_not_a_language(tmp_path):
     set_code(draft, QUX.format(1))
     pool.bb('edit', 'qux@eng', str(draft), '-m', 'v2 broke the totals')
     log = pool.bb('log').stdout
-    assert '1 restores' in log and f'Restored: {v1}' in log and 'v2 broke the totals' in log
+    assert 'lineage steps' in log and f'Restore: qux@eng {v1}' in log and 'v2 broke the totals' in log
     assert 'Languages: eng\n' in log
-    assert list((tmp_path / 'bb' / 'restore').glob('*.json'))
+    assert not (tmp_path / 'bb' / 'restore').exists()  # restores are lineage steps now
 
 
 def test_names_show_debt_and_editing_pays_it_while_pins_stay(tmp_path):

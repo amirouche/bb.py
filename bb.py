@@ -156,12 +156,15 @@ NORMALIZATION_VERSION = 4
 
 _HASH_RE = re.compile(r'^[0-9a-f]{64}$')
 BB_POOL_IMPORT_HINT = ("`from bb.pool import ...` is gone: write `import bb`, then "
-                       "`NAME = bb.latest(\"NAME\")` (by name) or `NAME = bb.ref(\"<hash>\")` (an exact version)")
+                       "`NAME = bb.resolve(\"NAME\")` (by name) or `NAME = bb.ref(\"<hash>\")` (an exact version)")
+# Calls naming a pool function by name, resolved when saving: bb.resolve,
+# and bb.latest, its older spelling (the same thing)
+BB_NAME_CALLS = ('resolve', 'latest')
 
 
 def code_latest_name(node: ast.AST) -> Optional[str]:
-    """The name in a bb.latest("name") call, or None when node is not one."""
-    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'latest'
+    """The name in a bb.resolve("name") call (or bb.latest, the same), or None when node is not one."""
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in BB_NAME_CALLS
             and isinstance(node.func.value, ast.Name) and node.func.value.id == 'bb'
             and len(node.args) == 1 and not node.keywords and isinstance(node.args[0], ast.Constant)
             and isinstance(node.args[0].value, str) and node.args[0].value.isidentifier()):
@@ -479,14 +482,14 @@ def code_collect_pool_refs(tree: ast.Module) -> Tuple[ast.Module, Dict[str, str]
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == 'bb':
-            if node.attr == 'latest':
-                raise ValueError(f"{ast.unparse(node)}: bb.latest is resolved when saving (bb add, bb edit)")
+            if node.attr in BB_NAME_CALLS:
+                raise ValueError(f"{ast.unparse(node)}: bb.{node.attr} is resolved when saving (bb add, bb edit)")
             if node.attr != 'ref':
-                raise ValueError(f"bb.{node.attr}: bb provides bb.latest(\"NAME\") and bb.ref(\"<hash>\")")
+                raise ValueError(f"bb.{node.attr}: bb provides bb.resolve(\"NAME\") and bb.ref(\"<hash>\")")
         elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'ref'
               and isinstance(node.func.value, ast.Name) and node.func.value.id == 'bb' and code_ref_hash(node) is None):
             raise ValueError(f"{ast.unparse(node)}: bb.ref takes one pool function's hash, as a string "
-                             f"(by name: bb.latest(\"NAME\"))")
+                             f"(by name: bb.resolve(\"NAME\"))")
         elif ((isinstance(node, ast.Name) and node.id == 'bb' and not isinstance(node.ctx, ast.Load))
               or (isinstance(node, ast.arg) and node.arg == 'bb')):
             raise ValueError("the name bb is reserved for bb.ref: give this variable another name")
@@ -640,21 +643,42 @@ def code_compute_function_hash(normalized_code: str, checks: List[str] = None) -
     return hash_compute(canonical_json)
 
 
+def mapping_build(func_hash: str, lang: str, docstring: str, name_mapping: Dict[str, str],
+                  alias_mapping: Dict[str, str], comment: str = "", markdown: str = "",
+                  pinned: List[str] = None) -> Dict[str, Any]:
+    """
+    The content of a mapping file, as it is stored and hashed.
+
+    'markdown' and 'pinned' are left out when empty. The function and the
+    language are part of it, so a mapping names what it maps.
+    """
+    data = {
+        'function': func_hash,
+        'lang': lang,
+        'docstring': docstring,
+        'name_mapping': name_mapping,
+        'alias_mapping': alias_mapping,
+        'comment': comment,
+    }
+    if markdown:
+        data['markdown'] = markdown
+    if pinned:
+        data['pinned'] = sorted(set(pinned))
+    return data
+
+
 def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
-                        alias_mapping: Dict[str, str], comment: str = "",
-                        markdown: str = "", parent: str = "", pinned: List[str] = None) -> str:
+                              alias_mapping: Dict[str, str], comment: str = "",
+                              markdown: str = "", pinned: List[str] = None,
+                              function: str = "", lang: str = "") -> str:
     """
     Compute content-addressed hash for a mapping.
 
-    The hash is computed on the canonical JSON representation of:
-    - docstring
-    - name_mapping
-    - alias_mapping
-    - comment
-    - markdown (only when non-empty, so older mappings keep their hash)
-    - parent (only when set, same reason)
-    - pinned (only when set): pool functions the author named by hash on
-      purpose, bb.ref("<hash>"), so displays keep them pinned
+    The hash is computed on the canonical JSON (sorted keys,
+    ensure_ascii=False) of the mapping file's content, see mapping_build:
+    function, lang, docstring, name_mapping, alias_mapping, comment, plus
+    markdown and pinned when set (pinned: pool functions the author named
+    by hash on purpose, bb.ref("<hash>"), so displays keep them pinned).
 
     This enables deduplication: identical mappings share the same hash and storage.
 
@@ -664,55 +688,26 @@ def code_compute_mapping_hash(docstring: str, name_mapping: Dict[str, str],
         alias_mapping: BB function hash -> alias mapping
         comment: Optional comment explaining this mapping variant
         markdown: Optional markdown documentation (from bb edit)
-        parent: Optional translation this mapping derives from, as hash@lang@mapping_hash
+        pinned: Optional hashes referred to by bb.ref on purpose
+        function: The function hash the mapping belongs to
+        lang: The mapping's language
 
     Returns:
         64-character hex hash (SHA256)
     """
-    mapping_dict = {
-        'docstring': docstring,
-        'name_mapping': name_mapping,
-        'alias_mapping': alias_mapping,
-        'comment': comment
-    }
-    if markdown:
-        mapping_dict['markdown'] = markdown
-    if parent:
-        mapping_dict['parent'] = parent
-    if pinned:
-        mapping_dict['pinned'] = sorted(set(pinned))
-
-    # Create canonical JSON (sorted keys, no whitespace)
-    canonical_json = json.dumps(mapping_dict, sort_keys=True, ensure_ascii=False)
-
-    # Compute hash
-    return hash_compute(canonical_json)
+    mapping_dict = mapping_build(function, lang, docstring, name_mapping, alias_mapping, comment, markdown, pinned)
+    return hash_compute(json.dumps(mapping_dict, sort_keys=True, ensure_ascii=False))
 
 
 def code_detect_schema(func_hash: str) -> int:
     """
     Detect the schema version of a stored function.
 
-    Checks the filesystem to determine if a function is stored in v1 format:
-    - v1: $BB_DIRECTORY/objects/sha256/XX/YYYYYY.../object.json
-
-    Args:
-        func_hash: The function hash to check
-
     Returns:
-        1 for v1 format, None if function not found
+        1 when pool/functions/XX/YYYY.../object.json exists, None if the
+        function is not in the pool
     """
-    pool_dir = storage_get_pool_directory()
-
-    # Check for v1 format (function directory with object.json)
-    v1_func_dir = pool_dir / func_hash[:2] / func_hash[2:]
-    v1_object_json = v1_func_dir / 'object.json'
-
-    if v1_object_json.exists():
-        return 1
-
-    # Function not found
-    return None
+    return 1 if storage_object_path(func_hash).exists() else None
 
 
 def code_create_metadata(parent: str = None) -> Dict[str, any]:
@@ -786,6 +781,108 @@ def storage_get_pool_directory() -> Path:
     Returns: $BB_DIRECTORY/pool/
     """
     return storage_get_bb_directory() / 'pool'
+
+
+# Pool layout (storage v2):
+#
+#     pool/functions/XX/<rest>/object.json         a function: normalized code, checks,
+#                                                  author; written once
+#     pool/mappings/XX/<rest>/<lang>/<mapping>.json  one language's names and documentation
+#                                                  of function XX<rest>, content-addressed
+#     pool/lineage/XX/<rest>.json                  one lineage step, content-addressed
+#
+# A lineage step says that a (function, language, mapping) came after
+# another step: an edit, a rename, a translation... Steps are per language
+# and per name, so a name's current version is the end of its own lineage
+# and other languages wait for a translation.
+
+def storage_get_functions_directory() -> Path:
+    """$BB_DIRECTORY/pool/functions: one object.json per function."""
+    return storage_get_pool_directory() / 'functions'
+
+
+def storage_get_mappings_directory() -> Path:
+    """$BB_DIRECTORY/pool/mappings: per function, per language, the mappings."""
+    return storage_get_pool_directory() / 'mappings'
+
+
+def storage_get_lineage_directory() -> Path:
+    """$BB_DIRECTORY/pool/lineage: one file per lineage step."""
+    return storage_get_pool_directory() / 'lineage'
+
+
+def storage_object_path(func_hash: str) -> Path:
+    """Where a function's object.json lives."""
+    return storage_get_functions_directory() / func_hash[:2] / func_hash[2:] / 'object.json'
+
+
+def storage_mapping_directory(func_hash: str) -> Path:
+    """The directory holding a function's mappings, one subdirectory per language."""
+    return storage_get_mappings_directory() / func_hash[:2] / func_hash[2:]
+
+
+def storage_mapping_path(func_hash: str, lang: str, mapping_hash: str) -> Path:
+    """Where one mapping of a function lives."""
+    return storage_mapping_directory(func_hash) / lang / f'{mapping_hash}.json'
+
+
+def storage_step_path(step_id: str) -> Path:
+    """Where one lineage step lives."""
+    return storage_get_lineage_directory() / step_id[:2] / f'{step_id[2:]}.json'
+
+
+OLD_LAYOUT_MESSAGE = ("This pool uses the old layout: run `bb migrate` "
+                      "(track the directory with git first to keep a copy).")
+
+
+def storage_pool_is_old_layout() -> bool:
+    """
+    Whether $BB_DIRECTORY holds a pool in the layout before storage v2.
+
+    That layout kept functions in pool/XX/<rest>/ (two hex digits right
+    under pool/) and restore records in $BB_DIRECTORY/restore/.
+    """
+    pool_dir = storage_get_pool_directory()
+    if pool_dir.is_dir() and any(child.is_dir() and re.fullmatch(r'[0-9a-f]{2}', child.name)
+                                 for child in pool_dir.iterdir()):
+        return True
+    restore_dir = storage_get_bb_directory() / 'restore'
+    return restore_dir.is_dir() and any(restore_dir.glob('*.json'))
+
+
+# Scans of the pool are cached for the length of a command, keyed by pool
+# directory, and dropped by every write.
+_STORAGE_CACHE: Dict[Tuple[str, str], Any] = {}
+
+
+def storage_cache_clear():
+    """Forget every cached scan (after a write)."""
+    _STORAGE_CACHE.clear()
+
+
+def storage_cached(key: str, build: Callable[[], Any]) -> Any:
+    """The cached result of build() for this pool directory."""
+    full_key = (str(storage_get_pool_directory()), key)
+    if full_key not in _STORAGE_CACHE:
+        _STORAGE_CACHE[full_key] = build()
+    return _STORAGE_CACHE[full_key]
+
+
+def storage_list_functions() -> Set[str]:
+    """Hashes of every function in the pool (a directory listing)."""
+    def build():
+        found = set()
+        functions_dir = storage_get_functions_directory()
+        if not functions_dir.is_dir():
+            return found
+        for prefix_dir in functions_dir.iterdir():
+            if not prefix_dir.is_dir():
+                continue
+            for func_dir in prefix_dir.iterdir():
+                if (func_dir / 'object.json').exists():
+                    found.add(prefix_dir.name + func_dir.name)
+        return found
+    return storage_cached('functions', build)
 
 
 def storage_get_config_path() -> Path:
@@ -947,13 +1044,12 @@ def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any],
     """
     Save function object to bb directory.
 
-    Creates the function directory and object.json file:
-    - Directory: $BB_DIRECTORY/pool/XX/YYYYYY.../
-    - File: $BB_DIRECTORY/pool/XX/YYYYYY.../object.json
+    Writes $BB_DIRECTORY/pool/functions/XX/YYYYYY.../object.json.
 
     object.json is written once: an existing object is never rewritten, so
     adding the same function again keeps its original metadata (creation
-    time, author, parent).
+    time, author). Which version comes after which is told by lineage
+    steps, not by the object.
 
     Args:
         hash_value: Function hash (64-character hex), see code_compute_function_hash
@@ -967,14 +1063,8 @@ def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any],
     Returns:
         True when the object was written, False when it already existed
     """
-    pool_dir = storage_get_pool_directory()
-
-    # Create function directory: pool/XX/YYYYYY.../
-    func_dir = pool_dir / hash_value[:2] / hash_value[2:]
-    func_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create object.json
-    object_json = func_dir / 'object.json'
+    object_json = storage_object_path(hash_value)
+    object_json.parent.mkdir(parents=True, exist_ok=True)
 
     if object_json.exists():
         print(f"Hash: {hash_value}")
@@ -992,6 +1082,7 @@ def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any],
 
     with open(object_json, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    storage_cache_clear()
 
     print(f"Hash: {hash_value}")
     return True
@@ -1009,15 +1100,14 @@ def object_load_checks(hash_value: str) -> List[str]:
 
 def mapping_save(func_hash: str, lang: str, docstring: str,
                  name_mapping: Dict[str, str], alias_mapping: Dict[str, str],
-                 comment: str = "", markdown: str = "", parent: str = "", pinned: List[str] = None) -> str:
+                 comment: str = "", markdown: str = "", pinned: List[str] = None) -> str:
     """
     Save language mapping to bb directory.
 
-    Creates the mapping directory and mapping.json file:
-    - Directory: $BB_DIRECTORY/pool/XX/Y.../lang/ZZ/W.../
-    - File: $BB_DIRECTORY/pool/XX/Y.../lang/ZZ/W.../mapping.json
-
-    The mapping is content-addressed, enabling deduplication.
+    Writes $BB_DIRECTORY/pool/mappings/XX/Y.../<lang>/<mapping hash>.json,
+    content-addressed (see code_compute_mapping_hash), enabling
+    deduplication. Saving a mapping does not make it current: a lineage
+    step does (see lineage_save).
 
     Args:
         func_hash: Function hash (64-character hex)
@@ -1027,39 +1117,20 @@ def mapping_save(func_hash: str, lang: str, docstring: str,
         alias_mapping: BB function hash -> alias mapping
         comment: Optional comment explaining this mapping variant
         markdown: Optional markdown documentation, stored under the 'markdown' key
-        parent: Optional translation this mapping derives from, as hash@lang@mapping_hash
+        pinned: Optional hashes the author named by bb.ref on purpose
 
     Returns:
         Mapping hash (64-character hex)
     """
-    pool_dir = storage_get_pool_directory()
+    data = mapping_build(func_hash, lang, docstring, name_mapping, alias_mapping, comment, markdown, pinned)
+    mapping_hash = hash_compute(json.dumps(data, sort_keys=True, ensure_ascii=False))
 
-    # Compute mapping hash
-    mapping_hash = code_compute_mapping_hash(docstring, name_mapping, alias_mapping, comment, markdown, parent, pinned)
-
-    # Create mapping directory: pool/XX/Y.../lang/ZZ/W.../
-    func_dir = pool_dir / func_hash[:2] / func_hash[2:]
-    mapping_dir = func_dir / lang / mapping_hash[:2] / mapping_hash[2:]
-    mapping_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create mapping.json
-    mapping_json = mapping_dir / 'mapping.json'
-
-    data = {
-        'docstring': docstring,
-        'name_mapping': name_mapping,
-        'alias_mapping': alias_mapping,
-        'comment': comment
-    }
-    if markdown:
-        data['markdown'] = markdown
-    if parent:
-        data['parent'] = parent
-    if pinned:
-        data['pinned'] = sorted(set(pinned))
-
-    with open(mapping_json, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    mapping_json = storage_mapping_path(func_hash, lang, mapping_hash)
+    if not mapping_json.exists():
+        mapping_json.parent.mkdir(parents=True, exist_ok=True)
+        with open(mapping_json, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        storage_cache_clear()
 
     print(f"Mapping hash: {mapping_hash}")
 
@@ -1067,12 +1138,13 @@ def mapping_save(func_hash: str, lang: str, docstring: str,
 
 
 def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
-                  name_mapping: Dict[str, str], alias_mapping: Dict[str, str], comment: str = "",
-                  parent: str = None, pinned: List[str] = None):
+              name_mapping: Dict[str, str], alias_mapping: Dict[str, str], comment: str = "",
+              pinned: List[str] = None) -> str:
     """
-    Save function to bb directory.
+    Save a new function (bb add): its object, its mapping and an 'add' step.
 
-    This is the main entry point for saving functions.
+    No step is added when the same mapping of the same function is
+    already current (adding a file twice changes nothing).
 
     Args:
         hash_value: Function hash (64-character hex)
@@ -1082,16 +1154,40 @@ def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
         name_mapping: Normalized name -> original name mapping
         alias_mapping: BB function hash -> alias mapping
         comment: Optional comment explaining this mapping variant
-        parent: Optional parent function hash (for fork lineage tracking)
+
+    Returns:
+        The mapping hash
     """
-    # Create metadata (with optional parent for lineage)
-    metadata = code_create_metadata(parent=parent)
+    object_save(hash_value, normalized_code, code_create_metadata())
+    mapping_hash = mapping_save(hash_value, lang, docstring, name_mapping, alias_mapping, comment, pinned=pinned)
+    index = lineage_index()
+    if not any(s in index['current'] for s in lineage_steps_on(hash_value, lang, mapping=mapping_hash)):
+        lineage_save_new(hash_value, lang, mapping_hash, comment)
+    return mapping_hash
 
-    # Save function (object.json)
-    object_save(hash_value, normalized_code, metadata)
 
-    # Save mapping (mapping.json)
-    mapping_save(hash_value, lang, docstring, name_mapping, alias_mapping, comment, pinned=pinned)
+def lineage_save_new(func_hash: str, lang: str, mapping_hash: str, comment: str = "") -> str:
+    """
+    Record a mapping saved without a step to continue: a new name, or a translation.
+
+    When func_hash is current in other languages, the mapping translates
+    it (bb add of the same code in another language is a translation,
+    see translate_save_step), from your first language that has it;
+    otherwise it starts a lineage ('add').
+
+    Returns:
+        The step's id
+    """
+    index = lineage_index()
+    steps = index['steps']
+    others = [s for s in lineage_steps_on(func_hash) if steps[s]['lang'] != lang and s in index['current']]
+    if not others:
+        return lineage_save(None, func_hash, lang, mapping_hash, 'add', comment)
+    preferred = storage_read_config()['user'].get('languages') or []
+    rank = {l: i for i, l in enumerate(preferred)}
+    source = min(others, key=lambda s: (rank.get(steps[s]['lang'], len(rank)), steps[s]['lang'], s))
+    return translate_save_step(func_hash, steps[source]['lang'], steps[source]['mapping'], lang, mapping_hash,
+                               comment)
 
 
 def _ast_unparser_class():
@@ -1338,7 +1434,8 @@ def code_bundle_dependencies(hashes: List[str], output_dir: Path) -> Path:
     """
     Bundle function files to an output directory.
 
-    Copies all function files maintaining the v1 directory structure.
+    Copies each function's object (functions/XX/YYYY.../) and its mappings
+    (mappings/XX/YYYY.../), in the pool's layout.
 
     Args:
         hashes: List of function hashes to bundle
@@ -1349,21 +1446,16 @@ def code_bundle_dependencies(hashes: List[str], output_dir: Path) -> Path:
     """
     import shutil
 
-    pool_dir = storage_get_pool_directory()
     output_dir = Path(output_dir)
-    output_objects = output_dir
-    output_objects.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     for func_hash in hashes:
-        version = code_detect_schema(func_hash)
-        if version is None:
+        if code_detect_schema(func_hash) is None:
             raise ValueError(f"Function not found: {func_hash}")
-
-        # Copy entire function directory (v1 only)
-        src_dir = pool_dir / func_hash[:2] / func_hash[2:]
-        dst_dir = output_objects / func_hash[:2] / func_hash[2:]
-        if src_dir.exists():
-            shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
+        for src_dir, kind in ((storage_object_path(func_hash).parent, 'functions'),
+                              (storage_mapping_directory(func_hash), 'mappings')):
+            if src_dir.exists():
+                shutil.copytree(src_dir, output_dir / kind / func_hash[:2] / func_hash[2:], dirs_exist_ok=True)
 
     return output_dir
 
@@ -2073,51 +2165,43 @@ def review_run_checks(func_hash: str, reviewed: set) -> bool:
 
 def command_log():
     """
-    Show the history of the pool: functions and worklogs, newest first.
+    Show the history of the pool: functions, lineage steps and worklogs, newest first.
 
-    Functions show their author, parent (when forked) and languages.
-    Worklogs show their author, languages, attached translations and
-    message, in your preferred language when translated.
+    Functions show their names, author and languages. Lineage steps show
+    what happened to a name in a language (add, edit, document, rename,
+    refactor, restore, translate), from which step, by whom, and their
+    comment. Worklogs show their author, languages, attached translations
+    and message, in your preferred language when translated.
     """
     entries = []
-    names = {func_hash: function['names'] for func_hash, function in storage_scan_functions().items()}
+    functions = storage_scan_functions()
+    for func_hash, function in functions.items():
+        metadata = function['metadata']
+        lines = [f"Hash: {func_hash}"]
+        if function['names']:
+            lines.append(f"Names: {', '.join(f'{name}@{lang}' for lang, name in sorted(function['names'].items()))}")
+        lines += [f"Date: {metadata.get('created', 'unknown')}",
+                  f"Author: {helper_format_author(metadata)}"]
+        langs = storage_list_languages(func_hash)
+        lines.append(f"Languages: {', '.join(langs) if langs else 'none'}")
+        entries.append((metadata.get('created', ''), func_hash, lines))
 
-    pool_dir = storage_get_pool_directory()
-    if pool_dir.exists():
-        for hash_prefix_dir in pool_dir.iterdir():
-            if not hash_prefix_dir.is_dir():
-                continue
-            for func_dir in hash_prefix_dir.iterdir():
-                object_json = func_dir / 'object.json'
-                if not object_json.exists():
-                    continue
-                try:
-                    with open(object_json, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                except (IOError, json.JSONDecodeError):
-                    continue
-                metadata = data.get('metadata', {})
-                langs = sorted(item.name for item in func_dir.iterdir() if item.is_dir() and len(item.name) == 3)
-                lines = [f"Hash: {data['hash']}"]
-                named = names.get(data['hash'], {})
-                if named:
-                    lines.append(f"Names: {', '.join(f'{name}@{lang}' for lang, name in sorted(named.items()))}")
-                lines += [f"Date: {metadata.get('created', 'unknown')}",
-                         f"Author: {helper_format_author(metadata)}"]
-                if metadata.get('parent'):
-                    lines.append(f"Parent: {metadata['parent']}")
-                lines.append(f"Languages: {', '.join(langs) if langs else 'none'}")
-                entries.append((metadata.get('created', ''), data['hash'], lines))
-
-    restores = storage_scan_restores()
-    for record_id, record in restores.items():
-        lines = [f"Restored: {record['restores']}",
-                 f"Supersedes: {record['supersedes']}",
-                 f"Date: {record.get('created', 'unknown')}",
-                 f"Author: {helper_format_author(record)}"]
+    steps = lineage_index()['steps']
+    for step_id, record in steps.items():
+        metadata = record.get('metadata', {})
+        lines = [f"Step: {step_id}",
+                 f"{record['relation'].capitalize()}: {record['name']}@{record['lang']} {record['function']}"]
+        previous = steps.get(record.get('from') or '')
+        if previous:
+            lines.append(f"From: {previous['name']}@{previous['lang']} {previous['function']}")
+        translated = steps.get(record.get('translates') or '')
+        if translated:
+            lines.append(f"Translates: {translated['name']}@{translated['lang']} {translated['function']}")
+        lines += [f"Date: {metadata.get('created', 'unknown')}",
+                  f"Author: {helper_format_author(metadata)}"]
         if record.get('comment'):
             lines += ['', f"    {record['comment']}"]
-        entries.append((record.get('created', ''), record_id, lines))
+        entries.append((metadata.get('created', ''), step_id, lines))
 
     worklogs = worklog_list()
     for worklog in worklogs:
@@ -2135,9 +2219,8 @@ def command_log():
     # Newest first; ties broken by identifier so the order is stable
     entries.sort(key=lambda e: (e[0], e[1]), reverse=True)
 
-    function_count = len(entries) - len(worklogs) - len(restores)
-    restored = f", {len(restores)} restores" if restores else ""
-    print(f"Pool Log ({function_count} functions{restored}, {len(worklogs)} worklogs)")
+    stepped = f", {len(steps)} lineage step{'' if len(steps) == 1 else 's'}" if steps else ""
+    print(f"Pool Log ({len(functions)} functions{stepped}, {len(worklogs)} worklogs)")
     print("=" * 80)
     print()
 
@@ -2145,6 +2228,16 @@ def command_log():
         for line in lines:
             print(line)
         print()
+
+
+def helper_previous_version(func_hash: str, lang: str = None, name: str = None) -> Optional[str]:
+    """The function the current step of func_hash (in lang, called name) came from, when another one."""
+    steps = lineage_index()['steps']
+    for step_id in lineage_current_steps(lang, name, func_hash):
+        previous = steps.get(steps[step_id].get('from') or '')
+        if previous and previous['function'] != func_hash:
+            return previous['function']
+    return None
 
 
 # ============================================================================
@@ -2449,142 +2542,419 @@ def helper_format_author(metadata: Dict[str, Any]) -> str:
     return f"{name} <{email}>" if email else name
 
 
-def storage_scan_restores() -> Dict[str, Dict[str, Any]]:
+def lineage_prune() -> int:
     """
-    Every restore record in the pool, by id.
+    Remove the lineage steps whose version is gone and that no step follows.
 
-    A restore record brings an older version back as current: R =
-    {restores: v1, supersedes: v2} comes after v2 in the lineage and stands
-    for v1's code. The code's hash cannot take a new parent (same code,
-    same hash, and object.json is written once), so the record is the
-    lineage step. Stored in $BB_DIRECTORY/restore/<id>.json, written once.
+    A version is gone when its mapping (or its whole function) was
+    removed. Steps that later steps come after are kept, so the history
+    of the versions that remain stays connected. Repeats until nothing
+    changes, and returns the number of steps removed.
     """
-    restores = {}
-    for path in (storage_get_bb_directory() / 'restore').glob('*.json'):
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                restores[path.stem] = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            continue
-    return restores
+    removed = 0
+    while True:
+        storage_cache_clear()
+        index = lineage_index()
+        gone = [step_id for step_id, record in index['steps'].items()
+                if step_id not in index['successors']
+                and not storage_mapping_path(record['function'], record['lang'], record['mapping']).exists()]
+        if not gone:
+            break
+        for step_id in gone:
+            storage_step_path(step_id).unlink()
+            removed += 1
+    storage_cache_clear()
+    return removed
 
 
-def restore_save(restores: str, supersedes: str, comment: str = "") -> str:
+# ============================================================================
+# Lineage
+# ============================================================================
+#
+# A lineage step is an append-only record in pool/lineage/XX/<rest>.json:
+#
+#     {from: <step id> | null, function, lang, mapping, name, relation,
+#      comment, metadata: {created, name, email}, translates?: <step id>}
+#
+# Its id is the hash of that canonical JSON. A step stands for the version
+# (function, lang, mapping) of the name 'name' (the mapping's _bb_v_0) in
+# 'lang', coming after the step 'from'. Relations: add (a new name), edit
+# (new code), document (same code, new names or documentation), rename
+# (the name changed: the old name is superseded), refactor (references
+# rewritten mechanically), restore (an older version's code again),
+# translate (a mapping in another language; 'translates' is the step it
+# translates).
+#
+# The current steps are those no step comes after; the current versions of
+# NAME@LANG are the functions of the current steps of LANG called NAME. So
+# each name, in each language, follows its own lineage: two names may
+# share one code, and a French name stays on its version until someone
+# translates the English edit.
+
+LINEAGE_RELATIONS = ('add', 'edit', 'document', 'rename', 'refactor', 'restore', 'translate')
+
+
+def storage_scan_lineage() -> Dict[str, Dict[str, Any]]:
+    """Every lineage step in the pool, by id."""
+    def build():
+        steps = {}
+        lineage_dir = storage_get_lineage_directory()
+        if not lineage_dir.is_dir():
+            return steps
+        for prefix_dir in lineage_dir.iterdir():
+            if not prefix_dir.is_dir():
+                continue
+            for path in prefix_dir.glob('*.json'):
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        steps[prefix_dir.name + path.stem] = json.load(f)
+                except (OSError, json.JSONDecodeError):
+                    continue
+        return steps
+    return storage_cached('lineage', build)
+
+
+def lineage_step_id(record: Dict[str, Any]) -> str:
+    """A step's id: the hash of its canonical JSON."""
+    return hash_compute(json.dumps(record, sort_keys=True, ensure_ascii=False))
+
+
+def lineage_save(previous: Optional[str], func_hash: str, lang: str, mapping_hash: str, relation: str,
+                 comment: str = "", translates: str = None, metadata: Dict[str, Any] = None) -> str:
     """
-    Record that the version restores comes back after supersedes; returns the record's id.
+    Record a lineage step: (func_hash, lang, mapping_hash) comes after previous.
 
-    The id is the hash of {restores, supersedes}: restoring the same
-    version over the same one twice is one record.
+    Args:
+        previous: The step this one follows (None: the start of a lineage)
+        relation: One of LINEAGE_RELATIONS
+        translates: For a translation, the step in the source language
+        metadata: Author and date (default: code_create_metadata())
+
+    Returns:
+        The step's id
     """
-    record_id = hash_compute(json.dumps({'restores': restores, 'supersedes': supersedes},
-                                        sort_keys=True, ensure_ascii=False))
-    path = storage_get_bb_directory() / 'restore' / f'{record_id}.json'
+    assert relation in LINEAGE_RELATIONS, relation
+    record = {
+        'from': previous or None,
+        'function': func_hash,
+        'lang': lang,
+        'mapping': mapping_hash,
+        'name': mapping_name(func_hash, lang, mapping_hash) or '',
+        'relation': relation,
+        'comment': comment or '',
+        'metadata': metadata or code_create_metadata(),
+    }
+    if translates:
+        record['translates'] = translates
+    step_id = lineage_step_id(record)
+    path = storage_step_path(step_id)
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        metadata = code_create_metadata()
         with open(path, 'w', encoding='utf-8') as f:
-            json.dump({'restores': restores, 'supersedes': supersedes, 'comment': comment,
-                       'created': metadata.get('created', ''), 'name': metadata.get('name', ''),
-                       'email': metadata.get('email', '')}, f, indent=2, ensure_ascii=False)
-    return record_id
+            json.dump(record, f, indent=2, ensure_ascii=False)
+        storage_cache_clear()
+    return step_id
 
 
-def lineage_successors(functions: Dict[str, Dict[str, Any]], restores: Dict[str, Dict[str, Any]]) -> Dict[str, List[str]]:
-    """What comes right after each lineage step: versions naming it as parent, records superseding it."""
-    successors: Dict[str, List[str]] = {}
-    for func_hash, function in functions.items():
-        parent = function['metadata'].get('parent')
-        if parent:
-            successors.setdefault(parent, []).append(func_hash)
-    for record_id, record in restores.items():
-        successors.setdefault(record['supersedes'], []).append(record_id)
-    return successors
+def lineage_index() -> Dict[str, Any]:
+    """
+    The lineage of the whole pool, indexed.
+
+    Returns:
+        Dict with 'steps' ({id: record}), 'successors' ({id: ids of the
+        steps right after it}), 'by_function' ({hash: ids of the steps on
+        it}), 'current' (ids of the steps nothing follows, whose function
+        is in the pool) and 'memo' (for lineage_ancestors). A step whose
+        'from' is not in the pool starts a lineage.
+    """
+    def build():
+        steps = storage_scan_lineage()
+        present = storage_list_functions()
+        successors: Dict[str, List[str]] = {}
+        by_function: Dict[str, List[str]] = {}
+        for step_id, record in sorted(steps.items()):
+            if record.get('from') in steps:
+                successors.setdefault(record['from'], []).append(step_id)
+            by_function.setdefault(record['function'], []).append(step_id)
+        current = {step_id for step_id, record in steps.items()
+                   if step_id not in successors and record['function'] in present}
+        return {'steps': steps, 'successors': successors, 'by_function': by_function,
+                'current': current, 'memo': {}}
+    return storage_cached('lineage_index', build)
 
 
-def lineage_code(node: str, restores: Dict[str, Dict[str, Any]]) -> str:
-    """The function a lineage step stands for: a version itself, or the version a record restores."""
-    return restores[node]['restores'] if node in restores else node
+def lineage_created(step_id: str) -> str:
+    """When a step was recorded (ISO 8601), '' when unknown."""
+    return lineage_index()['steps'][step_id].get('metadata', {}).get('created', '')
 
 
-def lineage_previous(node: str, functions: Dict[str, Dict[str, Any]], restores: Dict[str, Dict[str, Any]]) -> Optional[str]:
-    """The lineage step before node: a version's parent, or what a record supersedes."""
-    if node in restores:
-        return restores[node]['supersedes']
-    function = functions.get(node)
-    return function['metadata'].get('parent') if function else None
+def lineage_steps_on(func_hash: str, lang: str = None, name: str = None, mapping: str = None) -> List[str]:
+    """Ids of the steps on func_hash, in lang, called name, with mapping (each when given)."""
+    index = lineage_index()
+    steps = index['steps']
+    return [s for s in index['by_function'].get(func_hash, [])
+            if (lang is None or steps[s]['lang'] == lang) and (name is None or steps[s]['name'] == name)
+            and (mapping is None or steps[s]['mapping'] == mapping)]
 
 
-def lineage_root(node: str, functions: Dict[str, Dict[str, Any]], restores: Dict[str, Dict[str, Any]]) -> str:
-    """The first version of node's lineage, as far as the local pool knows it."""
-    seen = set()
+def lineage_current_steps(lang: str = None, name: str = None, function: str = None) -> List[str]:
+    """Ids of the current steps, in lang, called name, on function (each when given), sorted."""
+    index = lineage_index()
+    steps = index['steps']
+    return sorted(s for s in index['current']
+                  if (lang is None or steps[s]['lang'] == lang) and (name is None or steps[s]['name'] == name)
+                  and (function is None or steps[s]['function'] == function))
+
+
+def lineage_follow(func_hash: str, lang: str = None, name: str = None) -> List[str]:
+    """
+    The current steps reached from the steps on func_hash (in lang, called name).
+
+    They stand for the up-to-date versions of func_hash: itself when one
+    of its steps is current, otherwise what came after it.
+    """
+    index = lineage_index()
+    stack = lineage_steps_on(func_hash, lang, name)
+    seen, reached = set(), set()
+    while stack:
+        step_id = stack.pop()
+        if step_id in seen:
+            continue
+        seen.add(step_id)
+        following = index['successors'].get(step_id)
+        if following:
+            stack.extend(following)
+        elif step_id in index['current']:
+            reached.add(step_id)
+    return sorted(reached)
+
+
+def lineage_step_for(func_hash: str, lang: str, name: str = None, mapping: str = None) -> Optional[str]:
+    """
+    The step an edit of func_hash in lang continues from.
+
+    Prefers a step on mapping, then one called name, then a current step,
+    then the latest one. None when func_hash has no step in lang.
+    """
+    index = lineage_index()
+    candidates = lineage_steps_on(func_hash, lang)
+    if not candidates:
+        return None
+    steps = index['steps']
+    return max(candidates, key=lambda s: (mapping is not None and steps[s]['mapping'] == mapping,
+                                          name is not None and steps[s]['name'] == name,
+                                          s in index['current'], lineage_created(s), s))
+
+
+def lineage_root_step(step_id: str, translations: bool = False) -> str:
+    """
+    The first step of step_id's lineage (following 'from').
+
+    With translations, a translation that starts a lineage leads on to
+    the step it translates, so every language of one function's history
+    has one root.
+    """
+    steps = lineage_index()['steps']
+    node, seen = step_id, set()
     while node not in seen:
         seen.add(node)
-        previous = lineage_previous(node, functions, restores)
-        if previous is None or (previous not in functions and previous not in restores):
+        record = steps[node]
+        if record.get('from') in steps:
+            node = record['from']
+        elif translations and record.get('translates') in steps:
+            node = record['translates']
+        else:
             break
-        node = previous
-    return lineage_code(node, restores)
+    return node
 
 
-def lineage_current_step(func_hash: str, functions: Dict[str, Dict[str, Any]] = None,
-                         restores: Dict[str, Dict[str, Any]] = None) -> str:
+def lineage_ancestors(step_id: str) -> Set[str]:
+    """step_id and every step before it, through 'from' and 'translates'."""
+    index = lineage_index()
+    memo = index['memo']
+    if step_id in memo:
+        return memo[step_id]
+    steps = index['steps']
+    found, stack = set(), [step_id]
+    while stack:
+        node = stack.pop()
+        if node in found or node not in steps:
+            continue
+        if node in memo and node != step_id:
+            found |= memo[node]
+            continue
+        found.add(node)
+        stack.extend(link for link in (steps[node].get('from'), steps[node].get('translates')) if link)
+    memo[step_id] = found
+    return found
+
+
+def lineage_waiting(step_id: str) -> List[str]:
     """
-    The lineage step an edit of func_hash continues from.
+    The languages that have a newer version than step_id, not yet translated.
 
-    When a current restore record stands for func_hash, the edit comes
-    after that record (else the restored version would fork); otherwise it
-    comes after func_hash itself.
+    A step S (language L, function F) waits for translation when another
+    language M has a current step G on another function, with S (or a
+    step S translates) among G's ancestors: G came after what S stands
+    for. E.g. an English edit leaves the French name on the previous
+    version: that French step waits for a translation of the edit.
+
+    Returns:
+        Sorted language codes (the M above), [] when S is up to date
     """
-    if functions is None:
-        functions = storage_scan_functions()
-    if restores is None:
-        restores = storage_scan_restores()
-    successors = lineage_successors(functions, restores)
-    for record_id, record in sorted(restores.items()):
-        if record['restores'] == func_hash and record_id not in successors:
-            return record_id
-    return func_hash
+    index = lineage_index()
+    steps = index['steps']
+    record = steps[step_id]
+    same = {step_id}
+    node = record.get('translates')
+    while node in steps and node not in same:
+        same.add(node)
+        node = steps[node].get('translates')
+    langs = set()
+    for other in index['current']:
+        other_record = steps[other]
+        if other_record['lang'] == record['lang'] or other_record['function'] == record['function']:
+            continue
+        if same & lineage_ancestors(other):
+            langs.add(other_record['lang'])
+    return sorted(langs)
+
+
+def lineage_name_for(func_hash: str, lang: str, alias: str = None) -> Optional[str]:
+    """
+    The name a caller follows func_hash by, in lang.
+
+    alias when func_hash is called so in lang, otherwise its only name
+    there; None when it has several (or none) and alias is none of them.
+    """
+    names = sorted({lineage_index()['steps'][s]['name'] for s in lineage_steps_on(func_hash, lang)})
+    if alias in names:
+        return alias
+    return names[0] if len(names) == 1 else None
+
+
+def lineage_preferred_language(func_hash: str) -> Optional[str]:
+    """The language to follow func_hash's lineage in: yours first, then any it has steps in."""
+    langs = sorted({lineage_index()['steps'][s]['lang'] for s in lineage_steps_on(func_hash)})
+    preferred = storage_read_config()['user'].get('languages') or []
+    for lang in preferred + langs:
+        if lang in langs:
+            return lang
+    return None
+
+
+def lineage_newer_version(func_hash: str, lang: str = None, name: str = None) -> Optional[str]:
+    """
+    The one up-to-date version of func_hash, when it is not func_hash.
+
+    Follows func_hash's steps in lang (default: lineage_preferred_language),
+    called name when given, to the current steps. A caller may use a
+    function that was edited since: rewriting the version it uses would
+    fork it beside that edit, so refactors and updates build on the
+    current version instead. With several current versions (a fork) there
+    is no single one: None, with a warning.
+    """
+    lang = lang or lineage_preferred_language(func_hash)
+    if lang is None:
+        return None
+    steps = lineage_index()['steps']
+    heads = sorted({steps[s]['function'] for s in lineage_follow(func_hash, lang, name)})
+    if not heads or func_hash in heads:
+        return None
+    if len(heads) > 1:
+        print(f"Warning: {helper_function_label(func_hash)} has {len(heads)} current versions; "
+              f"keeping the one in use ({func_hash[:12]}...)", file=sys.stderr)
+        return None
+    return heads[0]
+
+
+def lineage_continue(old_hash: str, new_hash: str, comment: str, hash_map: Dict[str, str] = None,
+                     relation: str = 'refactor') -> str:
+    """
+    Move every name of old_hash on to new_hash, copying their mappings.
+
+    For each current step on old_hash (every language, every name), or,
+    when old_hash is current nowhere, its latest step per language and
+    name, new_hash gets a copy of the step's mapping (references renamed
+    through hash_map) and a step after it. Names that share the code move
+    together. A step on a function its lineage already went through is a
+    restore.
+
+    Returns:
+        'restored' when new_hash was an older version, 'new' otherwise
+    """
+    hash_map = hash_map or {}
+    index = lineage_index()
+    steps = index['steps']
+    on_old = lineage_steps_on(old_hash)
+    starts = [s for s in on_old if s in index['current']]
+    if not starts:
+        latest: Dict[Tuple[str, str], str] = {}
+        for s in on_old:
+            key = (steps[s]['lang'], steps[s]['name'])
+            if key not in latest or (lineage_created(s), s) > (lineage_created(latest[key]), latest[key]):
+                latest[key] = s
+        starts = sorted(latest.values())
+    restored = False
+    moves = []
+    for step_id in starts:
+        record = steps[step_id]
+        lang, mapping_hash = record['lang'], record['mapping']
+        data = mapping_load_json(old_hash, lang, mapping_hash)
+        if not data:
+            continue
+        was = new_hash in {steps[s]['function'] for s in lineage_ancestors(step_id)}
+        moves.append((step_id, lang, data, was))
+    for step_id, lang, data, was in moves:
+        with contextlib.redirect_stdout(io.StringIO()):
+            new_mapping = mapping_save(new_hash, lang, data.get('docstring', ''), data.get('name_mapping', {}),
+                                       {hash_map.get(h, h): a for h, a in data.get('alias_mapping', {}).items()},
+                                       comment, data.get('markdown', ''),
+                                       pinned=[hash_map.get(h, h) for h in data.get('pinned') or []])
+        restored = restored or was
+        lineage_save(step_id, new_hash, lang, new_mapping, 'restore' if was else relation, comment)
+    return 'restored' if restored else 'new'
 
 
 def storage_scan_functions() -> Dict[str, Dict[str, Any]]:
     """
     Read every function in the pool once: metadata, checks, normalized
-    code, plus its current mapping in each language.
+    code, plus its default mapping in each language and its current names.
 
     Returns:
-        {hash: {'hash', 'metadata', 'checks', 'normalized_code',
-                'names': {lang: name}, 'comments': {lang: comment},
-                'mappings': {lang: mapping.json data}}}
+        {hash: {'hash', 'metadata', 'checks', 'normalized_code', 'normalization',
+                'names': {lang: name} (a display name per language),
+                'current_names': {lang: [names]} (the names it is current for),
+                'current': whether it is the current version of some name,
+                'comments': {lang: comment}, 'mappings': {lang: mapping data},
+                'all_mappings': {lang: [mapping data]} (current or not superseded)}}
     """
-    functions: Dict[str, Dict[str, Any]] = {}
-    pool_dir = storage_get_pool_directory()
-    if not pool_dir.exists():
-        return functions
-
-    for prefix_dir in pool_dir.iterdir():
-        if not prefix_dir.is_dir():
-            continue
-        for func_dir in prefix_dir.iterdir():
-            object_json = func_dir / 'object.json'
-            if not object_json.exists():
-                continue
+    def build():
+        index = lineage_index()
+        steps = index['steps']
+        functions: Dict[str, Dict[str, Any]] = {}
+        for func_hash in sorted(storage_list_functions()):
             try:
-                with open(object_json, 'r', encoding='utf-8') as f:
+                with open(storage_object_path(func_hash), 'r', encoding='utf-8') as f:
                     data = json.load(f)
             except (IOError, json.JSONDecodeError):
                 continue
-            func_hash = data['hash']
-            names, comments, mappings = {}, {}, {}
-            for lang_dir in func_dir.iterdir():
-                if not lang_dir.is_dir():
-                    continue
-                mapping_hash = mapping_select(func_hash, lang_dir.name)
+            names, comments, mappings, all_mappings = {}, {}, {}, {}
+            for lang in storage_list_languages(func_hash):
+                mapping_hash = mapping_select(func_hash, lang)
                 if mapping_hash is None:
                     continue
-                mapping = mapping_load_json(func_hash, lang_dir.name, mapping_hash)
-                mappings[lang_dir.name] = mapping
-                names[lang_dir.name] = mapping.get('name_mapping', {}).get('_bb_v_0')
-                comments[lang_dir.name] = mapping.get('comment', '')
+                mapping = mapping_load_json(func_hash, lang, mapping_hash)
+                mappings[lang] = mapping
+                names[lang] = mapping.get('name_mapping', {}).get('_bb_v_0')
+                comments[lang] = mapping.get('comment', '')
+                shown = {s_mapping for s_mapping in mapping_leaves(func_hash, lang)}
+                shown |= {steps[s]['mapping'] for s in lineage_steps_on(func_hash, lang) if s in index['current']}
+                all_mappings[lang] = [mapping_load_json(func_hash, lang, m) for m in sorted(shown)]
+            current_names: Dict[str, Set[str]] = {}
+            for step_id in index['by_function'].get(func_hash, []):
+                if step_id in index['current']:
+                    current_names.setdefault(steps[step_id]['lang'], set()).add(steps[step_id]['name'])
             functions[func_hash] = {
                 'hash': func_hash,
                 'metadata': data.get('metadata', {}),
@@ -2592,55 +2962,58 @@ def storage_scan_functions() -> Dict[str, Dict[str, Any]]:
                 'normalization': data.get('normalization', 1),
                 'normalized_code': data.get('normalized_code', ''),
                 'names': names,
+                'current_names': {lang: sorted(n) for lang, n in sorted(current_names.items())},
+                'current': bool(current_names),
                 'comments': comments,
                 'mappings': mappings,
+                'all_mappings': all_mappings,
             }
-    return functions
+        return functions
+    return storage_cached('scan_functions', build)
 
 
 def helper_find_heads_by_name(name: str, lang: str = None) -> Tuple[List[str], Dict[str, Dict[str, Any]]]:
     """
     Find the current versions of the functions called name.
 
-    Matches functions named name in lang (or in any language), then
-    follows their lineage forward, in every language, to the versions no
-    other function names as its parent. A fork that renamed the function
-    still supersedes it. Creation time plays no part, so two agents
+    They are the functions of the current lineage steps called name in
+    lang (in any language without lang). Each name follows its own
+    lineage: a rename ends the old name's, and an edit in one language
+    does not move the others. Creation time plays no part, so two agents
     forking the same function give two current versions.
 
     Returns:
         (current version hashes, newest first; the scan from storage_scan_functions)
     """
     functions = storage_scan_functions()
-    restores = storage_scan_restores()
-    children = lineage_successors(functions, restores)
-
-    if lang:
-        matches = [h for h, f in functions.items() if f['names'].get(lang) == name]
-    else:
-        matches = [h for h, f in functions.items() if name in f['names'].values()]
-
-    heads, seen, stack = set(), set(), list(matches)
-    while stack:
-        func_hash = stack.pop()
-        if func_hash in seen:
-            continue
-        seen.add(func_hash)
-        descendants = children.get(func_hash, [])
-        if descendants:
-            stack.extend(descendants)
-        else:
-            heads.add(func_hash)
-
-    # A current restore record stands for the version it restores
-    codes = {}
-    for node in heads:
-        created = restores[node].get('created', '') if node in restores else functions[node]['metadata'].get('created', '')
-        code = lineage_code(node, restores)
-        if code in functions:
-            codes[code] = max(codes.get(code, ''), created)
-    ordered = sorted(codes, key=lambda h: (codes[h], h), reverse=True)
+    created: Dict[str, str] = {}
+    steps = lineage_index()['steps']
+    for step_id in lineage_current_steps(lang, name):
+        func_hash = steps[step_id]['function']
+        if func_hash in functions:
+            created[func_hash] = max(created.get(func_hash, ''), lineage_created(step_id))
+    ordered = sorted(created, key=lambda h: (created[h], h), reverse=True)
     return ordered, functions
+
+
+def helper_resolve_heads(name: str, lang: str) -> Tuple[List[str], Dict[str, Dict[str, Any]], Optional[str]]:
+    """
+    The current versions of name, through your favourite languages.
+
+    Tries lang (the language being saved), then your languages (bb whoami
+    language) in order, then any language; the first that knows the name
+    decides, even when it has several current versions.
+
+    Returns:
+        (heads, the scan, the language they were found in, None for "any")
+    """
+    preferred = storage_read_config()['user'].get('languages') or []
+    for candidate in [lang] + [l for l in preferred if l != lang]:
+        heads, functions = helper_find_heads_by_name(name, candidate)
+        if heads:
+            return heads, functions, candidate
+    heads, functions = helper_find_heads_by_name(name)
+    return heads, functions, None
 
 
 def helper_describe_function(function: Dict[str, Any], lang: str = None) -> str:
@@ -2658,18 +3031,21 @@ def helper_resolve_name(name: str, lang: str = None) -> Tuple[str, str]:
     Resolve a function name to its single current version.
 
     Exits with an error, instead of guessing, when the name has no
-    current version, several of them, or when the current version lacks
-    the requested language.
+    current version (in lang, when given) or several of them.
 
     Returns:
-        (hash, lang) where lang is the requested one, or a language the
-        function has (one where it is called name when possible)
+        (hash, lang) where lang is the requested one, or a language in
+        which the function is currently called name
     """
     lang_str = f"@{lang}" if lang else ""
     heads, functions = helper_find_heads_by_name(name, lang)
 
     if not heads:
         print(f"No function found with name: {name}{lang_str}", file=sys.stderr)
+        elsewhere = sorted({lineage_index()['steps'][s]['lang'] for s in lineage_current_steps(name=name)})
+        if lang and elsewhere:
+            print(f"'{name}' is in {', '.join(elsewhere)}: translate it with "
+                  f"bb translate {name}@{elsewhere[0]} {lang}", file=sys.stderr)
         sys.exit(1)
 
     if len(heads) > 1:
@@ -2680,33 +3056,23 @@ def helper_resolve_name(name: str, lang: str = None) -> Tuple[str, str]:
         sys.exit(1)
 
     head = heads[0]
-    names = functions[head]['names']
-
-    if lang and lang not in names:
-        # Walk back to the newest ancestor that has the language
-        restores = storage_scan_restores()
-        ancestor = lineage_code(lineage_previous(head, functions, restores) or '', restores)
-        while ancestor in functions and lang not in functions[ancestor]['names']:
-            ancestor = lineage_code(lineage_previous(ancestor, functions, restores) or '', restores)
-        source = helper_pick_language(head)
-        print(f"Error: The current version of '{name}', {head}, has no '{lang}' translation.", file=sys.stderr)
-        print(f"Translate it with: bb translate {head}@{source} {lang}", file=sys.stderr)
-        if ancestor in functions:
-            print(f"Or use the last version that has one: {ancestor}@{lang}", file=sys.stderr)
-        sys.exit(1)
-
-    matching = [l for l, n in sorted(names.items()) if n == name]
-    return head, lang or (matching[0] if matching else helper_pick_language(head))
+    if lang:
+        return head, lang
+    steps = lineage_index()['steps']
+    langs = sorted({steps[s]['lang'] for s in lineage_current_steps(name=name, function=head)})
+    return head, langs[0]
 
 
 def command_latest(name: str, lang: str = None, as_json: bool = False, hash_only: bool = False):
     """
     List the current versions of a function by name.
 
-    A current version is one that no other function names as its parent.
-    One line per version means the name is unambiguous; several mean
-    forks diverged (or unrelated functions share the name) and commands
-    need a hash.
+    A current version is the end of the name's lineage in its language:
+    no edit, rename or refactor came after it there. One line per version
+    means the name is unambiguous; several mean forks diverged (or
+    unrelated functions share the name) and commands need a hash. A
+    version waiting for the translation of a newer one (another language
+    moved on) says so.
 
     Args:
         name: Function name to search for
@@ -2724,11 +3090,18 @@ def command_latest(name: str, lang: str = None, as_json: bool = False, hash_only
             print(func_hash)
         return
 
+    def waiting(func_hash):
+        """(newer language, this language) pairs: versions still to translate."""
+        steps = lineage_index()['steps']
+        return sorted({(other, steps[s]['lang']) for s in lineage_current_steps(lang, name, func_hash)
+                       for other in lineage_waiting(s)})
+
     if as_json:
         print(json.dumps([{'hash': h, 'created': functions[h]['metadata'].get('created', ''),
                            'author': helper_format_author(functions[h]['metadata']),
-                           'parent': functions[h]['metadata'].get('parent'),
-                           'languages': sorted(functions[h]['names'])} for h in heads],
+                           'parent': helper_previous_version(h, lang, name),
+                           'languages': sorted(functions[h]['names']),
+                           'newer_in': sorted({other for other, _ in waiting(h)})} for h in heads],
                          indent=2, ensure_ascii=False))
         return
 
@@ -2740,9 +3113,12 @@ def command_latest(name: str, lang: str = None, as_json: bool = False, hash_only
         print(f"Hash: {func_hash}")
         print(f"Date: {metadata.get('created', 'unknown')}")
         print(f"Author: {helper_format_author(metadata)}")
-        if metadata.get('parent'):
-            print(f"Parent: {metadata['parent']}")
+        parent = helper_previous_version(func_hash, lang, name)
+        if parent:
+            print(f"Parent: {parent}")
         print(f"Languages: {', '.join(sorted(function['names']))}")
+        for other, here in waiting(func_hash):
+            print(f"Note: newer version in {other}, not yet translated to {here}")
         print()
 
     if len(heads) > 1:
@@ -2754,16 +3130,13 @@ def storage_pool_index() -> Dict[str, Any]:
     Scan the pool once and index its relations.
 
     Returns:
-        Dict with 'functions' (see storage_scan_functions), 'restores'
-        (see storage_scan_restores), 'children' (lineage step -> the steps
-        right after it), 'current' (hashes of current versions, restored
-        ones included), 'importers' (hash -> functions importing it) and
-        'checked_by' (check hash -> functions it is attached to)
+        Dict with 'functions' (see storage_scan_functions), 'lineage' (see
+        lineage_index), 'current' (hashes of functions that are the
+        current version of some name), 'importers' (hash -> functions
+        importing it) and 'checked_by' (check hash -> functions it is
+        attached to)
     """
     functions = storage_scan_functions()
-    restores = storage_scan_restores()
-    children = lineage_successors(functions, restores)
-    current = {lineage_code(node, restores) for node in list(functions) + list(restores) if node not in children}
     importers: Dict[str, List[str]] = {}
     checked_by: Dict[str, List[str]] = {}
     for func_hash, function in functions.items():
@@ -2771,27 +3144,70 @@ def storage_pool_index() -> Dict[str, Any]:
             importers.setdefault(dep, []).append(func_hash)
         for check_hash in function['checks']:
             checked_by.setdefault(check_hash, []).append(func_hash)
-    return {'functions': functions, 'restores': restores, 'children': children, 'current': current & set(functions),
+    return {'functions': functions, 'lineage': lineage_index(),
+            'current': {h for h, f in functions.items() if f['current']},
             'importers': importers, 'checked_by': checked_by}
 
 
 def helper_display_language(function: Dict[str, Any], prefer: List[str] = None) -> Optional[str]:
-    """The language to show a function in: your languages first, then prefer, then any."""
+    """
+    The language to show a function in: one where it is current first
+    (your languages, then prefer, then any), then any it has.
+    """
     preferred = storage_read_config()['user'].get('languages') or []
-    for lang in preferred + (prefer or []) + sorted(function['names']):
-        if lang in function['names']:
-            return lang
+    for pool in (function.get('current_names', {}), function['names']):
+        for lang in preferred + (prefer or []) + sorted(pool):
+            if lang in pool and lang in function['names']:
+                return lang
     return None
-
-
-def search_lineage_root(index: Dict[str, Any], func_hash: str) -> str:
-    """The first version of a function's lineage (following parents in the local pool)."""
-    return lineage_root(func_hash, index['functions'], index['restores'])
 
 
 def search_pins(function: Dict[str, Any]) -> Set[str]:
     """Every reference a function pins on purpose (bb.ref), in any language."""
     return {pin for mapping in function['mappings'].values() for pin in (mapping.get('pinned') or [])}
+
+
+def search_outdated_refs(index: Dict[str, Any], func_hash: str) -> List[str]:
+    """
+    The versions a function uses that are no longer current, pins excepted.
+
+    A use of D, under alias A in the caller's mapping in language L, is
+    out of date when D's lineage for A in L (D's own name there when A is
+    not one) went on to another function: the current version of that
+    name in L is not D. Languages where the caller is current are looked
+    at (all its languages when it is current nowhere). A D with no
+    lineage in L is followed in every language.
+    """
+    memo = index.setdefault('outdated_memo', {})
+    if func_hash in memo:
+        return memo[func_hash]
+    functions = index['functions']
+    function = functions[func_hash]
+    steps = index['lineage']['steps']
+    pins = search_pins(function)
+    langs = sorted(function['current_names']) or sorted(function['mappings'])
+    outdated = []
+    for dep in code_extract_dependencies(function['normalized_code']):
+        if dep in pins or dep not in functions or dep in outdated:
+            continue
+        for lang in langs:
+            alias = function['mappings'].get(lang, {}).get('alias_mapping', {}).get(dep)
+            if lineage_steps_on(dep, lang):
+                heads = {steps[s]['function'] for s in lineage_follow(dep, lang, lineage_name_for(dep, lang, alias))}
+            else:
+                heads = {steps[s]['function'] for s in lineage_follow(dep)}
+            if heads and dep not in heads:
+                outdated.append(dep)
+                break
+    memo[func_hash] = outdated
+    return outdated
+
+
+def search_untranslated(func_hash: str) -> List[Tuple[str, str]]:
+    """(newer language, language) pairs where func_hash waits for a translation (see lineage_waiting)."""
+    steps = lineage_index()['steps']
+    return sorted({(other, steps[s]['lang']) for s in lineage_current_steps(function=func_hash)
+                   for other in lineage_waiting(s)})
 
 
 def search_behind(index: Dict[str, Any]) -> Dict[str, List[str]]:
@@ -2813,7 +3229,7 @@ def search_behind(index: Dict[str, Any]) -> Dict[str, List[str]]:
         function = functions[func_hash]
         pins = search_pins(function)
         deps = [d for d in code_extract_dependencies(function['normalized_code']) if d not in pins]
-        result = any(d in functions and d not in current for d in deps) or \
+        result = bool(search_outdated_refs(index, func_hash)) or \
             any(d in current and lags(d, seen + (func_hash,)) for d in deps)
         memo[func_hash] = result
         return result
@@ -2830,22 +3246,24 @@ def search_behind(index: Dict[str, Any]) -> Dict[str, List[str]]:
 
 
 def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
-                    head_counts: Dict[Tuple[str, str, str], int], match: List[str] = None,
+                    head_counts: Dict[Tuple[str, str, str], Set[str]], match: List[str] = None,
                     prefer: List[str] = None, behind: Dict[str, List[str]] = None) -> Dict[str, Any]:
     """Everything search shows about one function, as a dict (also the --json form)."""
     function = index['functions'][func_hash]
     lang = helper_display_language(function, prefer)
     name = function['names'].get(lang) if lang else None
+    if lang in function['current_names'] and name not in function['current_names'][lang]:
+        name = function['current_names'][lang][0]
     mapping = function['mappings'].get(lang, {}) if lang else {}
+    if mapping.get('name_mapping', {}).get('_bb_v_0') != name:
+        mapping = next((m for m in function['all_mappings'].get(lang, [])
+                        if m.get('name_mapping', {}).get('_bb_v_0') == name), mapping)
     docstring = mapping.get('docstring', '')
     is_current = func_hash in index['current']
-    root = search_lineage_root(index, func_hash)
-    forks = head_counts.get((lang, name, root), 0)
-    namesakes = sum(count for (l, n, r), count in head_counts.items() if (l, n) == (lang, name) and r != root)
-    # Versions it uses that are no longer current, except those pinned on purpose
-    pinned = set(mapping.get('pinned') or [])
-    outdated_refs = [dep for dep in code_extract_dependencies(function['normalized_code'])
-                     if dep in index['functions'] and dep not in index['current'] and dep not in pinned]
+    on = lineage_current_steps(lang, name, func_hash) if lang else []
+    root = lineage_root_step(on[0]) if on else None
+    forks = len(head_counts.get((lang, name, root), ())) if root else 0
+    namesakes = sum(len(heads) for (l, n, r), heads in head_counts.items() if (l, n) == (lang, name) and r != root)
     return {
         'hash': func_hash,
         'name': name,
@@ -2853,11 +3271,12 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
         'languages': sorted(function['names']),
         'created': function['metadata'].get('created', ''),
         'author': helper_format_author(function['metadata']),
-        'parent': function['metadata'].get('parent'),
+        'parent': helper_previous_version(func_hash, lang, name) if lang else None,
         'current': is_current,
         'diverged': is_current and forks > 1,
-        'outdated': outdated_refs,
+        'outdated': search_outdated_refs(index, func_hash),
         'behind': (behind or {}).get(func_hash, []),
+        'untranslated': [list(pair) for pair in search_untranslated(func_hash)],
         'pinned': sorted(set(mapping.get('pinned') or [])),
         'forks': forks,
         'namesakes': namesakes,
@@ -2881,7 +3300,7 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     docstring, documentation, variable names or code. Results show in
     your preferred language, with their checks, your review status and
     whether their name has diverged into several current versions. Only
-    current versions (that nobody forked) are listed unless --all.
+    current versions (the end of some name's lineage) are listed unless --all.
 
     With no words and no filter, every current function is listed.
 
@@ -2896,7 +3315,9 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     --outdated    functions using versions that are no longer current (their
                   debt: editing one brings it up to date; pins are kept),
                   and the functions above them that must follow (behind);
-                  ends with the `bb update` commands that settle it all
+                  ends with the `bb update` commands that settle it all.
+                  Also versions waiting for a translation: a newer version
+                  in another language, not yet translated to this one
     --uses X      functions that import X directly
     --json        machine-readable output
     ```
@@ -2908,12 +3329,13 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
 
     # A name diverged when one lineage has several current versions (a fork);
     # unrelated functions that happen to share a name are counted apart
-    head_counts: Dict[Tuple[str, str, str], int] = {}
-    for func_hash, function in functions.items():
-        if func_hash in index['current']:
-            root = search_lineage_root(index, func_hash)
-            for lang, name in function['names'].items():
-                head_counts[(lang, name, root)] = head_counts.get((lang, name, root), 0) + 1
+    head_counts: Dict[Tuple[str, str, str], Set[str]] = {}
+    steps = index['lineage']['steps']
+    for step_id in index['lineage']['current']:
+        record = steps[step_id]
+        if record['function'] in functions:
+            key = (record['lang'], record['name'], lineage_root_step(step_id))
+            head_counts.setdefault(key, set()).add(record['function'])
 
     candidates = []
     for func_hash, function in functions.items():
@@ -2923,17 +3345,19 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
         # Every term must appear somewhere; remember where, and in which languages
         fields: Dict[str, str] = {'code': function['normalized_code'].lower()}
         langs_matched = []
-        for lang, mapping in function['mappings'].items():
-            texts = {
-                'name': (function['names'].get(lang) or ''),
-                'docstring': mapping.get('docstring', ''),
-                'docs': mapping.get('markdown', ''),
-                'variables': ' '.join(mapping.get('name_mapping', {}).values()),
-            }
-            for key, text in texts.items():
-                fields[key] = fields.get(key, '') + ' ' + text.lower()
-            if terms and all(any(t in text.lower() for text in texts.values()) for t in terms):
-                langs_matched.append(lang)
+        for lang, mappings in function['all_mappings'].items():
+            for mapping in mappings:
+                texts = {
+                    'name': (mapping.get('name_mapping', {}).get('_bb_v_0') or ''),
+                    'docstring': mapping.get('docstring', ''),
+                    'docs': mapping.get('markdown', ''),
+                    'variables': ' '.join(mapping.get('name_mapping', {}).values()),
+                }
+                for key, text in texts.items():
+                    fields[key] = fields.get(key, '') + ' ' + text.lower()
+                if terms and lang not in langs_matched and \
+                        all(any(t in text.lower() for text in texts.values()) for t in terms):
+                    langs_matched.append(lang)
         if terms and not all(any(t in text for text in fields.values()) for t in terms):
             continue
         match = [key for key in ('name', 'docstring', 'docs', 'variables', 'code')
@@ -2954,7 +3378,7 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     if unused:
         results = [r for r in results if r['callers'] == 0 and not r['is_check']]
     if outdated:
-        results = [r for r in results if r['outdated'] or r['behind']]
+        results = [r for r in results if r['outdated'] or r['behind'] or r['untranslated']]
     if uses_hash:
         results = [r for r in results if r['hash'] in index['importers'].get(uses_hash, [])]
 
@@ -2999,6 +3423,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
         if r['behind']:
             names = ', '.join(helper_function_label(dep) for dep in r['behind'])
             status.append(f"behind: uses {names}, which is out of date")
+        for newer, here in r['untranslated']:
+            status.append(f"newer version in {newer}, not yet translated to {here}")
         if r['pinned']:
             status.append(f"{len(r['pinned'])} pinned")
         if r['current'] and r['namesakes']:
@@ -3014,8 +3440,10 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
 
     if outdated:
         # The functions nothing outdated uses: updating them reaches all the others
-        listed = {r['hash'] for r in results}
-        tops = [r for r in results if not any(user in listed for user in index['importers'].get(r['hash'], []))]
+        # (a version waiting for a translation needs a translator, not bb update)
+        listed = {r['hash'] for r in results if r['outdated'] or r['behind']}
+        tops = [r for r in results if r['hash'] in listed
+                and not any(user in listed for user in index['importers'].get(r['hash'], []))]
         if tops:
             print("To bring them all up to date in one step:")
             for r in tops:
@@ -3049,26 +3477,19 @@ def code_strip_bb_imports(code: str) -> str:
 
 def storage_list_languages(func_hash: str) -> list:
     """
-    List available languages for a function hash.
+    List available languages for a function hash: those it has mappings in.
 
     Args:
         func_hash: Function hash (64 hex characters)
 
     Returns:
-        List of language codes available for this function
+        Sorted list of language codes
     """
-    pool_dir = storage_get_pool_directory()
-    func_dir = pool_dir / func_hash[:2] / func_hash[2:]
-
-    if not func_dir.exists():
+    mapping_dir = storage_mapping_directory(func_hash)
+    if not mapping_dir.is_dir():
         return []
-
-    languages = []
-    for item in func_dir.iterdir():
-        if item.is_dir() and len(item.name) >= 3 and len(item.name) <= 256:
-            languages.append(item.name)
-
-    return sorted(languages)
+    return sorted(item.name for item in mapping_dir.iterdir()
+                  if item.is_dir() and 3 <= len(item.name) <= 256 and any(item.glob('*.json')))
 
 
 def command_run(identifier: str, func_args: list = None):
@@ -3103,16 +3524,17 @@ TRANSLATE_MARKER_RE = re.compile(r'^<!--\s*bb:translate\s+([0-9a-f]{64})@(\w+)@(
 TRANSLATE_LINE_RE = re.compile(r'^-\s+(\S+)(?:\s+\(([0-9a-f]{12,64})\.*\))?\s*->\s*(.*?)\s*$')
 
 
-def translate_render_file(hash_value: str, source_lang: str, target_lang: str) -> str:
+def translate_render_file(hash_value: str, source_lang: str, target_lang: str, name: str = None) -> str:
     """
     A translation file: the function in its source language, then what to fill in.
 
     `## Names` and `## Aliases` hold one `- source -> target` line per
     variable name and per pool function the code names; `## Docstring` and
     `## Documentation` hold the target text. The marker says which
-    translation the file was made from.
+    translation the file was made from (with name, the one called so:
+    two names may share one code).
     """
-    mapping_hash = mapping_select(hash_value, source_lang)
+    mapping_hash = mapping_select(hash_value, source_lang, name)
     normalized_code, names, aliases, docstring = code_load(hash_value, source_lang, mapping_hash)
     markdown = mapping_load_markdown(hash_value, source_lang, mapping_hash)
     source = code_denormalize(code_replace_docstring(normalized_code, docstring), names, aliases)
@@ -3139,7 +3561,8 @@ def translate_render_file(hash_value: str, source_lang: str, target_lang: str) -
     return '\n'.join(out)
 
 
-def translate_parse_file(text: str, hash_value: str, source_lang: str, target_lang: str) -> Dict[str, Any]:
+def translate_parse_file(text: str, hash_value: str, source_lang: str, target_lang: str,
+                         name: str = None) -> Dict[str, Any]:
     """
     Read a filled-in translation file into a mapping for target_lang.
 
@@ -3154,7 +3577,7 @@ def translate_parse_file(text: str, hash_value: str, source_lang: str, target_la
     if (marker.group(1), marker.group(2), marker.group(4)) != (hash_value, source_lang, target_lang):
         raise ValueError(f"the file translates {marker.group(1)[:12]}...@{marker.group(2)} into "
                          f"{marker.group(4)}, not this function and these languages")
-    if marker.group(3) != mapping_select(hash_value, source_lang):
+    if marker.group(3) != mapping_select(hash_value, source_lang, name):
         raise ValueError(f"the {source_lang} translation changed since the file was written: write a new file")
 
     sections: Dict[str, List[str]] = {}
@@ -3215,7 +3638,32 @@ def translate_parse_file(text: str, hash_value: str, source_lang: str, target_la
     return {'name_mapping': target_names, 'alias_mapping': target_aliases,
             'docstring': text_of(f"Docstring ({target_lang})"),
             'markdown': text_of(f"Documentation ({target_lang})"),
-            'source_translation': f"{hash_value}@{source_lang}@{marker.group(3)}"}
+            'source_mapping': marker.group(3)}
+
+
+def translate_save_step(hash_value: str, source_lang: str, source_mapping: str, target_lang: str,
+                        target_mapping: str, comment: str = "") -> str:
+    """
+    Record a translation in the lineage; returns the step's id.
+
+    The step translates the source mapping's step. It comes after the
+    target language's current step in the same history (the translation
+    of a previous version), when there is one: so the target name follows
+    on to this version. Otherwise it starts the target's lineage.
+    """
+    steps = lineage_index()['steps']
+    source_step = lineage_step_for(hash_value, source_lang, mapping=source_mapping)
+    previous = None
+    if source_step:
+        family = lineage_root_step(source_step, translations=True)
+        candidates = [s for s in lineage_current_steps(target_lang)
+                      if lineage_root_step(s, translations=True) == family]
+        if candidates:
+            previous = max(candidates, key=lambda s: (lineage_created(s), s))
+    if previous and (steps[previous]['function'], steps[previous]['mapping']) == (hash_value, target_mapping):
+        return previous
+    return lineage_save(previous, hash_value, target_lang, target_mapping, 'translate', comment,
+                        translates=source_step)
 
 
 def command_translate(identifier_with_lang: str, target_lang: str, recursive: bool = False,
@@ -3244,6 +3692,7 @@ def command_translate(identifier_with_lang: str, target_lang: str, recursive: bo
         sys.exit(1)
 
     hash_value, source_lang = helper_parse_identifier(identifier_with_lang)
+    source_name = helper_identifier_name(identifier_with_lang)
 
     if len(target_lang) < 3 or len(target_lang) > 256:
         print(f"Error: Target language code must be 3-256 characters. Got: {target_lang}", file=sys.stderr)
@@ -3255,32 +3704,33 @@ def command_translate(identifier_with_lang: str, target_lang: str, recursive: bo
             sys.exit(1)
         if not os.path.exists(file):
             with open(file, 'w', encoding='utf-8') as f:
-                f.write(translate_render_file(hash_value, source_lang, target_lang))
+                f.write(translate_render_file(hash_value, source_lang, target_lang, source_name))
             print(f"Wrote {file}. Fill it in, then run the same command again to save it.")
             return
         with open(file, 'r', encoding='utf-8') as f:
             try:
-                parsed = translate_parse_file(f.read(), hash_value, source_lang, target_lang)
+                parsed = translate_parse_file(f.read(), hash_value, source_lang, target_lang, source_name)
             except ValueError as e:
                 print(f"Error: {file}: {e}\nNothing saved.", file=sys.stderr)
                 sys.exit(1)
-        pins = mapping_load_json(hash_value, source_lang, mapping_select(hash_value, source_lang)).get('pinned')
+        pins = mapping_load_json(hash_value, source_lang, parsed['source_mapping']).get('pinned')
         with contextlib.redirect_stdout(io.StringIO()):
             mapping_hash = mapping_save(hash_value, target_lang, parsed['docstring'], parsed['name_mapping'],
-                                        parsed['alias_mapping'], comment or "", parsed['markdown'],
-                                        parent=parsed['source_translation'], pinned=pins)
+                                        parsed['alias_mapping'], comment or "", parsed['markdown'], pinned=pins)
+        translate_save_step(hash_value, source_lang, parsed['source_mapping'], target_lang, mapping_hash,
+                            comment or "")
         print(f"Translation: {hash_value}@{target_lang}@{mapping_hash}")
         print(f"Name: {parsed['name_mapping'].get('_bb_v_0')}@{target_lang}")
         return
 
     # Load source function
+    source_mapping = mapping_select(hash_value, source_lang, source_name)
     try:
-        normalized_code, name_mapping_source, alias_mapping_source, docstring_source = code_load(hash_value, source_lang)
+        normalized_code, name_mapping_source, alias_mapping_source, docstring_source = \
+            code_load(hash_value, source_lang, source_mapping)
     except SystemExit:
         print(f"Error: Could not load function {hash_value}@{source_lang}", file=sys.stderr)
         sys.exit(1)
-    # The new translation records the exact one it was made from
-    source_translation = f"{hash_value}@{source_lang}@{mapping_select(hash_value, source_lang)}"
 
     # Show source code for reference
     print(f"Source function ({source_lang}):")
@@ -3320,9 +3770,11 @@ def command_translate(identifier_with_lang: str, target_lang: str, recursive: bo
     comment = input("Optional comment for this translation (press Enter to skip): ").strip()
 
     # Save the translation
-    source_pins = mapping_load_json(hash_value, source_lang, mapping_select(hash_value, source_lang)).get('pinned')
+    source_pins = mapping_load_json(hash_value, source_lang, source_mapping).get('pinned')
     mapping_hash = mapping_save(hash_value, target_lang, target_docstring, name_mapping_target, alias_mapping_target,
-                                comment, parent=source_translation, pinned=source_pins)
+                                comment, pinned=source_pins)
+    # The translation is a lineage step: the target name follows on to this version
+    translate_save_step(hash_value, source_lang, source_mapping, target_lang, mapping_hash, comment)
 
     print(f"Mapping hash: {mapping_hash}")
     print()
@@ -3372,72 +3824,363 @@ def command_translate(identifier_with_lang: str, target_lang: str, recursive: bo
 
 def command_rm(identifier: str, force: bool = False):
     """
-    Remove a function or a specific language mapping.
+    Remove a function, or one name of it.
 
     Accepts a hash or function name (with optional @lang suffix).
 
-    - bb rm identifier@lang - Remove only the language mapping
-    - bb rm identifier - Remove the entire function with all mappings
+    - bb rm NAME@lang - Remove that name: the function's mappings in lang
+      that call it NAME (with HASH@lang: all its mappings in lang), and
+      their lineage steps. The name's previous version, if it had one,
+      is current again; the function and its other names stay.
+    - bb rm NAME or bb rm HASH - Remove the entire function: its object,
+      all its mappings and its lineage steps.
 
-    A function that other functions still use (as a dependency or a
-    check) or that a restore record names is not removed, since they would
-    then refer to nothing; bb lists them. --force removes it anyway.
+    Steps that later steps come after are kept, so the history of what
+    remains stays connected (see lineage_prune). A function that other
+    functions still use (as a dependency or a check) is not removed,
+    since they would then refer to nothing; bb lists them. --force
+    removes it anyway.
     """
     import shutil
 
     hash_value, lang = helper_parse_identifier(identifier)
+    name = helper_identifier_name(identifier)
     # Only an explicit @lang removes one mapping: a bare name resolves with a language too
     remove_lang_only = '@' in identifier
 
-    pool_dir = storage_get_pool_directory()
-    func_dir = pool_dir / hash_value[:2] / hash_value[2:]
-
     if remove_lang_only:
-        # Remove only the language mapping
-        lang_dir = func_dir / lang
-        if not lang_dir.exists():
+        mappings = [m for m, _ in mappings_list(hash_value, lang)
+                    if name is None or mapping_name(hash_value, lang, m) == name]
+        if not mappings:
             print(f"Error: Language mapping not found: {hash_value}@{lang}", file=sys.stderr)
             sys.exit(1)
+        for mapping_hash in mappings:
+            storage_mapping_path(hash_value, lang, mapping_hash).unlink()
+        lang_dir = storage_mapping_directory(hash_value) / lang
+        if lang_dir.is_dir() and not any(lang_dir.iterdir()):
+            lang_dir.rmdir()
+        lineage_prune()
+        print(f"Removed language mapping: {hash_value}@{lang}" + (f" ({name})" if name else ""))
 
-        # Remove the language directory
-        shutil.rmtree(lang_dir)
-        print(f"Removed language mapping: {hash_value}@{lang}")
-
-        # Check if there are any remaining languages
-        remaining_langs = [item.name for item in func_dir.iterdir()
-                          if item.is_dir() and len(item.name) >= 3]
+        remaining_langs = storage_list_languages(hash_value)
         if remaining_langs:
-            print(f"Remaining languages: {', '.join(sorted(remaining_langs))}")
+            print(f"Remaining languages: {', '.join(remaining_langs)}")
         else:
             print("Warning: No language mappings remain for this function")
     else:
-        # Remove the entire function
-        if not func_dir.exists():
-            print(f"Error: Function directory not found: {hash_value}", file=sys.stderr)
+        if code_detect_schema(hash_value) is None:
+            print(f"Error: Function not found: {hash_value}", file=sys.stderr)
             sys.exit(1)
         index = storage_pool_index()
         users = sorted(set(index['importers'].get(hash_value, [])) | set(index['checked_by'].get(hash_value, [])))
-        records = sorted(rid for rid, r in index['restores'].items() if hash_value in (r['restores'], r['supersedes']))
-        if (users or records) and not force:
+        if users and not force:
             print(f"Error: {helper_function_label(hash_value)} ({hash_value}) is still in use; nothing removed:",
                   file=sys.stderr)
             for user in users:
                 state = "current" if user in index['current'] else "older version"
                 print(f"  used by {helper_function_label(user)} {user} ({state})", file=sys.stderr)
-            for rid in records:
-                print(f"  named by restore record {rid}", file=sys.stderr)
             print("Remove those first, or use --force to leave them referring to nothing.", file=sys.stderr)
             sys.exit(1)
 
-        # Get list of languages before deletion
-        languages = [item.name for item in func_dir.iterdir()
-                    if item.is_dir() and len(item.name) >= 3]
-
-        # Remove the function directory
-        shutil.rmtree(func_dir)
+        languages = storage_list_languages(hash_value)
+        shutil.rmtree(storage_object_path(hash_value).parent)
+        if storage_mapping_directory(hash_value).exists():
+            shutil.rmtree(storage_mapping_directory(hash_value))
+        lineage_prune()
         print(f"Removed function: {hash_value}")
         if languages:
-            print(f"Deleted {len(languages)} language mapping(s): {', '.join(sorted(languages))}")
+            print(f"Deleted {len(languages)} language mapping(s): {', '.join(languages)}")
+
+
+def migrate_read_old_pool() -> Tuple[Dict[str, Dict[str, Any]], Dict[Tuple[str, str], Dict[str, Dict[str, Any]]],
+                                     Dict[str, Dict[str, Any]], Dict[str, Path]]:
+    """
+    Read a pool in the layout before storage v2.
+
+    That layout kept pool/XX/<rest>/object.json, the mappings in
+    pool/XX/<rest>/<lang>/ZZ/<rest>/mapping.json (with a 'parent' link,
+    hash@lang@mapping, to the translation they were made from) and restore
+    records in $BB_DIRECTORY/restore/<id>.json.
+
+    Returns:
+        (objects {hash: object.json data}, mappings {(hash, lang): {mapping hash: data}},
+         restores {id: record}, object paths {hash: path})
+    """
+    pool_dir = storage_get_pool_directory()
+    objects: Dict[str, Dict[str, Any]] = {}
+    paths: Dict[str, Path] = {}
+    mappings: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
+    for prefix_dir in sorted(pool_dir.iterdir()):
+        if not (prefix_dir.is_dir() and re.fullmatch(r'[0-9a-f]{2}', prefix_dir.name)):
+            continue
+        for func_dir in sorted(prefix_dir.iterdir()):
+            object_json = func_dir / 'object.json'
+            if not object_json.exists():
+                continue
+            try:
+                with open(object_json, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except (IOError, json.JSONDecodeError):
+                continue
+            func_hash = prefix_dir.name + func_dir.name
+            objects[func_hash] = data
+            paths[func_hash] = object_json
+            for lang_dir in sorted(func_dir.iterdir()):
+                if not lang_dir.is_dir():
+                    continue
+                for mapping_json in sorted(lang_dir.glob('*/*/mapping.json')):
+                    try:
+                        with open(mapping_json, 'r', encoding='utf-8') as f:
+                            mapping = json.load(f)
+                    except (IOError, json.JSONDecodeError):
+                        continue
+                    mapping_hash = mapping_json.parent.parent.name + mapping_json.parent.name
+                    mappings.setdefault((func_hash, lang_dir.name), {})[mapping_hash] = mapping
+    restores: Dict[str, Dict[str, Any]] = {}
+    for path in sorted((storage_get_bb_directory() / 'restore').glob('*.json')):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                restores[path.stem] = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+    return objects, mappings, restores, paths
+
+
+def migrate_plan(objects: Dict[str, Dict[str, Any]], mappings: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]],
+                 restores: Dict[str, Dict[str, Any]], save_mapping: Callable, save_step: Callable) -> Dict[str, int]:
+    """
+    Turn the old pool's lineage into lineage steps, deterministically.
+
+    Old versions (functions, and restore records standing for the version
+    they restore) are taken parents first, by creation time. For each
+    version, in each language: its first mapping continues the step of
+    the nearest older version that has the language (an edit, or a rename
+    when the name differs, a refactor when only references changed), or
+    starts a lineage (an add, or a translation when the mapping was made
+    from another language's); a mapping made from another of the same
+    function and language is a 'document' step after it. A restore record
+    is a 'restore' step from the superseded version's step to the restored
+    version's mapping, in each language both have.
+
+    Args:
+        save_mapping: (func_hash, lang, old mapping data) -> new mapping hash
+        save_step: (previous, func_hash, lang, mapping_hash, relation, comment,
+                    translates, metadata) -> step id
+
+    Returns:
+        Counts: functions, mappings, steps, restores
+    """
+    def created_of(node):
+        if node in objects:
+            return objects[node].get('metadata', {}).get('created', '')
+        return restores[node].get('created', '')
+
+    def previous(node):
+        parent = (objects[node].get('metadata', {}).get('parent') if node in objects
+                  else restores[node].get('supersedes'))
+        return parent if parent in objects or parent in restores else None
+
+    # Parents first, then by creation time
+    order: List[str] = []
+    placed: Set[str] = set()
+    for node in sorted(list(objects) + [r for r in restores if r not in objects],
+                       key=lambda n: (created_of(n), n)):
+        chain = []
+        while node is not None and node not in placed and node not in chain:
+            chain.append(node)
+            node = previous(node)
+        for item in reversed(chain):
+            placed.add(item)
+            order.append(item)
+
+    new_mapping: Dict[Tuple[str, str, str], str] = {}   # (hash, lang, old mapping) -> new mapping
+    step_of: Dict[Tuple[str, str, str], str] = {}       # (hash, lang, old mapping) -> step
+    final: Dict[Tuple[str, str], List[Tuple[str, str, str]]] = {}  # (node, lang) -> [(step, name, old mapping)]
+    counts = {'functions': len(objects), 'mappings': 0, 'steps': 0, 'restores': 0}
+
+    def name_of(data):
+        return data.get('name_mapping', {}).get('_bb_v_0', '')
+
+    def nearest(node, lang):
+        """The final steps in lang of the nearest version before node that has some."""
+        seen = set()
+        node = previous(node)
+        while node is not None and node not in seen:
+            seen.add(node)
+            if final.get((node, lang)):
+                return final[(node, lang)]
+            node = previous(node)
+        return []
+
+    def pick(candidates, name, old_mapping=None):
+        for step_id, step_name, mapping_hash in candidates:
+            if old_mapping and mapping_hash == old_mapping:
+                return step_id, step_name
+        for step_id, step_name, _ in candidates:
+            if step_name == name:
+                return step_id, step_name
+        return (candidates[0][0], candidates[0][1]) if candidates else (None, None)
+
+    def parent_link(data):
+        parts = (data.get('parent') or '').split('@')
+        return tuple(parts) if len(parts) == 3 else None
+
+    def metadata_of(node):
+        if node in objects:
+            meta = objects[node].get('metadata', {})
+        else:
+            meta = restores[node]
+        return {'created': meta.get('created', ''), 'name': meta.get('name', ''), 'email': meta.get('email', '')}
+
+    def migrate_function(func_hash):
+        langs = sorted(lang for (h, lang) in mappings if h == func_hash)
+        # Languages a translation was made from go first
+        def depends(lang):
+            return any((link := parent_link(d)) and link[0] == func_hash and link[1] != lang
+                       for d in mappings[(func_hash, lang)].values())
+        langs.sort(key=lambda lang: (depends(lang), lang))
+        for lang in langs:
+            own = mappings[(func_hash, lang)]
+            doc_parent = {}
+            for m, data in own.items():
+                link = parent_link(data)
+                if link and link[0] == func_hash and link[1] == lang and link[2] in own and link[2] != m:
+                    doc_parent[m] = link[2]
+            # Mappings in chain order: a mapping after the one it was made from
+            ordered, done = [], set()
+            for m in sorted(own):
+                chain = []
+                while m is not None and m not in done and m not in chain:
+                    chain.append(m)
+                    m = doc_parent.get(m)
+                for item in reversed(chain):
+                    done.add(item)
+                    ordered.append(item)
+            for m in ordered:
+                data = own[m]
+                new_hash = save_mapping(func_hash, lang, data)
+                new_mapping[(func_hash, lang, m)] = new_hash
+                counts['mappings'] += 1
+                name = name_of(data)
+                link = parent_link(data)
+                translates = None
+                if m in doc_parent:
+                    from_step = step_of[(func_hash, lang, doc_parent[m])]
+                    parent_name = name_of(own[doc_parent[m]])
+                    relation = 'rename' if parent_name != name else 'document'
+                else:
+                    candidates = nearest(func_hash, lang)
+                    old_mapping = link[2] if link and link[1] == lang else None
+                    from_step, from_name = pick(candidates, name, old_mapping)
+                    if link and link[1] != lang:
+                        translates = step_of.get(link)
+                    if from_step is None:
+                        relation = 'translate' if translates else 'add'
+                    elif from_name != name:
+                        relation = 'rename'
+                    elif translates:
+                        relation = 'translate'
+                    else:
+                        relation = 'edit'
+                        source = mappings.get((link[0], lang), {}).get(link[2]) if link else None
+                        if source and source.get('name_mapping') == data.get('name_mapping') and \
+                                source.get('docstring') == data.get('docstring') and \
+                                sorted(source.get('alias_mapping', {}).values()) == \
+                                sorted(data.get('alias_mapping', {}).values()):
+                            relation = 'refactor'
+                step_of[(func_hash, lang, m)] = save_step(from_step, func_hash, lang, new_hash, relation,
+                                                          data.get('comment', ''), translates, metadata_of(func_hash))
+                counts['steps'] += 1
+            leaves = [m for m in ordered if m not in doc_parent.values()]
+            final[(func_hash, lang)] = [(step_of[(func_hash, lang, m)], name_of(own[m]), m) for m in leaves]
+
+    def migrate_restore(record_id):
+        record = restores[record_id]
+        restored = record.get('restores')
+        langs = sorted({lang for (h, lang) in mappings if h == restored})
+        if restored not in objects:
+            for lang in sorted({lang for (_, lang) in final}):
+                final[(record_id, lang)] = nearest(record_id, lang)
+            return
+        counts['restores'] += 1
+        for lang in langs:
+            candidates = nearest(record_id, lang)
+            if not candidates:
+                continue
+            leaves = [(n, m) for _, n, m in final.get((restored, lang), [])] or \
+                [(name_of(d), m) for m, d in sorted(mappings[(restored, lang)].items())]
+            from_step, from_name = candidates[0][0], candidates[0][1]
+            name, m = next(((n, m) for n, m in leaves if n == from_name), leaves[0])
+            step_id = save_step(from_step, restored, lang, new_mapping.get((restored, lang, m)) or
+                                save_mapping(restored, lang, mappings[(restored, lang)][m]),
+                                'restore', record.get('comment', ''), None, metadata_of(record_id))
+            counts['steps'] += 1
+            final[(record_id, lang)] = [(step_id, name, m)]
+
+    for node in order:
+        if node in objects:
+            migrate_function(node)
+        else:
+            migrate_restore(node)
+    return counts
+
+
+def command_migrate():
+    """
+    Convert a pool from the layout before storage v2 to the current one.
+
+    Functions move to pool/functions/, their mappings to pool/mappings/
+    (without their 'parent' link: the lineage says it now), and the
+    lineage of the pool becomes lineage steps in pool/lineage/, per
+    language and per name: edits, renames, translations, documentation
+    changes and restores (the old $BB_DIRECTORY/restore/ records). Current
+    versions stay what they were. Function hashes do not change.
+
+    The old files stay until the new ones are written, then pool/XX/ and
+    restore/ are removed. Track $BB_DIRECTORY with git before migrating:
+    `git checkout` then brings the old layout back. Running it on a pool
+    already migrated says so and changes nothing.
+    """
+    import shutil
+
+    if not storage_pool_is_old_layout():
+        print("Already migrated: this pool uses the current layout.")
+        return
+
+    storage_cache_clear()
+    objects, mappings, restores, paths = migrate_read_old_pool()
+
+    for func_hash in sorted(objects):
+        target = storage_object_path(func_hash)
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(paths[func_hash], target)
+    storage_cache_clear()
+
+    def save_mapping(func_hash, lang, data):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return mapping_save(func_hash, lang, data.get('docstring', ''), data.get('name_mapping', {}),
+                                data.get('alias_mapping', {}), data.get('comment', ''), data.get('markdown', ''),
+                                pinned=data.get('pinned'))
+
+    def save_step(previous, func_hash, lang, mapping_hash, relation, comment, translates, metadata):
+        return lineage_save(previous, func_hash, lang, mapping_hash, relation, comment, translates, metadata)
+
+    counts = migrate_plan(objects, mappings, restores, save_mapping, save_step)
+
+    # Everything is written: the old layout can go
+    pool_dir = storage_get_pool_directory()
+    for prefix_dir in sorted(pool_dir.iterdir()):
+        if prefix_dir.is_dir() and re.fullmatch(r'[0-9a-f]{2}', prefix_dir.name):
+            shutil.rmtree(prefix_dir)
+    restore_dir = storage_get_bb_directory() / 'restore'
+    if restore_dir.is_dir():
+        shutil.rmtree(restore_dir)
+    storage_cache_clear()
+
+    print(f"Migrated {counts['functions']} functions, {counts['mappings']} mappings and "
+          f"{counts['restores']} restore records into {counts['steps']} lineage steps.")
+    print("Removed the old layout (pool/XX/ and restore/); git keeps it if you tracked the directory.")
 
 
 def code_add(file_path_with_lang: str, comment: str = ""):
@@ -3599,18 +4342,16 @@ def helper_report_similar(func_hash: str, exclude: Set[str] = None):
 
 
 def helper_lineage(func_hash: str) -> Set[str]:
-    """func_hash and every ancestor reachable through metadata parent links."""
-    functions, restores = storage_scan_functions(), storage_scan_restores()
-    seen = set()
-    current = func_hash
-    while current and current not in seen and (current in functions or current in restores):
-        seen.add(current)
-        current = lineage_previous(current, functions, restores)
-    return {lineage_code(node, restores) for node in seen}
+    """func_hash and every function its lineage steps came from (any language, translations too)."""
+    steps = lineage_index()['steps']
+    found = {func_hash}
+    for step_id in lineage_steps_on(func_hash):
+        found |= {steps[s]['function'] for s in lineage_ancestors(step_id)}
+    return found
 
 
 def code_pinned_refs(source_code: str) -> Set[str]:
-    """Hashes the author named with bb.ref("<hash>") (not bb.latest): versions pinned on purpose."""
+    """Hashes the author named with bb.ref("<hash>") (not bb.resolve): versions pinned on purpose."""
     try:
         tree = ast.parse(source_code)
     except SyntaxError:
@@ -3634,16 +4375,20 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
     """
     Turn pool functions named by name into references by hash.
 
-    bb.latest("helper") names `helper@lang`, resolved by lineage to its
-    single current version (the one no other function names as its
-    parent), and becomes bb.ref("<hash>"): stored code always holds a
-    hash, so a function keeps the version it was saved with. Never
-    resolved by time: a name with several current versions (two unrelated
-    functions, or a fork) or none is refused, and so are `from bb.pool
-    import ...` (gone) and bb.latest or bb.ref without `import bb`.
+    bb.resolve("helper") (or bb.latest("helper"), the same) names the
+    function currently called helper, looked up through your favourite
+    languages: lang (the one being saved) first, then your languages (bb
+    whoami language) in order, then any language. It is resolved by
+    lineage to the name's single current version and becomes
+    bb.ref("<hash>"): stored code always holds a hash, so a function keeps
+    the version it was saved with. Never resolved by time: a name with
+    several current versions (two unrelated functions, or a fork) or none
+    is refused, and so are `from bb.pool import ...` (gone), bb.resolve or
+    bb.ref without `import bb`, and two names of one code in one function
+    (they would be one alias).
 
     Returns:
-        (source with every bb.latest turned into bb.ref, {name: hash} resolved)
+        (source with every bb.resolve turned into bb.ref, {name: hash} resolved)
 
     Raises:
         ValueError: naming each reference that does not resolve to one version
@@ -3656,25 +4401,33 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
     problems: List[str] = []
     spans = []
     if code_uses_bb(tree) and not code_imports_bb(tree):
-        problems.append("  bb.latest and bb.ref need `import bb` at the top of the file")
+        problems.append("  bb.resolve and bb.ref need `import bb` at the top of the file")
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
             problems.append(f"  line {node.lineno}: {BB_POOL_IMPORT_HINT}")
         name = code_latest_name(node)
         if name is None:
             continue
-        heads, functions = helper_find_heads_by_name(name, lang)
+        heads, functions, _ = helper_resolve_heads(name, lang)
         if len(heads) == 1:
             resolved[name] = heads[0]
             spans.append((node, f"bb.ref({heads[0]!r})"))
         elif not heads:
-            problems.append(f"  line {node.lineno}: no function called '{name}' in {lang}")
+            problems.append(f"  line {node.lineno}: no function called '{name}' in {lang} "
+                            f"(nor in your other languages)")
         else:
             problems.append(f"  line {node.lineno}: '{name}' has {len(heads)} current versions; "
                             f"name one with bb.ref(\"<hash>\"):")
             problems += [f"    {helper_describe_function(functions[h], lang)}" for h in heads]
+    by_hash: Dict[str, List[str]] = {}
+    for name, func_hash in sorted(resolved.items()):
+        by_hash.setdefault(func_hash, []).append(name)
+    for func_hash, names in sorted(by_hash.items()):
+        if len(names) > 1:
+            raise ValueError(f"{where}: {' and '.join(names)} are the same function here (same code, "
+                             f"{func_hash[:12]}...): use one name, or give them different code")
     if problems:
-        raise ValueError(f"{where}: pool functions must be named by bb.latest(\"NAME\") with one current "
+        raise ValueError(f"{where}: pool functions must be named by bb.resolve(\"NAME\") with one current "
                          f"version, or by bb.ref(\"<hash>\"):\n" + '\n'.join(problems))
     return code_replace_spans(source_code, spans), resolved
 
@@ -3684,10 +4437,12 @@ def code_show_pool_names(source_code: str, lang: str, pinned: List[str] = ()) ->
     Write the pool functions a displayed function uses by name.
 
     Each `alias = bb.ref("<hash>")` (and the older `from bb.pool import
-    object_<hash> as alias`) is shown as `alias = bb.latest("NAME")`, so
+    object_<hash> as alias`) is shown as `alias = bb.resolve("NAME")`, so
     that saving the draft brings the function up to date with the current
     version of every name: editing a function is when its debt is paid,
     and a function nobody edits keeps the versions it was saved with.
+    NAME is the function's name in lang (the alias, when it is one of its
+    names there), or in another language when it has none in lang.
     Kept as `bb.ref("<hash>")`: hashes the author pinned on purpose
     (pinned, from the mapping) and functions whose name does not pick one
     current version. A `# bb:` comment line says when a reference is out
@@ -3701,10 +4456,13 @@ def code_show_pool_names(source_code: str, lang: str, pinned: List[str] = ()) ->
 
     def as_text(func_hash, alias):
         name = None
-        if lang in storage_list_languages(func_hash):
-            mapping = mapping_load_json(func_hash, lang, mapping_select(func_hash, lang))
-            name = mapping.get('name_mapping', {}).get('_bb_v_0')
-        heads = helper_find_heads_by_name(name, lang)[0] if name else []
+        for candidate in [lang] + [l for l in storage_list_languages(func_hash) if l != lang]:
+            if candidate in storage_list_languages(func_hash):
+                name = lineage_name_for(func_hash, candidate, alias) or mapping_name(
+                    func_hash, candidate, mapping_select(func_hash, candidate, alias))
+                if name:
+                    break
+        heads = helper_resolve_heads(name, lang)[0] if name else []
         if func_hash in pinned:
             note = (f"# bb: pinned; the current {name} is {heads[0][:12]}...\n"
                     if len(heads) == 1 and heads[0] != func_hash else "")
@@ -3712,7 +4470,7 @@ def code_show_pool_names(source_code: str, lang: str, pinned: List[str] = ()) ->
         if len(heads) == 1:
             note = (f"# bb: out of date: uses {func_hash[:12]}..., saving picks {heads[0][:12]}...\n"
                     if heads[0] != func_hash else "")
-            return f"{note}{alias} = bb.latest({name!r})"
+            return f"{note}{alias} = bb.resolve({name!r})"
         why = f"{name} has {len(heads)} current versions" if heads else f"no current version is called {name}"
         return f"# bb: {why}\n{alias} = bb.ref({func_hash!r})"
 
@@ -3845,9 +4603,8 @@ def code_prepare_source(source_code: str, lang: str, where: str = None) -> Dict[
         raise ValueError(f"Failed to normalize AST: {e}")
 
     # Verify all bb imports resolve to objects in the local pool
-    pool_dir = storage_get_pool_directory()
     missing_deps = [(dep_hash, alias) for dep_hash, alias in alias_mapping.items()
-                    if not (pool_dir / dep_hash[:2] / dep_hash[2:] / 'object.json').exists()]
+                    if code_detect_schema(dep_hash) is None]
     if missing_deps:
         lines = ["The following bb imports do not exist in the local pool:"]
         lines += [f"  - {alias} (hash: {dep_hash[:12]}...)" for dep_hash, alias in missing_deps]
@@ -4152,18 +4909,12 @@ def object_load(hash_value: str) -> Dict[str, any]:
     Returns:
         Dictionary with schema_version, hash, normalized_code, metadata
     """
-    pool_dir = storage_get_pool_directory()
+    object_json = storage_object_path(hash_value)
 
-    # Build path: pool/XX/YYYYYY.../object.json
-    func_dir = pool_dir / hash_value[:2] / hash_value[2:]
-    object_json = func_dir / 'object.json'
-
-    # Check if file exists
     if not object_json.exists():
         print(f"Error: Function not found: {hash_value}", file=sys.stderr)
         sys.exit(1)
 
-    # Load the JSON data
     try:
         with open(object_json, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -4178,56 +4929,21 @@ def mappings_list(func_hash: str, lang: str) -> list:
     """
     List all mapping variants for a given function and language.
 
-    Scans the language directory and returns all available mappings.
-
     Args:
         func_hash: Function hash (64-character hex)
         lang: Language code (e.g., "eng", "fra")
 
     Returns:
-        List of (mapping_hash, comment) tuples
+        List of (mapping_hash, comment) tuples, sorted by mapping hash
     """
-    pool_dir = storage_get_pool_directory()
-
-    # Build path: pool/XX/YYYYYY.../lang/
-    func_dir = pool_dir / func_hash[:2] / func_hash[2:]
-    lang_dir = func_dir / lang
-
-    # Check if language directory exists
-    if not lang_dir.exists():
+    lang_dir = storage_mapping_directory(func_hash) / lang
+    if not lang_dir.is_dir():
         return []
-
-    # Scan for mapping directories: lang/ZZ/WWWW.../mapping.json
     mappings = []
-
-    # Iterate through hash prefix directories (ZZ/)
-    for hash_prefix_dir in lang_dir.iterdir():
-        if not hash_prefix_dir.is_dir():
-            continue
-
-        # Iterate through full hash directories (WWWW.../)
-        for mapping_hash_dir in hash_prefix_dir.iterdir():
-            if not mapping_hash_dir.is_dir():
-                continue
-
-            # Check if mapping.json exists
-            mapping_json = mapping_hash_dir / 'mapping.json'
-            if not mapping_json.exists():
-                continue
-
-            # Reconstruct mapping hash from path
-            mapping_hash = hash_prefix_dir.name + mapping_hash_dir.name
-
-            # Load mapping to get comment
-            try:
-                with open(mapping_json, 'r', encoding='utf-8') as f:
-                    mapping_data = json.load(f)
-                comment = mapping_data.get('comment', '')
-                mappings.append((mapping_hash, comment))
-            except (json.JSONDecodeError, IOError):
-                # Skip invalid mapping files
-                continue
-
+    for path in sorted(lang_dir.glob('*.json')):
+        data = mapping_load_json(func_hash, lang, path.stem)
+        if data:
+            mappings.append((path.stem, data.get('comment', '')))
     return mappings
 
 
@@ -4243,44 +4959,33 @@ def mapping_load(func_hash: str, lang: str, mapping_hash: str) -> Tuple[str, Dic
     Returns:
         Tuple of (docstring, name_mapping, alias_mapping, comment)
     """
-    pool_dir = storage_get_pool_directory()
-
-    # Build path: pool/XX/Y.../lang/ZZ/W.../mapping.json
-    func_dir = pool_dir / func_hash[:2] / func_hash[2:]
-    mapping_dir = func_dir / lang / mapping_hash[:2] / mapping_hash[2:]
-    mapping_json = mapping_dir / 'mapping.json'
-
-    # Check if file exists
+    mapping_json = storage_mapping_path(func_hash, lang, mapping_hash)
     if not mapping_json.exists():
         print(f"Error: Mapping not found: {func_hash}@{lang} (mapping hash: {mapping_hash})", file=sys.stderr)
         sys.exit(1)
-
-    # Load the JSON data
     try:
         with open(mapping_json, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except json.JSONDecodeError as e:
-        print(f"Error: Failed to parse mapping.json: {e}", file=sys.stderr)
+        print(f"Error: Failed to parse mapping: {e}", file=sys.stderr)
         sys.exit(1)
 
-    docstring = data.get('docstring', '')
-    name_mapping = data.get('name_mapping', {})
-    alias_mapping = data.get('alias_mapping', {})
-    comment = data.get('comment', '')
-
-    return docstring, name_mapping, alias_mapping, comment
+    return (data.get('docstring', ''), data.get('name_mapping', {}), data.get('alias_mapping', {}),
+            data.get('comment', ''))
 
 
 def mapping_load_json(func_hash: str, lang: str, mapping_hash: str) -> Dict[str, Any]:
-    """Load the raw mapping.json data ({} when missing or unreadable)."""
-    pool_dir = storage_get_pool_directory()
-    mapping_json = (pool_dir / func_hash[:2] / func_hash[2:] / lang /
-                    mapping_hash[:2] / mapping_hash[2:] / 'mapping.json')
-    try:
-        with open(mapping_json, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (IOError, json.JSONDecodeError):
+    """Load the raw mapping data ({} when missing or unreadable). Do not modify the result: it is cached."""
+    if not mapping_hash:
         return {}
+
+    def build():
+        try:
+            with open(storage_mapping_path(func_hash, lang, mapping_hash), 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (IOError, json.JSONDecodeError):
+            return {}
+    return storage_cached(f'mapping:{func_hash}:{lang}:{mapping_hash}', build)
 
 
 def mapping_load_markdown(func_hash: str, lang: str, mapping_hash: str) -> str:
@@ -4290,38 +4995,68 @@ def mapping_load_markdown(func_hash: str, lang: str, mapping_hash: str) -> str:
     return mapping_load_json(func_hash, lang, mapping_hash).get('markdown', '')
 
 
+def mapping_name(func_hash: str, lang: str, mapping_hash: str) -> Optional[str]:
+    """The function's name in a mapping (its _bb_v_0), or None."""
+    return mapping_load_json(func_hash, lang, mapping_hash).get('name_mapping', {}).get('_bb_v_0')
+
+
 def mapping_leaves(func_hash: str, lang: str) -> List[str]:
     """
-    List the current mappings of a function in a language.
+    List the mappings of a function in a language that were not superseded.
 
-    A mapping that another mapping of the same function and language names
-    as its parent was superseded and is left out.
+    When current lineage steps stand on the function in that language,
+    their mappings (plus mappings no step stands on). Otherwise, the
+    mappings no step on the same function and language came after (a
+    documentation change, or a rename, supersedes a mapping).
 
     Returns:
         Mapping hashes, sorted
     """
-    mappings = [m for m, _ in mappings_list(func_hash, lang)]
-    prefix = f"{func_hash}@{lang}@"
-    superseded = set()
-    for mapping_hash in mappings:
-        parent = mapping_load_json(func_hash, lang, mapping_hash).get('parent', '')
-        if parent.startswith(prefix):
-            superseded.add(parent[len(prefix):])
-    return sorted(m for m in mappings if m not in superseded)
+    files = [m for m, _ in mappings_list(func_hash, lang)]
+    index = lineage_index()
+    steps = index['steps']
+    stepped, superseded, current = set(), set(), set()
+    for step_id in lineage_steps_on(func_hash, lang):
+        record = steps[step_id]
+        stepped.add(record['mapping'])
+        if step_id in index['current']:
+            current.add(record['mapping'])
+        for following in index['successors'].get(step_id, []):
+            after = steps[following]
+            if after['function'] == func_hash and after['lang'] == lang and after['mapping'] != record['mapping']:
+                superseded.add(record['mapping'])
+    if current:
+        return sorted(m for m in files if m in current or m not in stepped)
+    return sorted(m for m in files if m not in superseded)
 
 
-def mapping_select(func_hash: str, lang: str) -> Optional[str]:
+def mapping_select(func_hash: str, lang: str, name: str = None) -> Optional[str]:
     """
     Pick the mapping used by default for a function in a language.
 
-    Superseded mappings are skipped; among the remaining variants the
-    first one alphabetically wins for now.
+    Mappings that current lineage steps stand on come first, then those
+    not superseded (see mapping_leaves), then any; with name, mappings
+    giving the function that name are preferred (two names may share one
+    code). Ties go to the first mapping hash alphabetically.
 
     Returns:
         Mapping hash, or None if the language has no mapping
     """
+    files = [m for m, _ in mappings_list(func_hash, lang)]
+    if not files:
+        return None
+    index = lineage_index()
+    current = sorted({index['steps'][s]['mapping'] for s in lineage_steps_on(func_hash, lang)
+                      if s in index['current']} & set(files))
     leaves = mapping_leaves(func_hash, lang)
-    return leaves[0] if leaves else None
+
+    def named(mappings):
+        return [m for m in mappings if mapping_name(func_hash, lang, m) == name] if name else []
+
+    for group in (named(current), named(leaves), named(files), current, leaves, files):
+        if group:
+            return group[0]
+    return None
 
 
 def code_load(hash_value: str, lang: str, mapping_hash: str = None) -> Tuple[str, Dict[str, str], Dict[str, str], str]:
@@ -4390,6 +5125,7 @@ def code_show(identifier: str):
         # Use unified identifier parsing (hash, hash@lang, name, name@lang)
         mapping_hash = None
         hash_value, lang = helper_parse_identifier(identifier)
+        name = helper_identifier_name(identifier)
 
         if lang is None:
             # No language — list available languages
@@ -4411,16 +5147,20 @@ def code_show(identifier: str):
         print(f"Error: No mappings found for language '{lang}'", file=sys.stderr)
         sys.exit(1)
 
-    # Determine which mapping to show
+    # Determine which mapping to show: by name, the ones calling it so (two names may share a code)
+    leaves = mapping_leaves(hash_value, lang)
+    if mapping_hash is None and name:
+        leaves = [m for m in leaves if mapping_name(hash_value, lang, m) == name] or \
+            [mapping_select(hash_value, lang, name)]
     if mapping_hash is not None:
         # Explicit mapping hash provided
         selected_hash = mapping_hash
-    elif len(mapping_leaves(hash_value, lang)) == 1:
+    elif len(leaves) == 1:
         # One current mapping (older ones were superseded) - show it directly
-        selected_hash = mapping_leaves(hash_value, lang)[0]
+        selected_hash = leaves[0]
     else:
         # Several current variants - show selection menu
-        leaves = set(mapping_leaves(hash_value, lang))
+        leaves = set(leaves)
         print(f"Multiple mappings found for '{lang}'. Please choose one:\n")
         for m_hash, comment in sorted(m for m in mappings if m[0] in leaves):
             comment_suffix = f"  # {comment}" if comment else ""
@@ -4451,7 +5191,7 @@ def schema_validate(func_hash: str) -> tuple:
     Checks:
     - object.json exists and is valid
     - At least one language mapping exists
-    - All mapping files are valid JSON
+    - All mapping files are valid JSON and name this function and language
 
     Args:
         func_hash: Function hash (64-character hex)
@@ -4460,28 +5200,20 @@ def schema_validate(func_hash: str) -> tuple:
         Tuple of (is_valid, errors) where errors is a list of error messages
     """
     errors = []
-    pool_dir = storage_get_pool_directory()
-
-    # Check object.json exists
-    func_dir = pool_dir / func_hash[:2] / func_hash[2:]
-    object_json = func_dir / 'object.json'
+    object_json = storage_object_path(func_hash)
 
     if not object_json.exists():
         errors.append(f"object.json not found for function {func_hash}")
         return False, errors
 
-    # Validate object.json structure
     try:
         with open(object_json, 'r', encoding='utf-8') as f:
             func_data = json.load(f)
 
-        # Check required fields
-        required_fields = ['schema_version', 'hash', 'normalized_code', 'metadata']
-        for field in required_fields:
+        for field in ['schema_version', 'hash', 'normalized_code', 'metadata']:
             if field not in func_data:
                 errors.append(f"Missing required field in object.json: {field}")
 
-        # Verify schema version
         if func_data.get('schema_version') != 1:
             errors.append(f"Invalid schema version: {func_data.get('schema_version')}")
 
@@ -4489,21 +5221,20 @@ def schema_validate(func_hash: str) -> tuple:
         errors.append(f"Failed to parse object.json: {e}")
         return False, errors
 
-    # Check that at least one language mapping exists
-    if not func_dir.exists():
-        errors.append(f"Function directory does not exist: {func_dir}")
-        return False, errors
-
-    # Count language directories
-    lang_count = 0
-    for item in func_dir.iterdir():
-        if item.is_dir() and not item.name.endswith('.json'):
-            lang_count += 1
-
-    if lang_count == 0:
+    languages = storage_list_languages(func_hash)
+    if not languages:
         errors.append("No language mappings found (no language directories)")
+    for lang in languages:
+        for path in sorted((storage_mapping_directory(func_hash) / lang).glob('*.json')):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except (IOError, json.JSONDecodeError) as e:
+                errors.append(f"Failed to parse mapping {lang}/{path.name}: {e}")
+                continue
+            if (data.get('function'), data.get('lang')) != (func_hash, lang):
+                errors.append(f"Mapping {lang}/{path.name} names another function or language")
 
-    # If we have errors, return False
     if errors:
         return False, errors
 
@@ -4516,9 +5247,10 @@ def schema_validate_directory() -> tuple:
 
     Checks:
     - Config file exists and is valid JSON
-    - Pool directory exists
+    - Pool directory exists, in the current layout
     - All functions in pool are valid
     - All dependencies are resolvable
+    - Every lineage step stands on a mapping in the pool, after a step in the pool
 
     Returns:
         Tuple of (is_valid, errors, stats) where:
@@ -4536,13 +5268,10 @@ def schema_validate_directory() -> tuple:
     }
 
     bb_dir = storage_get_bb_directory()
-
-    # Check if bb directory exists
     if not bb_dir.exists():
         errors.append(f"BB directory does not exist: {bb_dir}")
         return False, errors, stats
 
-    # Validate config file
     config_path = storage_get_config_path()
     if config_path.exists():
         try:
@@ -4552,73 +5281,47 @@ def schema_validate_directory() -> tuple:
                 errors.append("Config file is not a valid JSON object")
         except json.JSONDecodeError as e:
             errors.append(f"Config file is invalid JSON: {e}")
-    else:
-        # Config is optional - just note it
-        pass
 
-    # Validate pool directory
     pool_dir = storage_get_pool_directory()
     if not pool_dir.exists():
         errors.append(f"Pool directory does not exist: {pool_dir}")
         return False, errors, stats
+    if storage_pool_is_old_layout():
+        errors.append(OLD_LAYOUT_MESSAGE)
+        return False, errors, stats
 
-    # Collect all function hashes and validate each
-    all_hashes = set()
-    for prefix_dir in pool_dir.iterdir():
-        if not prefix_dir.is_dir() or len(prefix_dir.name) != 2:
-            continue
+    all_hashes = storage_list_functions()
+    valid = set()
+    for func_hash in sorted(all_hashes):
+        stats['functions_total'] += 1
+        is_valid, func_errors = schema_validate(func_hash)
+        if is_valid:
+            stats['functions_valid'] += 1
+            valid.add(func_hash)
+            stats['languages_total'].update(storage_list_languages(func_hash))
+        else:
+            stats['functions_invalid'] += 1
+            for err in func_errors:
+                errors.append(f"[{func_hash[:12]}...] {err}")
 
-        for func_dir in prefix_dir.iterdir():
-            if not func_dir.is_dir():
-                continue
-
-            # Reconstruct hash
-            func_hash = prefix_dir.name + func_dir.name
-
-            # Skip if not a valid hash format
-            if len(func_hash) != 64:
-                continue
-            if not all(c in '0123456789abcdef' for c in func_hash.lower()):
-                continue
-
-            all_hashes.add(func_hash)
-            stats['functions_total'] += 1
-
-            # Validate individual function
-            is_valid, func_errors = schema_validate(func_hash)
-            if is_valid:
-                stats['functions_valid'] += 1
-
-                # Check for available languages
-                for item in func_dir.iterdir():
-                    if item.is_dir() and not item.name.startswith('.'):
-                        stats['languages_total'].add(item.name)
-            else:
-                stats['functions_invalid'] += 1
-                for err in func_errors:
-                    errors.append(f"[{func_hash[:12]}...] {err}")
-
-    # Verify all dependencies are resolvable (only for valid functions)
-    for func_hash in all_hashes:
-        # Skip if this function had validation errors
-        is_valid, _ = schema_validate(func_hash)
-        if not is_valid:
-            continue
-
+    for func_hash in sorted(valid):
         try:
-            func_data = object_load(func_hash)
-            normalized_code = func_data['normalized_code']
-            deps = code_extract_dependencies(normalized_code)
-
-            for dep in deps:
+            for dep in code_extract_dependencies(object_load(func_hash)['normalized_code']):
                 if dep not in all_hashes:
                     stats['dependencies_missing'].append((func_hash, dep))
                     errors.append(f"[{func_hash[:12]}...] Missing dependency: {dep[:12]}...")
         except (Exception, SystemExit):
-            # Already reported in individual validation
             pass
 
-    # Convert set to count for stats
+    steps = lineage_index()['steps']
+    for step_id, record in sorted(steps.items()):
+        missing = record.get('from') and record['from'] not in steps
+        if not storage_mapping_path(record['function'], record['lang'], record['mapping']).exists() and \
+                step_id not in lineage_index()['successors']:
+            errors.append(f"[step {step_id[:12]}...] its mapping is not in the pool")
+        if missing:
+            errors.append(f"[step {step_id[:12]}...] comes after a step not in the pool: {record['from'][:12]}...")
+
     stats['languages_total'] = len(stats['languages_total'])
 
     is_valid = len(errors) == 0
@@ -4634,51 +5337,17 @@ def command_caller(identifier: str, as_json: bool = False):
     imports the given hash. --json gives hash, name and language.
     """
     hash_value = helper_resolve_to_hash(identifier)
+    callers = sorted(func_hash for func_hash, function in storage_scan_functions().items()
+                     if hash_value in code_extract_dependencies(function['normalized_code']))
 
-    pool_dir = storage_get_pool_directory()
-
-    if not pool_dir.exists():
-        return
-
-    callers = []
-
-    # Scan for v1 functions (pool/XX/YYY.../object.json)
-    if pool_dir.exists():
-        for hash_prefix_dir in pool_dir.iterdir():
-            if not hash_prefix_dir.is_dir():
-                continue
-
-            for func_dir in hash_prefix_dir.iterdir():
-                if not func_dir.is_dir():
-                    continue
-
-                object_json = func_dir / 'object.json'
-                if not object_json.exists():
-                    continue
-
-                try:
-                    with open(object_json, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-
-                    func_hash = data['hash']
-                    normalized_code = data['normalized_code']
-
-                    # Check if this function depends on the target hash
-                    deps = code_extract_dependencies(normalized_code)
-                    if hash_value in deps:
-                        callers.append(func_hash)
-                except (IOError, json.JSONDecodeError):
-                    continue
-
-    # Print results
     if as_json:
         out = []
-        for caller_hash in sorted(callers):
+        for caller_hash in callers:
             lang = helper_pick_language(caller_hash)
             out.append({'hash': caller_hash, 'name': helper_function_label(caller_hash), 'lang': lang})
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return
-    for caller_hash in sorted(callers):
+    for caller_hash in callers:
         print(f"bb show {caller_hash}")
 
 
@@ -4688,99 +5357,103 @@ def command_tree(identifier: str, as_json: bool = False):
 
     Accepts a hash or function name (with optional @lang suffix).
     Shows function names and one-liner docstrings in a tree format similar
-    to the Unix tree command. Uses the preferred language from bb whoami.
+    to the Unix tree command, in the identifier's language (else your
+    first language from bb whoami). Nodes are marked:
+
+    ```
+    out of date                 uses a version that is no longer current
+                                for the name it uses it by
+    behind                      a current version that uses something out
+                                of date or behind: it must follow
+    pinned                      named by hash on purpose (bb.ref)
+    not yet translated to LANG  current in LANG while another language has
+                                a newer version
+    ```
     """
-    hash_value = helper_resolve_to_hash(identifier)
+    hash_value, lang = helper_parse_identifier(identifier)
+    if '@' not in identifier:
+        preferred_langs = storage_read_config()['user'].get('languages') or ['eng']
+        lang = preferred_langs[0]
 
-    # Get preferred language from config
-    config = storage_read_config()
-    preferred_langs = config['user'].get('languages', ['eng'])
-    if not preferred_langs:
-        preferred_langs = ['eng']
-    lang = preferred_langs[0]
-
+    index = storage_pool_index()
+    tree = _tree_build(hash_value, lang, set(), index)
     if as_json:
-        print(json.dumps(_tree_build(hash_value, lang, set()), indent=2, ensure_ascii=False))
+        print(json.dumps(tree, indent=2, ensure_ascii=False))
         return
-    _tree_print_node(hash_value, lang, "", True, True, set())
+    _tree_print(tree, "", True, True)
 
 
-def _tree_build(func_hash: str, lang: str, visited: set) -> Dict[str, Any]:
-    """The dependency tree of a function as nested dicts: hash, name, description, dependencies."""
+def _tree_marks(index: Dict[str, Any], func_hash: str, lang: str, caller: Optional[str],
+                behind: Dict[str, List[str]]) -> List[str]:
+    """The marks of a tree node (see command_tree): how up to date func_hash is, as its caller uses it."""
+    marks = []
+    if caller is not None:
+        caller_function = index['functions'].get(caller)
+        if caller_function and func_hash in search_pins(caller_function):
+            marks.append('pinned')
+        elif func_hash in search_outdated_refs(index, caller):
+            marks.append('out of date')
+    elif func_hash in index['functions'] and func_hash not in index['current']:
+        marks.append('out of date')
+    if func_hash in behind and 'out of date' not in marks:
+        marks.append('behind')
+    for newer, here in search_untranslated(func_hash):
+        if here == lang:
+            marks.append(f"not yet translated to {here} (newer in {newer})")
+    return marks
+
+
+def _tree_print(node: Dict[str, Any], prefix: str, is_last: bool, is_root: bool):
+    """Print a node of _tree_build and its dependencies, like the Unix tree command."""
+    if not node['found']:
+        label = f"{node['hash'][:12]}... (not found)"
+    else:
+        label = node['name'] or node['hash'][:12]
+        if node['description']:
+            label += f" — {node['description'].strip()}"
+        if node['marks']:
+            label += f"  [{', '.join(node['marks'])}]"
+    if is_root:
+        print(label)
+        child_prefix = ""
+    else:
+        print(f"{prefix}{'└── ' if is_last else '├── '}{label}")
+        child_prefix = prefix + ("    " if is_last else "│   ")
+    deps = node['dependencies']
+    for i, dep in enumerate(deps):
+        _tree_print(dep, child_prefix, i == len(deps) - 1, False)
+
+
+def _tree_build(func_hash: str, lang: str, visited: set, index: Dict[str, Any] = None,
+                caller: str = None, behind: Dict[str, List[str]] = None) -> Dict[str, Any]:
+    """The dependency tree of a function as nested dicts: hash, name, description, marks, dependencies."""
+    index = index or storage_pool_index()
+    if behind is None:
+        behind = search_behind(index)
     if code_detect_schema(func_hash) is None:
-        return {'hash': func_hash, 'name': None, 'description': '', 'found': False, 'dependencies': []}
+        return {'hash': func_hash, 'name': None, 'description': '', 'found': False, 'marks': [],
+                'dependencies': []}
     shown = lang if lang in storage_list_languages(func_hash) else helper_pick_language(func_hash, lang)
-    normalized_code, name_mapping, _, docstring = code_load(func_hash, shown)
+    alias = None
+    if caller is not None:
+        caller_lang = lang if lang in storage_list_languages(caller) else helper_pick_language(caller, lang)
+        alias = index['functions'].get(caller, {}).get('mappings', {}).get(caller_lang, {}).get(
+            'alias_mapping', {}).get(func_hash)
+    mapping_hash = mapping_select(func_hash, shown, lineage_name_for(func_hash, shown, alias) or alias)
+    normalized_code, name_mapping, _, docstring = code_load(func_hash, shown, mapping_hash)
     node = {
         'hash': func_hash,
         'name': name_mapping.get('_bb_v_0'),
         'lang': shown,
         'description': docstring.strip().split('\n')[0] if docstring else '',
         'found': True,
+        'marks': _tree_marks(index, func_hash, lang, caller, behind),
         'dependencies': [],
     }
     if func_hash not in visited:
-        node['dependencies'] = [_tree_build(dep, lang, visited | {func_hash})
+        node['dependencies'] = [_tree_build(dep, lang, visited | {func_hash}, index, func_hash, behind)
                                 for dep in code_extract_dependencies(normalized_code)]
     return node
-
-
-def _tree_print_node(func_hash: str, lang: str, prefix: str,
-                     is_last: bool, is_root: bool, visited: set):
-    """Print a single node and recurse into its dependencies."""
-    # Load function info
-    normalized_code = None
-    name_mapping = None
-    docstring = None
-
-    try:
-        normalized_code, name_mapping, _, docstring = code_load(func_hash, lang)
-    except SystemExit:
-        # Try any available language
-        langs = storage_list_languages(func_hash)
-        if langs:
-            try:
-                normalized_code, name_mapping, _, docstring = code_load(func_hash, langs[0])
-            except SystemExit:
-                pass
-
-    if normalized_code is None:
-        label = f"{func_hash[:12]}... (not found)"
-        if is_root:
-            print(label)
-        else:
-            print(f"{prefix}{'└── ' if is_last else '├── '}{label}")
-        return
-
-    func_name = name_mapping.get('_bb_v_0', func_hash[:12])
-
-    # One-liner docstring
-    doc_part = ""
-    if docstring:
-        first_line = docstring.strip().split('\n')[0].strip()
-        doc_part = f" — {first_line}"
-
-    # Print this node
-    if is_root:
-        print(f"{func_name}{doc_part}")
-        child_prefix = ""
-    else:
-        connector = "└── " if is_last else "├── "
-        print(f"{prefix}{connector}{func_name}{doc_part}")
-        child_prefix = prefix + ("    " if is_last else "│   ")
-
-    # Get dependencies
-    deps = code_extract_dependencies(normalized_code)
-    if not deps:
-        return
-
-    # Guard against cycles (but allow diamonds — each branch gets its own set)
-    if func_hash in visited:
-        return
-    new_visited = visited | {func_hash}
-
-    for i, dep_hash in enumerate(deps):
-        _tree_print_node(dep_hash, lang, child_prefix, i == len(deps) - 1, False, new_visited)
 
 
 def helper_parse_identifier(identifier: str) -> Tuple[str, Optional[str]]:
@@ -4822,6 +5495,14 @@ def helper_resolve_to_hash(identifier: str) -> str:
     """
     func_hash, _ = helper_parse_identifier(identifier)
     return func_hash
+
+
+def helper_identifier_name(identifier: str) -> Optional[str]:
+    """The name in an identifier (name or name@lang), None for a hash."""
+    part = identifier.split('@')[0]
+    if len(part) == 64 and all(c in '0123456789abcdef' for c in part.lower()):
+        return None
+    return part or None
 
 
 # ============================================================================
@@ -5132,34 +5813,39 @@ def command_validate_checks(identifier: str = None, unreviewed: bool = False):
         sys.exit(1)
 
 
-def edit_load_section(func_hash: str, lang: str) -> Dict[str, Any]:
+def edit_load_section(func_hash: str, lang: str, name: str = None) -> Dict[str, Any]:
     """
     Load a pool function as an edit-file section.
 
-    Falls back to another language when the function has no mapping in lang.
+    Falls back to another language when the function has no mapping in
+    lang. With name, loads the mapping calling the function so (two names
+    may share one code).
 
     Returns:
-        Section dict (source, markdown, parent, title) plus 'mapping', the
-        exact translation loaded (hash@lang@mapping_hash), and
-        'fingerprint', used to tell whether the user changed anything
+        Section dict (source, markdown, parent, title) where parent is the
+        lineage step the section continues (None when the function has no
+        step in that language), plus 'mapping', the exact translation
+        loaded (hash@lang@mapping_hash), and 'fingerprint', used to tell
+        whether the user changed anything
     """
     section_lang = helper_pick_language(func_hash, lang)
     if section_lang is None:
         print(f"Error: Function not found in the local pool: {func_hash}", file=sys.stderr)
         sys.exit(1)
 
-    mapping_hash = mapping_select(func_hash, section_lang)
+    mapping_hash = mapping_select(func_hash, section_lang, name)
     normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, section_lang, mapping_hash)
     pinned = mapping_load_json(func_hash, section_lang, mapping_hash).get('pinned') or []
     source = code_denormalize(code_replace_docstring(normalized_code, docstring), name_mapping, alias_mapping)
     source = code_show_pool_names(source, section_lang, pinned)
     markdown = mapping_load_markdown(func_hash, section_lang, mapping_hash)
+    title = name_mapping.get('_bb_v_0', func_hash[:12])
 
     return {
-        'title': name_mapping.get('_bb_v_0', func_hash[:12]),
+        'title': title,
         'source': source + '\n',
         'markdown': markdown,
-        'parent': func_hash,
+        'parent': lineage_step_for(func_hash, section_lang, title, mapping_hash),
         'mapping': f"{func_hash}@{section_lang}@{mapping_hash}",
         'fingerprint': edit_fingerprint(func_hash, docstring, name_mapping, alias_mapping, markdown, pinned),
     }
@@ -5173,7 +5859,31 @@ def edit_section_name(section: Dict[str, Any], prepared: Dict[str, Any]) -> str:
 def edit_fingerprint(func_hash: str, docstring: str, name_mapping: Dict[str, str],
                      alias_mapping: Dict[str, str], markdown: str, pinned: List[str] = None) -> Tuple[str, str]:
     """Identify a section by function hash and mapping content (comment excluded)."""
-    return func_hash, code_compute_mapping_hash(docstring, name_mapping, alias_mapping, "", markdown, "", pinned)
+    return func_hash, code_compute_mapping_hash(docstring, name_mapping, alias_mapping, "", markdown, pinned,
+                                                function=func_hash)
+
+
+def edit_marker_step(marker: Optional[str], lang: str, name: str = None) -> Optional[str]:
+    """
+    The lineage step a bb:parent marker stands for.
+
+    Drafts name the step they were made from. Older drafts named a
+    function hash: that function's step in lang (called name) stands for
+    it. Anything else is kept as is, so the draft is refused as stale.
+    """
+    if marker is None or marker in lineage_index()['steps']:
+        return marker
+    if code_detect_schema(marker) is not None:
+        return lineage_step_for(marker, lang, name) or marker
+    return marker
+
+
+def edit_describe_step(step_id: Optional[str]) -> str:
+    """A lineage step for messages: its function hash and a short step id."""
+    record = lineage_index()['steps'].get(step_id or '')
+    if record is None:
+        return step_id or 'nothing'
+    return f"{record['function']} (step {step_id[:12]}...)"
 
 
 def edit_assign_parents(checks: List[Tuple[str, Optional[str]]], originals: List[Tuple[str, str]]) -> List[Optional[str]]:
@@ -5278,34 +5988,54 @@ def edit_prepare(text: str, lang: str, unreviewed: bool = False) -> Dict[str, An
 
 
 def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: str,
-                      comment: str, checks: List[str] = None, unchanged: bool = False,
-                      mapping_parent: str = "") -> bool:
+                      comment: str, checks: List[str] = None, unchanged: bool = False) -> Tuple[Optional[str], Optional[str]]:
     """
-    Save one edit-file section to the pool.
+    Save one edit-file section to the pool, with its lineage step.
 
-    A new function gets the section's bb:parent marker as its parent, and
-    checks (for the implementation) as part of its definition; prepared's
-    hash must already include them. An existing function is never
-    rewritten: it only gets a new mapping when its names or documentation
-    changed. A new mapping records mapping_parent, the translation it was
-    edited from.
+    The function is saved with checks (for the implementation) as part of
+    its definition; prepared's hash must already include them. An
+    existing function is never rewritten. When something changed, the
+    section's mapping is saved and a step records it after the section's
+    bb:parent step: 'rename' when the name changed, 'document' when only
+    the mapping did, 'restore' when the code is an older version's, 'edit'
+    otherwise; 'add' without a parent step (a new name). Code another
+    name already has is fine: two names may share one code, each with its
+    own lineage.
 
     Returns:
-        True when something was written
+        (the step now standing for the section, the relation recorded or None)
     """
     func_hash = prepared['hash']
-    parent = section.get('parent')
-    is_new = object_save(func_hash, prepared['normalized_code'],
-                         code_create_metadata(parent=parent if parent != func_hash else None),
-                         checks=checks)
+    object_save(func_hash, prepared['normalized_code'], code_create_metadata(), checks=checks)
+    if unchanged:
+        return section.get('parent'), None
 
-    if is_new or not unchanged:
-        mapping_save(func_hash, lang, prepared['docstring'], prepared['name_mapping'],
-                     prepared['alias_mapping'], comment, section['markdown'], mapping_parent,
-                     pinned=prepared.get('pinned'))
-        return True
-
-    return False
+    mapping_hash = mapping_save(func_hash, lang, prepared['docstring'], prepared['name_mapping'],
+                                prepared['alias_mapping'], comment, section['markdown'],
+                                pinned=prepared.get('pinned'))
+    steps = lineage_index()['steps']
+    parent = section.get('parent') if section.get('parent') in steps else None
+    if parent and steps[parent]['lang'] != lang:
+        parent = None  # loaded in another language: this language's lineage starts here
+    if parent is None:
+        existing = lineage_current_steps(lang, prepared['name_mapping'].get('_bb_v_0'), func_hash)
+        existing = [s for s in existing if steps[s]['mapping'] == mapping_hash]
+        if existing:
+            return existing[0], None
+        step_id = lineage_save_new(func_hash, lang, mapping_hash, comment)
+        return step_id, lineage_index()['steps'][step_id]['relation']
+    previous = steps[parent]
+    if (previous['function'], previous['mapping']) == (func_hash, mapping_hash):
+        return parent, None
+    if prepared['name_mapping'].get('_bb_v_0') != previous['name']:
+        relation = 'rename'
+    elif func_hash == previous['function']:
+        relation = 'document'
+    elif func_hash in {steps[s]['function'] for s in lineage_ancestors(parent)}:
+        relation = 'restore'
+    else:
+        relation = 'edit'
+    return lineage_save(parent, func_hash, lang, mapping_hash, relation, comment), relation
 
 
 def helper_run_editor(path: str):
@@ -5347,13 +6077,17 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     yours (saved by you with bb add or bb edit, recorded in your private
     state) or reviewed with bb review, unless --dangerously-unreviewed (for
     experiments) runs them anyway. The new
-    function records the edited one as its parent and lists its checks;
-    changed checks record their own parents. The comment (asked for when
-    --comment is not given) is stored in the new mappings.
+    version lists its checks, and a lineage step in the edit's language
+    records that it comes after the edited one (a rename when the name
+    changed: the old name is then superseded); changed checks get their
+    own steps. Other languages stay on the version they had until someone
+    translates the new one. The comment (asked for when --comment is not
+    given) is stored in the new mappings and steps.
 
-    Saving code that an older version of the same function already has
-    restores that version (a restore record makes it current again, as the
-    hash cannot take a new parent); code another function has is refused.
+    Saving code that an older version of the same name already has
+    restores that version (a restore step makes it current again). Code
+    that another name has is fine: two names may share one code, each
+    following its own lineage.
 
     --refactor ROOT then updates ROOT to the new version: every function
     between ROOT and the edited one gets a new version using it, as
@@ -5401,10 +6135,9 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
             print(f"Error: {hash_value[:12]}... has no '{lang}' mapping. Translate it first with bb translate.",
                   file=sys.stderr)
             sys.exit(1)
-        # Load the function and the checks attached to it
-        original = edit_load_section(hash_value, lang)
-        # After a restore, the edit continues from the restore record, not from the old version
-        original['parent'] = lineage_current_step(hash_value)
+        # Load the function (by name: the mapping calling it so) and the checks attached to it;
+        # the section's parent is the lineage step the edit continues
+        original = edit_load_section(hash_value, lang, None if is_hash else name)
         original_checks = []
     refactor_root = refactor_at = None
     if refactor:
@@ -5456,11 +6189,13 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
             with open(path, 'r', encoding='utf-8') as f:
                 edited = f.read()
             # A stale file is refused before anything runs
-            drafted_from = markdown_parse_edit(edited)['implementation']['parent']
+            drafted_from = edit_marker_step(markdown_parse_edit(edited)['implementation']['parent'], lang,
+                                            original['title'])
             if drafted_from != original['parent']:
-                what = (f"the current version of {name} is {original['parent']}" if hash_value
+                what = (f"the current version of {name} is {edit_describe_step(original['parent'])}" if hash_value
                         else f"{name} has no version")
-                since = f"{file} was drafted from {drafted_from}" if drafted_from else f"{file} has no bb:parent marker"
+                since = (f"{file} was drafted from {edit_describe_step(drafted_from)}" if drafted_from
+                         else f"{file} has no bb:parent marker")
                 print(f"Error: {since}, but {what}. Nothing saved: write a new draft with "
                       f"bb edit {identifier} NEW_FILE and make your change there.", file=sys.stderr)
                 sys.exit(1)
@@ -5496,23 +6231,16 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         print("Nothing saved: the edited file still holds the template, so no function was created.")
         return
     # Without a marker, the implementation still descends from the edited function
-    section['parent'] = section['parent'] or original['parent']
+    section['parent'] = edit_marker_step(section['parent'], lang, original['title']) or original['parent']
     # Checks without a marker are matched to the loaded checks by name, then position
-    parents = edit_assign_parents([(p['name_mapping']['_bb_v_0'], c['parent']) for c, p in plan['checks']],
+    parents = edit_assign_parents([(p['name_mapping']['_bb_v_0'], edit_marker_step(c['parent'], lang))
+                                   for c, p in plan['checks']],
                                   [(c['title'], c['parent']) for c in original_checks])
     for (check, _), parent in zip(plan['checks'], parents):
         check['parent'] = parent
     check_hashes = sorted(set(p['hash'] for _, p in plan['checks']))
     # The checks are part of the implementation's definition, hence of its hash
     prepared['hash'] = code_compute_function_hash(prepared['normalized_code'], check_hashes)
-    if hash_value is None and code_detect_schema(prepared['hash']) is not None:
-        # Same code, same function: a second name would hide behind the first one's mapping
-        existing = edit_load_section(prepared['hash'], lang)['title']
-        if existing != edit_section_name(section, prepared):
-            print(f"Error: this code is already in the pool as {existing} ({prepared['hash']}). Nothing saved: "
-                  f"use that function (bb.latest(\"{existing}\")), or give "
-                  f"{edit_section_name(section, prepared)} code of its own.", file=sys.stderr)
-            sys.exit(1)
 
     # Compare with what was loaded: hashes, names and documentation
     original_prints = {s['fingerprint'] for s in [original] + original_checks}
@@ -5533,51 +6261,40 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         except EOFError:
             comment = ""
 
-    def rewrite_file(func_hash):
-        """The file now drafts from the current step of func_hash, so editing can go on in it."""
+    def rewrite_file(func_hash, step_id):
+        """The file now drafts from step_id, the step just saved, so editing can go on in it."""
         if file is None:
             return
-        saved = edit_load_section(func_hash, lang)
-        saved['parent'] = lineage_current_step(func_hash)
+        saved = edit_load_section(func_hash, lang, edit_section_name(section, prepared))
+        saved['parent'] = step_id or saved['parent']
         saved_checks = [edit_load_section(c, lang) for c in object_load_checks(func_hash)]
         with open(file, 'w', encoding='utf-8') as f:
             f.write(markdown_render_edit(saved['title'], saved, saved_checks))
 
-    if hash_value and prepared['hash'] != hash_value and code_detect_schema(prepared['hash']) is not None:
-        # Same code, same hash: the version exists already and cannot take a new parent
-        functions, restores = storage_scan_functions(), storage_scan_restores()
-        if lineage_root(prepared['hash'], functions, restores) != lineage_root(hash_value, functions, restores):
-            print(f"Error: this code is already in the pool as {helper_function_label(prepared['hash'])} "
-                  f"({prepared['hash']}), another function. Nothing saved.", file=sys.stderr)
-            sys.exit(1)
-        restore_save(prepared['hash'], section['parent'], comment)
-        review_approve_own([prepared['hash']] + check_hashes)
-        discard()
-        rewrite_file(prepared['hash'])
-        print(f"Restored: {prepared['hash']}")
-        print(f"Supersedes: {section['parent']}")
-        if refactor_root:
-            print(f"Updating {refactor} to it:")
-            command_refactor(refactor_root, hash_value, prepared['hash'], refactor_at, comment=comment)
-        return
-
-    # Each saved mapping descends from the translation its parent was loaded in
-    loaded_mappings = {s['parent']: s['mapping'] for s in [original] + original_checks}
+    previous_step = lineage_index()['steps'].get(section['parent'] or '')
 
     # Save checks first, so the implementation never lists a missing check
     with contextlib.redirect_stdout(io.StringIO()):
         new_checks = []
         for check, prep in plan['checks']:
-            if edit_save_section(check, prep, lang, comment, unchanged=unchanged(check, prep),
-                                 mapping_parent=loaded_mappings.get(check['parent'], "")):
+            _, check_relation = edit_save_section(check, prep, lang, comment, unchanged=unchanged(check, prep))
+            if check_relation:
                 new_checks.append((prep['name_mapping']['_bb_v_0'], prep['hash']))
-        edit_save_section(section, prepared, lang, comment, checks=check_hashes,
-                          unchanged=unchanged(section, prepared),
-                          mapping_parent=loaded_mappings.get(section['parent'], ""))
+        saved_step, relation = edit_save_section(section, prepared, lang, comment, checks=check_hashes,
+                                                 unchanged=unchanged(section, prepared))
 
     discard()
     review_approve_own([prepared['hash']] + check_hashes)
-    rewrite_file(prepared['hash'])
+    rewrite_file(prepared['hash'], saved_step)
+
+    if relation == 'restore':
+        # Same code as an older version: that version is current again
+        print(f"Restored: {prepared['hash']}")
+        print(f"Supersedes: {previous_step['function']}")
+        if refactor_root:
+            print(f"Updating {refactor} to it:")
+            command_refactor(refactor_root, hash_value, prepared['hash'], refactor_at, comment=comment)
+        return
 
     for name, check_hash in new_checks:
         print(f"Check: {check_hash} {name}")
@@ -5593,8 +6310,11 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         changed = was.get(name) and was[name] != func_hash
         print(f"Import: {name} -> {func_hash}" + (f" (was {was[name]})" if changed else ""))
     # The saved hash last, where a reader (or `tail -1`) looks for it
+    if relation == 'rename' and previous_step:
+        print(f"Renamed: {previous_step['name']} -> {edit_section_name(section, prepared)} "
+              f"(the old name is superseded)")
     if hash_value and prepared['hash'] != hash_value:
-        print(f"Parent: {section['parent']}")
+        print(f"Parent: {previous_step['function'] if previous_step else hash_value}")
     elif hash_value:
         print("Documentation saved: the code did not change, so the hash stays the same.")
     print(f"Hash: {prepared['hash']}")
@@ -5619,64 +6339,23 @@ def refactor_save(old_hash: str, new_hash: str, new_code: str, checks: List[str]
     """
     Save new_hash as the version after old_hash; returns 'new', 'restored' or 'existing'.
 
-    Code that is already in the pool keeps its hash and its place: an
-    older version of the same lineage is restored (a restore record),
-    another function's code is used as it is. The current mappings are
-    copied, their references renamed through hash_map.
+    Every name of old_hash (each current step, in every language) moves
+    on to new_hash with a 'refactor' step, its mapping copied with
+    references renamed through hash_map (see lineage_continue). Code that
+    is already in the pool keeps its hash: when the name's lineage went
+    through it, it is restored (a 'restore' step); when another name has
+    it, the two names now share it ('existing').
     """
-    pool_dir = storage_get_pool_directory()
-    functions, restores = storage_scan_functions(), storage_scan_restores()
-    step = lineage_current_step(old_hash, functions, restores)
     if old_hash in review_load_authored():
         # A mechanical rewrite of your own function: only its references change
         review_approve_own([new_hash])
-    if code_detect_schema(new_hash) is not None:
-        if lineage_root(new_hash, functions, restores) == lineage_root(old_hash, functions, restores):
-            restore_save(new_hash, step, comment)
-            return 'restored'
-        return 'existing'
-    object_save(new_hash, new_code, code_create_metadata(parent=step), checks=checks,
-                normalization=object_normalization(old_hash))
-    # Copy the current mappings; superseded ones stay reachable through parent
-    old_dir = pool_dir / old_hash[:2] / old_hash[2:]
-    for lang in sorted(item.name for item in old_dir.iterdir() if item.is_dir() and len(item.name) == 3):
-        for mapping_hash in mapping_leaves(old_hash, lang):
-            docstring, name_mapping, alias_mapping, _ = mapping_load(old_hash, lang, mapping_hash)
-            new_alias_mapping = {hash_map.get(h, h): alias for h, alias in alias_mapping.items()}
-            pins = mapping_load_json(old_hash, lang, mapping_hash).get('pinned') or []
-            mapping_save(new_hash, lang, docstring, name_mapping, new_alias_mapping, comment,
-                         mapping_load_markdown(old_hash, lang, mapping_hash),
-                         f"{old_hash}@{lang}@{mapping_hash}", pinned=[hash_map.get(h, h) for h in pins])
-    return 'new'
-
-
-def lineage_newer_version(func_hash: str) -> Optional[str]:
-    """
-    The one current version of func_hash's lineage, when it is not func_hash.
-
-    A caller may use a function that was edited since: rewriting the
-    version it uses would fork it beside that edit, so refactors and
-    updates build on the current version instead. With several current
-    versions (a fork) there is no single one: None, with a warning.
-    """
-    functions, restores = storage_scan_functions(), storage_scan_restores()
-    successors = lineage_successors(functions, restores)
-    heads, stack, seen = set(), [func_hash], set()
-    while stack:
-        node = stack.pop()
-        if node in seen:
-            continue
-        seen.add(node)
-        if successors.get(node):
-            stack.extend(successors[node])
-        else:
-            heads.add(lineage_code(node, restores))
-    if len(heads) > 1:
-        print(f"Warning: {helper_function_label(func_hash)} has {len(heads)} current versions; "
-              f"keeping the one in use ({func_hash[:12]}...)", file=sys.stderr)
-        return None
-    head = heads.pop() if heads else func_hash
-    return head if head != func_hash and head in functions else None
+    existed = code_detect_schema(new_hash) is not None
+    if not existed:
+        object_save(new_hash, new_code, code_create_metadata(), checks=checks,
+                    normalization=object_normalization(old_hash))
+    if lineage_continue(old_hash, new_hash, comment, hash_map) == 'restored':
+        return 'restored'
+    return 'existing' if existed else 'new'
 
 
 def code_hash_rewritten(new_code: str, checks: List[str]) -> str:
@@ -5699,7 +6378,9 @@ def command_update(identifier: str, comment: str = None):
     Every function reached from NAME that uses a version which is no
     longer current is rewritten to use the current one, deepest first,
     then NAME itself: what `bb search --outdated` lists, paid at once,
-    as if each were edited and saved unchanged. Pinned references
+    as if each were edited and saved unchanged. Current means current in
+    NAME's language, for the name each function is used by (another
+    language's newer version waits for a translation). Pinned references
     (written as bb.ref) are kept. A fork (several current versions) is
     left as it is, with a warning. One comment goes on every new version.
 
@@ -5707,32 +6388,35 @@ def command_update(identifier: str, comment: str = None):
     bb update app@eng -m "use the new layout everywhere"
     ```
     """
-    root = helper_resolve_to_hash(identifier)
+    root, lang = helper_parse_identifier(identifier)
+    lang = lang or lineage_preferred_language(root) or helper_pick_language(root)
     if comment is None:
         try:
             comment = input("Comment (press Enter to skip): ").strip()
         except EOFError:
             comment = ""
-    done: Dict[str, str] = {}
+    done: Dict[Tuple[str, Optional[str]], str] = {}
     rewritten: List[Tuple[str, str]] = []
 
-    def update(func_hash: str, stack: Tuple[str, ...] = ()) -> str:
-        """The up-to-date hash for func_hash (itself when nothing changes)."""
-        if func_hash in done:
-            return done[func_hash]
+    def update(func_hash: str, name: Optional[str], stack: Tuple[str, ...] = ()) -> str:
+        """The up-to-date hash for func_hash, used by name (itself when nothing changes)."""
+        if (func_hash, name) in done:
+            return done[(func_hash, name)]
         if func_hash in stack or code_detect_schema(func_hash) is None:
             return func_hash
-        base = lineage_newer_version(func_hash) or func_hash
+        base = lineage_newer_version(func_hash, lang, name) or func_hash
         code = object_load(base)['normalized_code']
         pins: Set[str] = set()
-        for lang in storage_list_languages(base):
-            for mapping_hash in mapping_leaves(base, lang):
-                pins.update(mapping_load_json(base, lang, mapping_hash).get('pinned') or [])
+        for mapping_lang in storage_list_languages(base):
+            for mapping_hash in mapping_leaves(base, mapping_lang):
+                pins.update(mapping_load_json(base, mapping_lang, mapping_hash).get('pinned') or [])
+        shown = lang if lang in storage_list_languages(base) else helper_pick_language(base, lang)
+        aliases = mapping_load_json(base, shown, mapping_select(base, shown, name)).get('alias_mapping', {})
         swaps = {}
         for dep in code_extract_dependencies(code):
             if dep in pins:
                 continue
-            new_dep = update(dep, stack + (func_hash,))
+            new_dep = update(dep, lineage_name_for(dep, lang, aliases.get(dep)), stack + (func_hash,))
             if new_dep != dep:
                 swaps[dep] = new_dep
         result = base
@@ -5744,10 +6428,10 @@ def command_update(identifier: str, comment: str = None):
                 with contextlib.redirect_stdout(io.StringIO()):  # its own Hash: lines would mislead
                     refactor_save(base, result, new_code, checks, comment, swaps)
                 rewritten.append((base, result))
-        done[func_hash] = done[base] = result
+        done[(func_hash, name)] = done[(base, name)] = result
         return result
 
-    new_root = update(root)
+    new_root = update(root, helper_identifier_name(identifier) or lineage_name_for(root, lang))
     if not rewritten:
         print(f"{helper_function_label(root)} is up to date: nothing to save")
         return
@@ -5767,10 +6451,11 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
     2. Surgical refactor: Replaces FROM with TO only in the path from AT to WHAT
 
     Creates new functions where references to from_hash are replaced
-    with to_hash, each recording the function it was rewritten from as
-    its parent. A rewrite that gives back an older version's code (to_hash
-    an older version of from_hash, say) restores that version instead,
-    with a restore record. Copies the current language mappings, updating
+    with to_hash, each one with a lineage step after the function it was
+    rewritten from, for each of its names. A rewrite that gives back
+    an older version's code (to_hash an older version of from_hash, say)
+    restores that version instead, with a restore step. Copies the current
+    language mappings, updating
     alias_mappings to use the new hash key. Like a batch of bb edit, one
     comment (asked for when --comment is not given) goes on every new
     mapping.
@@ -5803,14 +6488,6 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
     # Load the function's normalized code (v1 only)
     func_data = object_load(what_hash)
     normalized_code = func_data['normalized_code']
-    # Get all languages from v1 directory structure
-    pool_dir = storage_get_pool_directory()
-    func_dir = pool_dir / what_hash[:2] / what_hash[2:]
-    languages = []
-    for item in func_dir.iterdir():
-        if item.is_dir() and len(item.name) == 3:
-            languages.append(item.name)
-
     # Check that the function actually depends on from_hash (direct or transitive)
     all_deps = code_resolve_dependencies(what_hash)
     if from_hash not in all_deps:
@@ -6248,9 +6925,8 @@ def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool =
         original = {}
         imported = {'sys'}  # the entry point imports sys
         for dep_hash in deps:
-            mappings = mappings_list(dep_hash, lang)
-            if mappings:
-                _, name_mapping, _, _ = mapping_load(dep_hash, lang, mappings[0][0])
+            if mappings_list(dep_hash, lang):
+                _, name_mapping, _, _ = mapping_load(dep_hash, lang, mapping_select(dep_hash, lang))
                 original[dep_hash] = name_mapping.get('_bb_v_0', '_bb_v_0')
             for node in ast.walk(ast.parse(object_load(dep_hash)['normalized_code'])):
                 if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -6277,8 +6953,7 @@ def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool =
 
         if debug_mode:
             # Debug mode: denormalize to human-readable names
-            mappings = mappings_list(dep_hash, lang)
-            mapping_hash = mappings[0][0]
+            mapping_hash = mapping_select(dep_hash, lang)
             docstring, name_mapping, alias_mapping, _ = mapping_load(dep_hash, lang, mapping_hash)
 
             # Denormalize the code; pool references already name bundled functions
@@ -6540,6 +7215,7 @@ def command_skills():
         'refactor': command_refactor,
         'update': command_update,
         'compile': command_compile,
+        'migrate': command_migrate,
     }
 
     # Map worklog subcommand names to handler functions
@@ -6848,12 +7524,20 @@ def _build_parser():
     # Skills command
     skills_parser = subparsers.add_parser('skills', help='Generate skills reference for AI agents')
 
+    # Migrate command
+    subparsers.add_parser('migrate', help='Convert a pool from the old layout (track it with git first)')
+
     return parser
 
 
 def main():
     parser = _build_parser()
     args = parser.parse_args()
+
+    # Commands that read or write the pool need its current layout
+    if args.command not in (None, 'init', 'whoami', 'skills', 'migrate', 'trust') and storage_pool_is_old_layout():
+        print(f"Error: {OLD_LAYOUT_MESSAGE}", file=sys.stderr)
+        sys.exit(1)
 
     if args.command == 'init':
         command_init()
@@ -6963,6 +7647,8 @@ def main():
         command_compile(args.identifier, debug_mode=args.debug, output_path=args.output)
     elif args.command == 'skills':
         command_skills()
+    elif args.command == 'migrate':
+        command_migrate()
     else:
         parser.print_help()
 

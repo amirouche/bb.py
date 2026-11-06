@@ -37,7 +37,7 @@ def test_update_rewrites_the_chain_deepest_first_in_one_step(tmp_path):
     assert updated.stdout.index('mid:') < updated.stdout.index('top:')
     assert 'nothing outdated' in pool.bb('search', '--outdated').stdout
     assert f"bb.ref('{v2}')" in pool.bb('show', current(pool, 'mid') + '@eng').stdout or \
-        "qux = bb.latest('qux')" in pool.bb('show', 'mid@eng').stdout
+        "qux = bb.resolve('qux')" in pool.bb('show', 'mid@eng').stdout
     assert current(pool, 'top') == hash_of(updated)
     assert 'is up to date' in pool.bb('update', 'top@eng', '-m', 'again').stdout
 

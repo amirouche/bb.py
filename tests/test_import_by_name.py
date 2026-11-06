@@ -52,9 +52,9 @@ def test_a_name_resolves_to_its_one_current_version_and_follows_edits(tmp_path):
     assert f'Import: double -> {first}' in saved.stdout
     four_times = hash_of(saved)
     assert pool.run(four_times, 3) == '12'
-    stored = next((tmp_path / 'bb' / 'pool').glob(f'{four_times[:2]}/{four_times[2:]}/object.json')).read_text()
+    stored = (tmp_path / 'bb' / 'pool' / 'functions' / four_times[:2] / four_times[2:] / 'object.json').read_text()
     assert f"bb.ref('{first}')" in stored  # stored by hash
-    assert "double = bb.latest('double')" in pool.bb('show', 'quadruple@eng').stdout  # shown by name
+    assert "double = bb.resolve('double')" in pool.bb('show', 'quadruple@eng').stdout  # shown by name
 
     # A new version of double: the name now resolves to it; quadruple keeps the version it was saved with
     second = hash_of(pool.edit('double', 'def double(n):\n    """Twice n."""\n    return n + n + 0\n'))
@@ -64,7 +64,7 @@ def test_a_name_resolves_to_its_one_current_version_and_follows_edits(tmp_path):
     # double now names another version: quadruple still uses the first, shown as debt
     shown = pool.bb('show', 'quadruple@eng').stdout
     assert f"# bb: out of date: uses {first[:12]}..., saving picks {second[:12]}..." in shown
-    assert "double = bb.latest('double')" in shown
+    assert "double = bb.resolve('double')" in shown
 
 
 def test_two_unrelated_functions_with_one_name_are_refused_with_both_listed(tmp_path):

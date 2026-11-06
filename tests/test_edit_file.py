@@ -1,5 +1,14 @@
 """bb edit NAME FILE: write FILE when it is missing, save from it when it is there."""
+import json
+import re
+
 from tests.test_import_by_name import Pool, hash_of
+
+
+def step_of(tmp_path, draft):
+    """The lineage step a draft's bb:parent marker names."""
+    step_id = re.search(r'bb:parent ([0-9a-f]{64})', draft.read_text()).group(1)
+    return json.loads((tmp_path / 'bb' / 'pool' / 'lineage' / step_id[:2] / f'{step_id[2:]}.json').read_text())
 
 
 def set_code(path, code):
@@ -27,7 +36,8 @@ def test_saving_from_the_file_keeps_it_as_the_saved_version(tmp_path):
     first = pool.bb('edit', 'double@eng', str(draft), '-m', 'new')
     assert first.returncode == 0, first.stderr
     first_hash = hash_of(first)
-    assert f'bb:parent {first_hash}' in draft.read_text()
+    # The draft now continues the lineage step just saved, on the saved version
+    assert step_of(tmp_path, draft)['function'] == first_hash
     # Editing goes on in the same file
     set_code(draft, 'def double(n):\n    """Twice n."""\n    return n + n\n')
     second = pool.bb('edit', 'double@eng', str(draft), '-m', 'sum')
@@ -60,11 +70,17 @@ def test_a_failing_save_leaves_the_file_alone(tmp_path):
     assert draft.read_text() == text
 
 
-def test_a_new_name_for_code_already_in_the_pool_is_refused(tmp_path):
+def test_a_new_name_may_share_code_already_in_the_pool(tmp_path):
     pool = Pool(tmp_path)
-    pool.edit('double', 'def double(n):\n    """Twice n."""\n    return 2 * n\n')
+    double = hash_of(pool.edit('double', 'def double(n):\n    """Twice n."""\n    return 2 * n\n'))
     same = pool.edit('twice', 'def twice(n):\n    """Twice n."""\n    return 2 * n\n')
-    assert same.returncode == 1 and 'already in the pool as double' in same.stderr
+    assert same.returncode == 0, same.stderr
+    assert hash_of(same) == double
+    # Each name has its own mapping and its own lineage
+    assert pool.bb('latest', 'twice@eng', '--hash').stdout.split() == [double]
+    assert pool.bb('latest', 'double@eng', '--hash').stdout.split() == [double]
+    assert 'def twice(n):' in pool.bb('show', 'twice@eng').stdout
+    assert 'def double(n):' in pool.bb('show', 'double@eng').stdout
 
 
 def test_a_bare_newline_stays_escaped():

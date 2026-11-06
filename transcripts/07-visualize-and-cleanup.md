@@ -145,19 +145,19 @@ Set language: eng
 ```bash
 $ bb tree $CALC_HASH | head -5
 calculator_main — Perform calculations using add and multiply.
-├── add_numbers — Add two numbers and a constant pi.
-│   └── get_pi — Return the value of pi.
-└── multiply_numbers — Multiply two numbers by pi.
-    └── get_pi — Return the value of pi.
+├── add_numbers — Add two numbers and a constant pi.  [pinned]
+│   └── get_pi — Return the value of pi.  [pinned]
+└── multiply_numbers — Multiply two numbers by pi.  [pinned]
+    └── get_pi — Return the value of pi.  [pinned]
 ```
 
-The tree shows the complete dependency graph with docstring summaries: `calculator_main` depends on `add_numbers` and `multiply_numbers`, both of which depend on `get_pi`.
+The tree shows the complete dependency graph with docstring summaries: `calculator_main` depends on `add_numbers` and `multiply_numbers`, both of which depend on `get_pi`. Each function names its helpers by hash (`bb.ref("<hash>")`), so the tree marks them `pinned`: they stay on that exact version, whatever later edits do. A helper used by name would be marked `out of date` once a newer version of that name exists.
 
 ### Step 10: Show tree for a mid-level function
 ```bash
 $ bb tree $ADD_HASH | head -2
 add_numbers — Add two numbers and a constant pi.
-└── get_pi — Return the value of pi.
+└── get_pi — Return the value of pi.  [pinned]
 ```
 
 Only one level of dependencies shown.

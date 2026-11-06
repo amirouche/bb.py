@@ -614,7 +614,7 @@ def test_normalize_refuses_imports_by_hash():
 @pytest.mark.parametrize("code, message", [
     ("def foo(bb):\n    return bb\n", "reserved"),
     ("def foo(x):\n    return bb.ref(x)(1)\n", "bb.ref takes one"),
-    ("def foo(x):\n    return bb.pool\n", "bb provides bb.latest"),
+    ("def foo(x):\n    return bb.pool\n", "bb provides bb.resolve"),
     ("def foo(x):\n    return bb.latest('double')(x)\n", "resolved when saving"),
 ])
 def test_normalize_refuses_other_uses_of_bb(code, message):
@@ -846,8 +846,8 @@ def test_schema_detect_version(mock_bb_dir):
     pool_dir = mock_bb_dir / '.bb' / 'pool'
     test_hash = "abcd1234" + "0" * 56
 
-    # Create v1 format: pool/XX/YYYYYY.../object.json
-    func_dir = pool_dir / test_hash[:2] / test_hash[2:]
+    # Storage v2: pool/functions/XX/YYYYYY.../object.json
+    func_dir = pool_dir / 'functions' / test_hash[:2] / test_hash[2:]
     func_dir.mkdir(parents=True, exist_ok=True)
     object_json = func_dir / 'object.json'
 
@@ -1112,7 +1112,9 @@ def _pool_add(source, lang='eng', checks=None):
     prepared = bb.code_prepare_source(source, lang)
     func_hash = bb.code_compute_function_hash(prepared['normalized_code'], checks)
     bb.object_save(func_hash, prepared['normalized_code'], bb.code_create_metadata(), checks=checks)
-    bb.mapping_save(func_hash, lang, prepared['docstring'], prepared['name_mapping'], prepared['alias_mapping'])
+    mapping = bb.mapping_save(func_hash, lang, prepared['docstring'], prepared['name_mapping'],
+                              prepared['alias_mapping'])
+    bb.lineage_save(None, func_hash, lang, mapping, 'add')  # as bb add does: the name is current
     return func_hash
 
 
@@ -1416,7 +1418,7 @@ def test_objects_record_their_normalization(mock_bb_dir):
     assert bb.object_normalization(legacy) == 1
     data = bb.object_load(legacy)
     data.pop('normalization')
-    path = bb.storage_get_pool_directory() / legacy[:2] / legacy[2:] / 'object.json'
+    path = bb.storage_object_path(legacy)
     path.write_text(json.dumps(data), encoding='utf-8')
     assert bb.object_normalization(legacy) == 1
 

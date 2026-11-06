@@ -40,7 +40,7 @@ def compute_pi(n):
 ```bash
 $ bb add compute_pi_eng.py@eng
 Hash: ddda76213f839382c1f0df754b73d47214cf05859da05a14fe690eff32c24015
-Mapping hash: 8987e90603c35197685ba70ead7c6a845cd7d1f64edf421eb350be3e7a372bd4
+Mapping hash: bd77f7e41b89a83d90c9c7c3fd3b966c76485907e9efb2774ef3b7a0efbacc38
 ```
 
 ### Step 2: Nothing is attached yet
@@ -432,7 +432,8 @@ Total reviewed: 7 function(s)
 
 ### Step 10: Rewording the documentation is not a fork
 Only the prose changes, so the hash stays the same. bb writes a new
-English mapping whose parent is the previous one, and `bb show` uses it.
+English mapping, and a `document` lineage step after the previous one,
+so `bb show` uses it.
 
 ```bash
 $ sed 's/More terms give a closer approximation/Each extra term gets closer/' pi_sum.md > pi_doc.md
@@ -490,10 +491,17 @@ Parent: 451a1d221bbeb6e40daa71aedbb82fea0a94eb3738dfa59c3b0aef94faa51025
 Hash: e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f
 ```
 
-### Step 12: Editing the fork again shows where it came from
+### Step 12: The fork knows where it came from
+Its lineage step follows the old check's: `bb latest` shows it as the
+parent. A draft of the fork names that step in its `<!-- bb:parent -->`
+line, so a draft made before another save is refused as stale.
+
 ```bash
-$ EDITOR=cat bb edit e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f@eng | grep bb:parent
-<!-- bb:parent e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f -->
+$ bb latest check_pi_n8 eng | grep -E '^(Hash|Parent):'
+Hash: e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f
+Parent: 451a1d221bbeb6e40daa71aedbb82fea0a94eb3738dfa59c3b0aef94faa51025
+$ EDITOR=cat bb edit e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f@eng | grep -c 'bb:parent'
+1
 ```
 
 ---
