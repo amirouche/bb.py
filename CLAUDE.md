@@ -31,7 +31,7 @@ The bb function pool location is controlled by the `BB_DIRECTORY` environment va
 - **Default**: `$HOME/.local/bb/` (follows XDG Base Directory specification)
 - **Custom location**: Set `BB_DIRECTORY=/path/to/pool` to override
 
-It holds `pool/` (functions), `worklog/` (worklogs), `edit/` (unfinished `bb edit` files), `review/` (signed reviews), and `trust/` (shared list of peers). Private state, your config, review approvals and trusted peers, lives outside it in `$BB_STATE_DIRECTORY` (default `~/.local/state/bb/`) so nobody can approve code for you through git. The user tracks the whole directory with git; bb has no commit, push or remote commands and never runs git.
+It holds `pool/` (functions), `restore/` (restore records: an older version made current again), `worklog/` (worklogs), `edit/` (unfinished `bb edit` files), `review/` (signed reviews), and `trust/` (shared list of peers). Private state, your config, review approvals and trusted peers, lives outside it in `$BB_STATE_DIRECTORY` (default `~/.local/state/bb/`) so nobody can approve code for you through git. The user tracks the whole directory with git; bb has no commit, push or remote commands and never runs git.
 
 ### Data Flow
 
@@ -208,6 +208,10 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
    Changing checks forks the function; changing documentation does not
 6. object.json is written once; documentation changes add a mapping
    whose 'parent' is the mapping it replaces
+7. Current versions follow lineage links, never time: a version's 'parent',
+   and restore records {restores: v1, supersedes: v2} (in restore/), which
+   bring back an older version when an edit or refactor lands on its code.
+   An edit after a restore names the record as its parent
 ```
 
 ### Public-Facing Hash Specification

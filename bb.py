@@ -2013,7 +2013,7 @@ def command_log():
                 except (IOError, json.JSONDecodeError):
                     continue
                 metadata = data.get('metadata', {})
-                langs = sorted(item.name for item in func_dir.iterdir() if item.is_dir())
+                langs = sorted(item.name for item in func_dir.iterdir() if item.is_dir() and len(item.name) == 3)
                 lines = [f"Hash: {data['hash']}",
                          f"Date: {metadata.get('created', 'unknown')}",
                          f"Author: {helper_format_author(metadata)}"]
@@ -2021,6 +2021,16 @@ def command_log():
                     lines.append(f"Parent: {metadata['parent']}")
                 lines.append(f"Languages: {', '.join(langs) if langs else 'none'}")
                 entries.append((metadata.get('created', ''), data['hash'], lines))
+
+    restores = storage_scan_restores()
+    for record_id, record in restores.items():
+        lines = [f"Restored: {record['restores']}",
+                 f"Supersedes: {record['supersedes']}",
+                 f"Date: {record.get('created', 'unknown')}",
+                 f"Author: {helper_format_author(record)}"]
+        if record.get('comment'):
+            lines += ['', f"    {record['comment']}"]
+        entries.append((record.get('created', ''), record_id, lines))
 
     worklogs = worklog_list()
     for worklog in worklogs:
@@ -2038,8 +2048,9 @@ def command_log():
     # Newest first; ties broken by identifier so the order is stable
     entries.sort(key=lambda e: (e[0], e[1]), reverse=True)
 
-    function_count = len(entries) - len(worklogs)
-    print(f"Pool Log ({function_count} functions, {len(worklogs)} worklogs)")
+    function_count = len(entries) - len(worklogs) - len(restores)
+    restored = f", {len(restores)} restores" if restores else ""
+    print(f"Pool Log ({function_count} functions{restored}, {len(worklogs)} worklogs)")
     print("=" * 80)
     print()
 
@@ -2351,6 +2362,103 @@ def helper_format_author(metadata: Dict[str, Any]) -> str:
     return f"{name} <{email}>" if email else name
 
 
+def storage_scan_restores() -> Dict[str, Dict[str, Any]]:
+    """
+    Every restore record in the pool, by id.
+
+    A restore record brings an older version back as current: R =
+    {restores: v1, supersedes: v2} comes after v2 in the lineage and stands
+    for v1's code. The code's hash cannot take a new parent (same code,
+    same hash, and object.json is written once), so the record is the
+    lineage step. Stored in $BB_DIRECTORY/restore/<id>.json, written once.
+    """
+    restores = {}
+    for path in (storage_get_bb_directory() / 'restore').glob('*.json'):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                restores[path.stem] = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+    return restores
+
+
+def restore_save(restores: str, supersedes: str, comment: str = "") -> str:
+    """
+    Record that the version restores comes back after supersedes; returns the record's id.
+
+    The id is the hash of {restores, supersedes}: restoring the same
+    version over the same one twice is one record.
+    """
+    record_id = hash_compute(json.dumps({'restores': restores, 'supersedes': supersedes},
+                                        sort_keys=True, ensure_ascii=False))
+    path = storage_get_bb_directory() / 'restore' / f'{record_id}.json'
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        metadata = code_create_metadata()
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump({'restores': restores, 'supersedes': supersedes, 'comment': comment,
+                       'created': metadata.get('created', ''), 'name': metadata.get('name', ''),
+                       'email': metadata.get('email', '')}, f, indent=2, ensure_ascii=False)
+    return record_id
+
+
+def lineage_successors(functions: Dict[str, Dict[str, Any]], restores: Dict[str, Dict[str, Any]]) -> Dict[str, List[str]]:
+    """What comes right after each lineage step: versions naming it as parent, records superseding it."""
+    successors: Dict[str, List[str]] = {}
+    for func_hash, function in functions.items():
+        parent = function['metadata'].get('parent')
+        if parent:
+            successors.setdefault(parent, []).append(func_hash)
+    for record_id, record in restores.items():
+        successors.setdefault(record['supersedes'], []).append(record_id)
+    return successors
+
+
+def lineage_code(node: str, restores: Dict[str, Dict[str, Any]]) -> str:
+    """The function a lineage step stands for: a version itself, or the version a record restores."""
+    return restores[node]['restores'] if node in restores else node
+
+
+def lineage_previous(node: str, functions: Dict[str, Dict[str, Any]], restores: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    """The lineage step before node: a version's parent, or what a record supersedes."""
+    if node in restores:
+        return restores[node]['supersedes']
+    function = functions.get(node)
+    return function['metadata'].get('parent') if function else None
+
+
+def lineage_root(node: str, functions: Dict[str, Dict[str, Any]], restores: Dict[str, Dict[str, Any]]) -> str:
+    """The first version of node's lineage, as far as the local pool knows it."""
+    seen = set()
+    while node not in seen:
+        seen.add(node)
+        previous = lineage_previous(node, functions, restores)
+        if previous is None or (previous not in functions and previous not in restores):
+            break
+        node = previous
+    return lineage_code(node, restores)
+
+
+def lineage_current_step(func_hash: str, functions: Dict[str, Dict[str, Any]] = None,
+                         restores: Dict[str, Dict[str, Any]] = None) -> str:
+    """
+    The lineage step an edit of func_hash continues from.
+
+    When a current restore record stands for func_hash, the edit comes
+    after that record (else the restored version would fork); otherwise it
+    comes after func_hash itself.
+    """
+    if functions is None:
+        functions = storage_scan_functions()
+    if restores is None:
+        restores = storage_scan_restores()
+    successors = lineage_successors(functions, restores)
+    for record_id, record in sorted(restores.items()):
+        if record['restores'] == func_hash and record_id not in successors:
+            return record_id
+    return func_hash
+
+
 def storage_scan_functions() -> Dict[str, Dict[str, Any]]:
     """
     Read every function in the pool once: metadata, checks, normalized
@@ -2417,12 +2525,8 @@ def helper_find_heads_by_name(name: str, lang: str = None) -> Tuple[List[str], D
         (current version hashes, newest first; the scan from storage_scan_functions)
     """
     functions = storage_scan_functions()
-
-    children: Dict[str, List[str]] = {}
-    for function in functions.values():
-        parent = function['metadata'].get('parent')
-        if parent:
-            children.setdefault(parent, []).append(function['hash'])
+    restores = storage_scan_restores()
+    children = lineage_successors(functions, restores)
 
     if lang:
         matches = [h for h, f in functions.items() if f['names'].get(lang) == name]
@@ -2441,7 +2545,14 @@ def helper_find_heads_by_name(name: str, lang: str = None) -> Tuple[List[str], D
         else:
             heads.add(func_hash)
 
-    ordered = sorted(heads, key=lambda h: (functions[h]['metadata'].get('created', ''), h), reverse=True)
+    # A current restore record stands for the version it restores
+    codes = {}
+    for node in heads:
+        created = restores[node].get('created', '') if node in restores else functions[node]['metadata'].get('created', '')
+        code = lineage_code(node, restores)
+        if code in functions:
+            codes[code] = max(codes.get(code, ''), created)
+    ordered = sorted(codes, key=lambda h: (codes[h], h), reverse=True)
     return ordered, functions
 
 
@@ -2486,9 +2597,10 @@ def helper_resolve_name(name: str, lang: str = None) -> Tuple[str, str]:
 
     if lang and lang not in names:
         # Walk back to the newest ancestor that has the language
-        ancestor = functions[head]['metadata'].get('parent')
+        restores = storage_scan_restores()
+        ancestor = lineage_code(lineage_previous(head, functions, restores) or '', restores)
         while ancestor in functions and lang not in functions[ancestor]['names']:
-            ancestor = functions[ancestor]['metadata'].get('parent')
+            ancestor = lineage_code(lineage_previous(ancestor, functions, restores) or '', restores)
         source = helper_pick_language(head)
         print(f"Error: The current version of '{name}', {head}, has no '{lang}' translation.", file=sys.stderr)
         print(f"Translate it with: bb translate {head}@{source} {lang}", file=sys.stderr)
@@ -2549,23 +2661,25 @@ def storage_pool_index() -> Dict[str, Any]:
     Scan the pool once and index its relations.
 
     Returns:
-        Dict with 'functions' (see storage_scan_functions), 'children'
-        (parent -> forks), 'importers' (hash -> functions importing it)
-        and 'checked_by' (check hash -> functions it is attached to)
+        Dict with 'functions' (see storage_scan_functions), 'restores'
+        (see storage_scan_restores), 'children' (lineage step -> the steps
+        right after it), 'current' (hashes of current versions, restored
+        ones included), 'importers' (hash -> functions importing it) and
+        'checked_by' (check hash -> functions it is attached to)
     """
     functions = storage_scan_functions()
-    children: Dict[str, List[str]] = {}
+    restores = storage_scan_restores()
+    children = lineage_successors(functions, restores)
+    current = {lineage_code(node, restores) for node in list(functions) + list(restores) if node not in children}
     importers: Dict[str, List[str]] = {}
     checked_by: Dict[str, List[str]] = {}
     for func_hash, function in functions.items():
-        parent = function['metadata'].get('parent')
-        if parent:
-            children.setdefault(parent, []).append(func_hash)
         for dep in code_extract_dependencies(function['normalized_code']):
             importers.setdefault(dep, []).append(func_hash)
         for check_hash in function['checks']:
             checked_by.setdefault(check_hash, []).append(func_hash)
-    return {'functions': functions, 'children': children, 'importers': importers, 'checked_by': checked_by}
+    return {'functions': functions, 'restores': restores, 'children': children, 'current': current & set(functions),
+            'importers': importers, 'checked_by': checked_by}
 
 
 def helper_display_language(function: Dict[str, Any], prefer: List[str] = None) -> Optional[str]:
@@ -2579,15 +2693,7 @@ def helper_display_language(function: Dict[str, Any], prefer: List[str] = None) 
 
 def search_lineage_root(index: Dict[str, Any], func_hash: str) -> str:
     """The first version of a function's lineage (following parents in the local pool)."""
-    functions = index['functions']
-    seen = set()
-    while func_hash not in seen:
-        seen.add(func_hash)
-        parent = functions[func_hash]['metadata'].get('parent')
-        if parent not in functions:
-            break
-        func_hash = parent
-    return func_hash
+    return lineage_root(func_hash, index['functions'], index['restores'])
 
 
 def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
@@ -2599,7 +2705,7 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
     name = function['names'].get(lang) if lang else None
     mapping = function['mappings'].get(lang, {}) if lang else {}
     docstring = mapping.get('docstring', '')
-    is_current = func_hash not in index['children']
+    is_current = func_hash in index['current']
     root = search_lineage_root(index, func_hash)
     forks = head_counts.get((lang, name, root), 0)
     namesakes = sum(count for (l, n, r), count in head_counts.items() if (l, n) == (lang, name) and r != root)
@@ -2664,14 +2770,14 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     # unrelated functions that happen to share a name are counted apart
     head_counts: Dict[Tuple[str, str, str], int] = {}
     for func_hash, function in functions.items():
-        if func_hash not in index['children']:
+        if func_hash in index['current']:
             root = search_lineage_root(index, func_hash)
             for lang, name in function['names'].items():
                 head_counts[(lang, name, root)] = head_counts.get((lang, name, root), 0) + 1
 
     candidates = []
     for func_hash, function in functions.items():
-        if not all_versions and func_hash in index['children']:
+        if not all_versions and func_hash not in index['current']:
             continue
 
         # Every term must appear somewhere; remember where, and in which languages
@@ -3125,7 +3231,7 @@ def code_find_similar(func_hash: str, exclude: Set[str] = None,
     skip = (exclude or set()) | {func_hash}
     found = []
     for other_hash, other in functions.items():
-        if (other_hash in skip or other_hash in index['children'] or other_hash in index['checked_by']):
+        if (other_hash in skip or other_hash not in index['current'] or other_hash in index['checked_by']):
             continue
         theirs = code_shingles(other['normalized_code'])
         if len(theirs) < min_size:
@@ -3148,12 +3254,13 @@ def helper_report_similar(func_hash: str, exclude: Set[str] = None):
 
 def helper_lineage(func_hash: str) -> Set[str]:
     """func_hash and every ancestor reachable through metadata parent links."""
+    functions, restores = storage_scan_functions(), storage_scan_restores()
     seen = set()
     current = func_hash
-    while current and current not in seen and code_detect_schema(current) is not None:
+    while current and current not in seen and (current in functions or current in restores):
         seen.add(current)
-        current = object_load(current)['metadata'].get('parent')
-    return seen
+        current = lineage_previous(current, functions, restores)
+    return {lineage_code(node, restores) for node in seen}
 
 
 def code_uses_bb(tree: ast.AST) -> bool:
@@ -4867,6 +4974,10 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     changed checks record their own parents. The comment (asked for when
     --comment is not given) is stored in the new mappings.
 
+    Saving code that an older version of the same function already has
+    restores that version (a restore record makes it current again, as the
+    hash cannot take a new parent); code another function has is refused.
+
     --refactor ROOT then updates ROOT to the new version: every function
     between ROOT and the edited one gets a new version using it, as
     `bb refactor ROOT OLD NEW` does (with --at AT, only along the path from
@@ -4915,6 +5026,8 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
             sys.exit(1)
         # Load the function and the checks attached to it
         original = edit_load_section(hash_value, lang)
+        # After a restore, the edit continues from the restore record, not from the old version
+        original['parent'] = lineage_current_step(hash_value)
         original_checks = []
     refactor_root = refactor_at = None
     if refactor:
@@ -4967,8 +5080,9 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
                 edited = f.read()
             # A stale file is refused before anything runs
             drafted_from = markdown_parse_edit(edited)['implementation']['parent']
-            if drafted_from != hash_value:
-                what = f"the current version of {name} is {hash_value}" if hash_value else f"{name} has no version"
+            if drafted_from != original['parent']:
+                what = (f"the current version of {name} is {original['parent']}" if hash_value
+                        else f"{name} has no version")
                 since = f"{file} was drafted from {drafted_from}" if drafted_from else f"{file} has no bb:parent marker"
                 print(f"Error: {since}, but {what}. Nothing saved: write a new draft with "
                       f"bb edit {identifier} NEW_FILE and make your change there.", file=sys.stderr)
@@ -5005,7 +5119,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         print("Nothing saved: the edited file still holds the template, so no function was created.")
         return
     # Without a marker, the implementation still descends from the edited function
-    section['parent'] = section['parent'] or hash_value
+    section['parent'] = section['parent'] or original['parent']
     # Checks without a marker are matched to the loaded checks by name, then position
     parents = edit_assign_parents([(p['name_mapping']['_bb_v_0'], c['parent']) for c, p in plan['checks']],
                                   [(c['title'], c['parent']) for c in original_checks])
@@ -5042,6 +5156,33 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         except EOFError:
             comment = ""
 
+    def rewrite_file(func_hash):
+        """The file now drafts from the current step of func_hash, so editing can go on in it."""
+        if file is None:
+            return
+        saved = edit_load_section(func_hash, lang)
+        saved['parent'] = lineage_current_step(func_hash)
+        saved_checks = [edit_load_section(c, lang) for c in object_load_checks(func_hash)]
+        with open(file, 'w', encoding='utf-8') as f:
+            f.write(markdown_render_edit(saved['title'], saved, saved_checks))
+
+    if hash_value and prepared['hash'] != hash_value and code_detect_schema(prepared['hash']) is not None:
+        # Same code, same hash: the version exists already and cannot take a new parent
+        functions, restores = storage_scan_functions(), storage_scan_restores()
+        if lineage_root(prepared['hash'], functions, restores) != lineage_root(hash_value, functions, restores):
+            print(f"Error: this code is already in the pool as {helper_function_label(prepared['hash'])} "
+                  f"({prepared['hash']}), another function. Nothing saved.", file=sys.stderr)
+            sys.exit(1)
+        restore_save(prepared['hash'], section['parent'], comment)
+        discard()
+        rewrite_file(prepared['hash'])
+        print(f"Restored: {prepared['hash']}")
+        print(f"Supersedes: {section['parent']}")
+        if refactor_root:
+            print(f"Updating {refactor} to it:")
+            command_refactor(refactor_root, hash_value, prepared['hash'], refactor_at, comment=comment)
+        return
+
     # Each saved mapping descends from the translation its parent was loaded in
     loaded_mappings = {s['parent']: s['mapping'] for s in [original] + original_checks}
 
@@ -5057,16 +5198,11 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
                           mapping_parent=loaded_mappings.get(section['parent'], ""))
 
     discard()
-    if file is not None:
-        # The file now drafts from the saved version, so editing can go on in it
-        saved = edit_load_section(prepared['hash'], lang)
-        saved_checks = [edit_load_section(c, lang) for c in object_load_checks(prepared['hash'])]
-        with open(file, 'w', encoding='utf-8') as f:
-            f.write(markdown_render_edit(saved['title'], saved, saved_checks))
+    rewrite_file(prepared['hash'])
 
     print(f"Hash: {prepared['hash']}")
     if hash_value and prepared['hash'] != hash_value:
-        print(f"Parent: {hash_value}")
+        print(f"Parent: {section['parent']}")
     for name, check_hash in new_checks:
         print(f"Check: {check_hash} {name}")
     for name, func_hash in sorted(plan.get('resolved', {}).items()):
@@ -5097,7 +5233,9 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
 
     Creates new functions where references to from_hash are replaced
     with to_hash, each recording the function it was rewritten from as
-    its parent. Copies the current language mappings, updating
+    its parent. A rewrite that gives back an older version's code (to_hash
+    an older version of from_hash, say) restores that version instead,
+    with a restore record. Copies the current language mappings, updating
     alias_mappings to use the new hash key. Like a batch of bb edit, one
     comment (asked for when --comment is not given) goes on every new
     mapping.
@@ -5209,6 +5347,34 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
     # We need to refactor all functions in the chain that depend on from_hash
     hash_map = {from_hash: to_hash}  # Maps old_hash -> new_hash
 
+    def refactor_save(old_hash, new_hash, new_code, checks):
+        """
+        Save new_hash as the version after old_hash; returns 'new', 'restored' or 'existing'.
+
+        Code that is already in the pool keeps its hash and its place: an
+        older version of the same lineage is restored (a restore record),
+        another function's code is used as it is.
+        """
+        functions, restores = storage_scan_functions(), storage_scan_restores()
+        step = lineage_current_step(old_hash, functions, restores)
+        if code_detect_schema(new_hash) is not None:
+            if lineage_root(new_hash, functions, restores) == lineage_root(old_hash, functions, restores):
+                restore_save(new_hash, step, comment)
+                return 'restored'
+            return 'existing'
+        object_save(new_hash, new_code, code_create_metadata(parent=step), checks=checks,
+                    normalization=object_normalization(old_hash))
+        # Copy the current mappings; superseded ones stay reachable through parent
+        old_dir = pool_dir / old_hash[:2] / old_hash[2:]
+        for lang in sorted(item.name for item in old_dir.iterdir() if item.is_dir() and len(item.name) == 3):
+            for mapping_hash in mapping_leaves(old_hash, lang):
+                docstring, name_mapping, alias_mapping, _ = mapping_load(old_hash, lang, mapping_hash)
+                new_alias_mapping = {hash_map.get(h, h): alias for h, alias in alias_mapping.items()}
+                mapping_save(new_hash, lang, docstring, name_mapping, new_alias_mapping, comment,
+                             mapping_load_markdown(old_hash, lang, mapping_hash),
+                             f"{old_hash}@{lang}@{mapping_hash}")
+        return 'new'
+
     # Process functions in topological order (dependencies first)
     for dep_hash in all_deps:
         if dep_hash == what_hash:
@@ -5243,34 +5409,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
             dep_checks = object_load_checks(dep_hash)
             new_dep_hash = code_compute_function_hash(code_without_docstring, dep_checks)
 
-            # Save the new function
-            metadata = code_create_metadata(parent=dep_hash)
-            object_save(new_dep_hash, new_dep_code, metadata, checks=dep_checks,
-                        normalization=object_normalization(dep_hash))
-
-            # Copy language mappings
-            dep_func_dir = pool_dir / dep_hash[:2] / dep_hash[2:]
-            dep_languages = []
-            for item in dep_func_dir.iterdir():
-                if item.is_dir() and len(item.name) == 3:
-                    dep_languages.append(item.name)
-
-            for lang in dep_languages:
-                # Copy the current mappings; superseded ones stay reachable through parent
-                for mapping_hash in mapping_leaves(dep_hash, lang):
-                    docstring, name_mapping, alias_mapping, _ = mapping_load(dep_hash, lang, mapping_hash)
-
-                    # Update alias_mapping with all replacements
-                    new_alias_mapping = {}
-                    for h, alias in alias_mapping.items():
-                        if h in hash_map:
-                            new_alias_mapping[hash_map[h]] = alias
-                        else:
-                            new_alias_mapping[h] = alias
-
-                    mapping_save(new_dep_hash, lang, docstring, name_mapping, new_alias_mapping, comment,
-                                 mapping_load_markdown(dep_hash, lang, mapping_hash),
-                                 f"{dep_hash}@{lang}@{mapping_hash}")
+            refactor_save(dep_hash, new_dep_hash, new_dep_code, dep_checks)
 
             # Track this replacement for subsequent functions
             hash_map[dep_hash] = new_dep_hash
@@ -5297,33 +5436,10 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
     what_checks = object_load_checks(what_hash)
     new_hash = code_compute_function_hash(code_without_docstring, what_checks)
 
-    # Create metadata for the new function
-    metadata = code_create_metadata(parent=what_hash)
-
-    # Save the new function (object.json) with docstring
-    object_save(new_hash, new_normalized_code, metadata, checks=what_checks,
-                normalization=object_normalization(what_hash))
-
-    # Copy the current language mappings from what_hash to new_hash;
-    # superseded ones stay reachable through parent
-    for lang in languages:
-        for mapping_hash in mapping_leaves(what_hash, lang):
-            docstring, name_mapping, alias_mapping, _ = mapping_load(what_hash, lang, mapping_hash)
-
-            # Update alias_mapping: replace all mapped hashes
-            new_alias_mapping = {}
-            for dep_hash, alias in alias_mapping.items():
-                if dep_hash in hash_map:
-                    new_alias_mapping[hash_map[dep_hash]] = alias
-                else:
-                    new_alias_mapping[dep_hash] = alias
-
-            mapping_save(new_hash, lang, docstring, name_mapping, new_alias_mapping, comment,
-                         mapping_load_markdown(what_hash, lang, mapping_hash),
-                         f"{what_hash}@{lang}@{mapping_hash}")
-
-    # Print the new function hash
-    print(f'new hash: {new_hash}')
+    if refactor_save(what_hash, new_hash, new_normalized_code, what_checks) == 'restored':
+        print(f'restored: {new_hash}')
+    else:
+        print(f'new hash: {new_hash}')
 
 
 # =============================================================================
