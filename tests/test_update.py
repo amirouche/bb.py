@@ -67,3 +67,21 @@ def test_refactor_lists_the_functions_it_rewrote(tmp_path):
     set_code(draft, QUX.format(3))
     out = pool.bb('edit', 'qux@eng', str(draft), '-m', 'v3', '--refactor', 'top@eng').stdout
     assert 'Rewrote 1 function(s) on the way' in out and 'mid:' in out and 'stale' in out
+
+
+FIND = ('def {name}(records, key, value):\n    """Find a record."""\n    found = []\n'
+        '    for record in records:\n        if record.get(key) == value and record.get("{flag}"):\n'
+        '            found.append(record)\n        elif record.get(key) is None:\n            continue\n'
+        '        elif len(found) > 10:\n            break\n'
+        '    found.sort(key=lambda r: r.get("created", ""))\n    return found[0] if found else None\n')
+
+
+def test_search_similar_lists_functions_whose_code_looks_alike(tmp_path):
+    pool = Pool(tmp_path)
+    pool.edit('order_find', FIND.format(name='order_find', flag='paid'))
+    pool.edit('product_find', FIND.format(name='product_find', flag='listed'))
+    pool.edit('lonely', 'def lonely():\n    """L."""\n    return 7\n')
+    out = pool.bb('search', '--similar').stdout
+    assert 'matches for: --similar' in out
+    assert 'Name: order_find (eng)' in out and 'looks like product_find' in out
+    assert 'lonely' not in out
