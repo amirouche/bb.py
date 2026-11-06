@@ -26,24 +26,25 @@ Writing functions for the pool:
 - One function per file (def or async def), with its imports and, if
   you like, a module docstring. Anything else at module level (classes,
   constants, variables, code) is refused: put data in functions.
-- Use another pool function through `import bb`: bb.latest("name") names
-  it, bb.ref("<hash>") names an exact version (`from bb.pool import` is
-  gone):
+- Use another pool function through `import bb`: bb.resolve("name")
+  names it (bb.latest("name") is the same), bb.ref("<hash>") names an
+  exact version (`from bb.pool import` is gone):
 
       import bb
 
-      parse_amount = bb.latest("parse_amount")   # by name
+      parse_amount = bb.resolve("parse_amount")  # by name
       parse_amount = bb.ref("<hash>")            # or an exact version
 
   A name is resolved when you save (bb add, bb edit), in the language you
-  save in, to its one current version (the end of its lineage of edits,
-  never by date); the stored code holds that hash, so the function keeps
+  save in (then your `bb whoami language` languages, then any), to its one
+  current version (the end of that name's lineage of edits, never by
+  date); the stored code holds that hash, so the function keeps
   that version. A name with several current versions (two functions
   called alike, or a fork) is refused: name one of them with bb.ref
-  (`bb search name` shows hashes). bb.latest is never looked up when the
+  (`bb search name` shows hashes). bb.resolve is never looked up when the
   function runs. So add helpers before the functions
   that use them. Stored code refers to each one as bb.ref("<hash>"). bb
-  show and bb edit display references by name (bb.latest), so saving an
+  show and bb edit display references by name (bb.resolve), so saving an
   edit brings a function up to date: a function keeps the versions it was
   saved with until someone edits it (its debt, listed by bb search
   --outdated and noted in drafts as `# bb: out of date`). What you write
@@ -74,10 +75,14 @@ Writing functions for the pool:
   functions whose code looks like the one you saved ("NAME looks like
   these other functions"): use one instead, or ignore the note if yours
   is meant to be different. Small functions are never compared.
-- Two names cannot share identical code: bb follows versions by
-  function, so a second name on the same code would follow the first
-  one's edits. Give each its own code (a placeholder can say which page
-  it stands for).
+- Versions are followed per name and per language: each name has its
+  own lineage (bb log lists the steps), so two names may share identical
+  code and each follows its own edits; a rename supersedes the old name.
+  One function may not use two names of one code (they would be one
+  alias): use one name, or give them different code. An edit in one
+  language leaves the other languages on their version until someone
+  translates it (bb latest, bb search --outdated and bb tree say "not yet
+  translated").
 - `bb translate name@lang TARGET FILE` translates through a file: when
   FILE is missing, bb writes the function in its language with a
   `- name -> ` line to fill in for each name (and for each pool function
@@ -98,11 +103,14 @@ Writing functions for the pool:
     line breaks, `# bb:` notes) so you can go on editing it: read it again
     before changing it rather than editing the text you remember.
 
-Functions are stored in $BB_DIRECTORY/pool/ (default: ~/.local/bb/pool/)
-as JSON objects containing normalized code and per-language name mappings.
-Each language mapping preserves the original variable names, docstring,
-and BB import aliases, allowing the same function to be displayed in
-any language that has been added or translated.
+Functions are stored in $BB_DIRECTORY/pool/ (default: ~/.local/bb/pool/):
+pool/functions/ holds JSON objects with the normalized code, pool/mappings/
+the per-language name mappings, and pool/lineage/ the lineage steps that
+say which version of each name comes after which. Each language mapping
+preserves the original variable names, docstring, and BB import aliases,
+allowing the same function to be displayed in any language that has been
+added or translated. A pool written by an older bb (pool/XX/..., restore/)
+is converted by `bb migrate`; track $BB_DIRECTORY with git first.
 
 Worklogs live in $BB_DIRECTORY/worklog/, unfinished edits in
 $BB_DIRECTORY/edit/, signed reviews in $BB_DIRECTORY/review/ and the
@@ -445,7 +453,7 @@ def code_collect_pool_refs(tree: ast.Module) -> Tuple[ast.Module, Dict[str, str]
     """
     Take the pool functions a module names out of its top level.
 
-    They are named by `alias = bb.ref("<hash>")` (bb.latest("name") is
+    They are named by `alias = bb.ref("<hash>")` (bb.resolve("name") is
     resolved to bb.ref first, see code_resolve_pool_names) or used as
     bb.ref("<hash>") directly; `import bb` is dropped, as the loader
     provides bb. Every use is then
@@ -758,7 +766,7 @@ def storage_get_bb_directory() -> Path:
 
     Directory structure:
         $BB_DIRECTORY/
-        ├── pool/          # Functions: XX/YYYY.../object.json and per-language mappings
+        ├── pool/          # functions/, mappings/ and lineage/ (see storage_get_functions_directory)
         ├── worklog/       # Worklogs: <uuid7>/worklog.json and translated messages
         ├── edit/          # Unfinished bb edit files (a scratch pad)
         ├── review/        # Signed reviews: XX/YYYY.../<key id>.json and .sig
@@ -3436,7 +3444,7 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
             status.append(f"{len(r['pinned'])} pinned")
         if r['current'] and r['namesakes']:
             status.append(f"{r['namesakes']} unrelated function(s) also called {r['name']}: "
-                          f"bb.latest(\"{r['name']}\") is ambiguous")
+                          f"bb.resolve(\"{r['name']}\") is ambiguous")
         print(f"Status: {', '.join(status)}")
         if r['match']:
             print(f"Match: {', '.join(r['match'])}")
@@ -3687,6 +3695,11 @@ def command_translate(identifier_with_lang: str, target_lang: str, recursive: bo
     nothing; when FILE exists, bb saves it as the target language's
     translation (the code and hash do not change). A file made from a
     source translation that changed since is refused.
+
+    A translation is a lineage step in the target language: when the
+    target name was on an older version of this function's history (an
+    edit in the source language left it waiting), it moves on to this
+    version. Until then it stays where it was ("not yet translated").
 
     Examples:
         bb translate abc123...@eng fra

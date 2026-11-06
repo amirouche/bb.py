@@ -20,9 +20,9 @@ Functions with identical logic but different naming (e.g., English vs French var
 1. **AST-based normalization**: Source code is parsed into an AST, normalized, then unparsed
 2. **Hash on logic, not names**: Docstrings excluded from hash computation to enable multilingual support
 3. **Bidirectional mapping**: Original names preserved for reconstruction in target language
-4. **Content-addressed storage**: Functions stored by hash in `$HOME/.local/bb/pool/xx/yy.../object.json` (configurable via `BB_DIRECTORY` environment variable)
+4. **Content-addressed storage**: Functions stored by hash in `$HOME/.local/bb/pool/functions/xx/yy.../object.json`, mappings in `pool/mappings/xx/yy.../<lang>/<mapping hash>.json`, lineage steps in `pool/lineage/xx/<rest>.json` (configurable via `BB_DIRECTORY` environment variable)
 5. **Single-file architecture**: All code resides in `bb.py` - no modularization into separate packages. This keeps the tool simple, self-contained, and easy to distribute as a single script.
-6. **Pool references by hash**: stored code refers to a pool function as `bb.ref("<hash>")` where it is used (normalization 4). Authors write `import bb`, then `func = bb.latest("func")` (by name, resolved to a hash when saving, never at run time) or `func = bb.ref("<hash>")` (an exact version). `from bb.pool import ...` is refused in any form; objects stored with `object_<hash>` imports keep loading
+6. **Pool references by hash**: stored code refers to a pool function as `bb.ref("<hash>")` where it is used (normalization 4). Authors write `import bb`, then `func = bb.resolve("func")` (by name, resolved to a hash when saving, never at run time, through the saving language, then `bb whoami` languages, then any; `bb.latest` is the same) or `func = bb.ref("<hash>")` (an exact version). `from bb.pool import ...` is refused in any form; objects stored with `object_<hash>` imports keep loading
 
 ### Storage Location Configuration
 
@@ -31,7 +31,7 @@ The bb function pool location is controlled by the `BB_DIRECTORY` environment va
 - **Default**: `$HOME/.local/bb/` (follows XDG Base Directory specification)
 - **Custom location**: Set `BB_DIRECTORY=/path/to/pool` to override
 
-It holds `pool/` (functions), `restore/` (restore records: an older version made current again), `worklog/` (worklogs), `edit/` (unfinished `bb edit` files), `review/` (signed reviews), and `trust/` (shared list of peers). Private state, your config, review approvals and trusted peers, lives outside it in `$BB_STATE_DIRECTORY` (default `~/.local/state/bb/`) so nobody can approve code for you through git. The user tracks the whole directory with git; bb has no commit, push or remote commands and never runs git.
+It holds `pool/` (`functions/`, `mappings/` and `lineage/`), `worklog/` (worklogs), `edit/` (unfinished `bb edit` files), `review/` (signed reviews), and `trust/` (shared list of peers). Private state, your config, review approvals and trusted peers, lives outside it in `$BB_STATE_DIRECTORY` (default `~/.local/state/bb/`) so nobody can approve code for you through git. The user tracks the whole directory with git; bb has no commit, push or remote commands and never runs git.
 
 ### Data Flow
 
@@ -148,12 +148,12 @@ Understanding how imports are processed is critical to the normalization system.
 - **Usage**: Names like `math`, `Counter`, `np` are **never renamed** to `_bb_v_X`
 
 #### 2. BB Imports (Pool Functions)
-**Examples**: `import bb`, then `helper = bb.latest("helper")` (by name) or `helper = bb.ref("<hash>")` (an exact version). `from bb.pool import ...` is no longer accepted.
+**Examples**: `import bb`, then `helper = bb.resolve("helper")` (by name; `bb.latest` is the same) or `helper = bb.ref("<hash>")` (an exact version). `from bb.pool import ...` is no longer accepted.
 
 **Before storage (normalization)**:
 ```python
 import bb
-helper = bb.latest("helper")          # resolved when saving to: helper = bb.ref("<hash>")
+helper = bb.resolve("helper")         # resolved when saving to: helper = bb.ref("<hash>")
 ```
 ↓ becomes ↓
 ```python
@@ -166,7 +166,7 @@ def _bb_v_0(_bb_v_1):
 
 **From storage (denormalization)**:
 - Each `bb.ref('<hash>')` becomes its alias, bound once after the imports (`import bb`, then `helper = bb.ref('<hash>')`)
-- `bb show` and `bb edit` write that binding by name, `helper = bb.latest('helper')`, whenever `helper@lang` has one current version, so saving an edit brings the function up to date (gradual propagation: a function nobody edits keeps its versions, its debt; `bb search --outdated` lists it and what must follow it, `bb update NAME@lang` pays it at once, drafts note it with `# bb: out of date`)
+- `bb show` and `bb edit` write that binding by name, `helper = bb.resolve('helper')`, whenever `helper@lang` has one current version, so saving an edit brings the function up to date (gradual propagation: a function nobody edits keeps its versions, its debt; `bb search --outdated` lists it and what must follow it, `bb update NAME@lang` pays it at once, drafts note it with `# bb: out of date`)
 - References the author wrote as `bb.ref("<hash>")` are recorded in the mapping's `pinned` list (not in the hash) and stay pinned in drafts
 
 Objects stored before normalization 4 hold `from bb.pool import object_<hash>` and `object_<hash>._bb_v_0(...)`; they load, display and refactor as before.
@@ -207,12 +207,19 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
    - no checks: hash = sha256(normalized code), as it always was
    - with checks: hash = sha256 of canonical JSON {checks (sorted), normalized_code}
    Changing checks forks the function; changing documentation does not
-6. object.json is written once; documentation changes add a mapping
-   whose 'parent' is the mapping it replaces
-7. Current versions follow lineage links, never time: a version's 'parent',
-   and restore records {restores: v1, supersedes: v2} (in restore/), which
-   bring back an older version when an edit or refactor lands on its code.
-   An edit after a restore names the record as its parent
+6. object.json is written once (new objects carry no 'parent'); mappings
+   name their function and language and are content-addressed with them
+7. Current versions follow lineage steps, never time: append-only records
+   {from, function, lang, mapping, name, relation, comment, metadata,
+   translates?} in pool/lineage/, id = hash of the record. Steps are per
+   (language, name): a name's current version is the end of its own
+   lineage. Relations: add, edit, document, rename (supersedes the old
+   name), refactor, restore (an older version's code again), translate.
+   Two names may share one code; an edit in one language leaves the others
+   on their version, waiting for a translation ("not yet translated").
+   One caller using two names of one code is refused. Drafts' bb:parent
+   marker names the step they continue. `bb migrate` converts pools in the
+   old layout (pool/XX/..., restore/); other commands refuse them
 ```
 
 ### Public-Facing Hash Specification
