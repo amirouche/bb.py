@@ -1447,3 +1447,25 @@ def test_unparse_readable_after_ast_unparse():
     tree = ast.parse('x = "a\\nb"\n')
     ast.unparse(tree)
     assert bb.code_unparse_readable(tree) == 'x = """a\nb"""'
+
+
+def test_code_pretty_breaks_long_views_and_keeps_the_tree():
+    import ast
+    source = ('from beyondlive import h\n\n\ndef page(session):\n    """A page."""\n'
+              "    return h.main(Class='page')[h.h1()['Studio ‹›'], h.p(id='summary')[describe(session['choices'], 'eng')], "
+              "h.div(Class='row')[h.button(onClick=prev_option, title='Previous')['‹ Prev'], h.button(onClick=next_option)['Next ›']], "
+              "h.p()[str(n) + (' item' if n == 1 else ' items') + ' left.'], [h.li()[x] for x in xs if x]]\n")
+    pretty = bb.code_pretty(source)
+    assert ast.dump(ast.parse(pretty)) == ast.dump(ast.parse(source))
+    assert max(len(line) for line in pretty.split("\n")) <= 100
+    assert "    return h.main(Class='page')[\n        h.h1()['Studio ‹›'],\n" in pretty
+    assert "(' item' if n == 1 else ' items')" in pretty  # parentheses kept where precedence needs them
+
+
+def test_code_pretty_leaves_short_code_and_lone_tuple_children_alone():
+    import ast
+    short = 'def f(x):\n    """F."""\n    return [x, x]\n'
+    assert bb.code_pretty(short) == short
+    lone_tuple = 'def f(h):\n    """F."""\n    return h.div()[(' + ', '.join(f"'item number {i}'" for i in range(12)) + '),]\n'
+    pretty = bb.code_pretty(lone_tuple)
+    assert ast.dump(ast.parse(pretty)) == ast.dump(ast.parse(lone_tuple))

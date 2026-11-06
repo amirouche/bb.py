@@ -4509,6 +4509,160 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
     return code_replace_spans(source_code, spans), resolved
 
 
+CODE_DISPLAY_WIDTH = 100
+
+
+def code_pretty_expression(node: ast.AST, indent: int, width: int = CODE_DISPLAY_WIDTH, start: int = None) -> str:
+    """
+    An expression as source, broken over lines when it does not fit in width.
+
+    Calls, subscripts (h.div()[...] children), lists, tuples, sets and
+    dicts too long for one line put one item per line, indented by four,
+    with a trailing comma (none after a lone subscript item, which would
+    make it a tuple). Comprehensions, conditionals and long `+`, `and` and
+    `or` chains go in parentheses, one part per line. Anything else stays
+    on one line. indent is the indentation of continuation lines; start,
+    the column where the expression begins (indent when not given).
+    """
+    flat = ast.unparse(node)
+    if (indent if start is None else start) + len(flat) <= width and '\n' not in flat:
+        return flat
+    inner = indent + 4
+    pad, end = ' ' * inner, ' ' * indent
+
+    def block(opening: str, items: List[str], closing: str, comma: bool = True) -> str:
+        if not items:
+            return opening + closing
+        lines = (',\n'.join(pad + item for item in items)) + (',' if comma else '')
+        return f"{opening}\n{lines}\n{end}{closing}"
+
+    def item(value: ast.AST) -> str:
+        return code_pretty_expression(value, inner, width)
+
+    loose = (ast.IfExp, ast.Lambda, ast.NamedExpr, ast.BoolOp, ast.Compare, ast.Yield, ast.YieldFrom, ast.Await)
+    tight_ops = (ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.MatMult, ast.Pow)
+
+    def operand(value: ast.AST, first: bool = False) -> str:
+        """An operand of a + chain, in parentheses when it binds looser than +."""
+        text = item(value)
+        if isinstance(value, loose) or isinstance(value, ast.UnaryOp) and isinstance(value.op, ast.Not):
+            return f"({text})"
+        if isinstance(value, ast.BinOp) and not isinstance(value.op, tight_ops) and \
+                not (first and isinstance(value.op, (ast.Add, ast.Sub))):
+            return f"({text})"
+        return text
+
+    def clause(value: ast.AST) -> str:
+        """A part of an if/else, a boolean chain or a for clause, in parentheses when ambiguous."""
+        text = item(value)
+        return f"({text})" if isinstance(value, (ast.IfExp, ast.Lambda, ast.NamedExpr, ast.BoolOp)) else text
+
+    def callee(value: ast.AST) -> str:
+        """What is called or subscripted, in parentheses unless it is a name, attribute, call or subscript."""
+        text = code_pretty_expression(value, indent, width)
+        return text if isinstance(value, (ast.Name, ast.Attribute, ast.Call, ast.Subscript)) else f"({text})"
+
+    if isinstance(node, ast.Call):
+        items = [('*' + item(a.value)) if isinstance(a, ast.Starred) else item(a) for a in node.args]
+        items += [(f"{k.arg}=" if k.arg else '**') + item(k.value) for k in node.keywords]
+        return block(callee(node.func) + '(', items, ')')
+    if isinstance(node, ast.Subscript) and not isinstance(node.slice, ast.Slice):
+        value = callee(node.value)
+        if isinstance(node.slice, ast.Tuple) and node.slice.elts and \
+                not any(isinstance(e, (ast.Slice, ast.Starred)) for e in node.slice.elts):
+            return block(value + '[', [item(e) for e in node.slice.elts], ']')
+        lone = ast.unparse(node.slice)
+        last = value.rsplit('\n', 1)[-1]
+        if len(last) + len(lone) + 2 <= width and '\n' not in lone and not isinstance(node.slice, ast.Tuple):
+            return f"{value}[{lone}]"  # a short lone child stays on the line it closes
+        return block(value + '[', [item(node.slice)], ']', comma=False)
+    if isinstance(node, (ast.List, ast.Set)) and not any(isinstance(e, ast.Starred) for e in node.elts):
+        brackets = '[]' if isinstance(node, ast.List) else '{}'
+        return block(brackets[0], [item(e) for e in node.elts], brackets[1])
+    if isinstance(node, ast.Tuple) and node.elts and not any(isinstance(e, ast.Starred) for e in node.elts):
+        return block('(', [item(e) for e in node.elts], ')')
+    if isinstance(node, ast.Dict):
+        items = [('**' + item(v)) if k is None else f"{item(k)}: {item(v)}" for k, v in zip(node.keys, node.values)]
+        return block('{', items, '}')
+
+    def parts(opening: str, pieces: List[str], closing: str) -> str:
+        """One piece per line inside brackets, no commas: parentheses never change the tree."""
+        return opening + '\n' + '\n'.join(pad + piece for piece in pieces) + '\n' + end + closing
+
+    def clauses(generators: List[ast.comprehension]) -> List[str]:
+        out = []
+        for gen in generators:
+            out.append(f"{'async ' if gen.is_async else ''}for {ast.unparse(gen.target)} in {clause(gen.iter)}")
+            out.extend(f"if {clause(cond)}" for cond in gen.ifs)
+        return out
+
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+        brackets = {ast.ListComp: '[]', ast.SetComp: '{}', ast.GeneratorExp: '()'}[type(node)]
+        return parts(brackets[0], [item(node.elt)] + clauses(node.generators), brackets[1])
+    if isinstance(node, ast.DictComp):
+        return parts('{', [f"{item(node.key)}: {item(node.value)}"] + clauses(node.generators), '}')
+    if isinstance(node, ast.IfExp):
+        return parts('(', [clause(node.body), f"if {clause(node.test)}", f"else {clause(node.orelse)}"], ')')
+    if isinstance(node, ast.BoolOp):
+        word = 'and' if isinstance(node.op, ast.And) else 'or'
+        return parts('(', [clause(node.values[0])] + [f"{word} {clause(v)}" for v in node.values[1:]], ')')
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        chain, current = [], node
+        while isinstance(current, ast.BinOp) and isinstance(current.op, ast.Add):
+            chain.append(current.right)
+            current = current.left
+        chain.append(current)
+        chain.reverse()
+        return parts('(', [operand(chain[0], first=True)] + [f"+ {operand(v)}" for v in chain[1:]], ')')
+    return flat
+
+
+def code_pretty(source_code: str, width: int = CODE_DISPLAY_WIDTH) -> str:
+    """
+    Source as bb shows it: long statements broken over lines, for reading and editing.
+
+    Only display: drafts are parsed back to an AST when saved, so their
+    layout never reaches the stored code or its hash. Simple statements
+    (expressions, return, assignments) longer than width are rebuilt with
+    code_pretty_expression; the result must parse to the same tree, else
+    the source is returned as it was.
+    """
+    try:
+        tree = ast.parse(source_code)
+    except SyntaxError:
+        return source_code
+    lines = source_code.split('\n')
+    replacements = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Expr, ast.Return, ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            continue
+        if node.lineno != node.end_lineno or len(lines[node.lineno - 1]) <= width:
+            continue
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            continue  # a docstring
+        value = getattr(node, 'value', None)
+        if value is None:
+            continue
+        line = lines[node.lineno - 1].encode('utf-8')  # ast columns count UTF-8 bytes
+        head = line[:value.col_offset].decode('utf-8')
+        if line[value.end_col_offset:].strip():
+            continue  # something after the value on the line: leave it
+        statement_indent = len(head) - len(head.lstrip())
+        replacements.append((node.lineno - 1,
+                             head + code_pretty_expression(value, statement_indent, width, start=len(head))))
+    if not replacements:
+        return source_code
+    for index, text in sorted(replacements, reverse=True):
+        lines[index:index + 1] = text.split('\n')
+    pretty = '\n'.join(lines)
+    try:
+        if ast.dump(ast.parse(pretty)) == ast.dump(tree):
+            return pretty
+    except SyntaxError:
+        pass
+    return source_code
+
+
 def code_show_pool_names(source_code: str, lang: str, pinned: List[str] = ()) -> str:
     """
     Write the pool functions a displayed function uses by name.
@@ -5251,7 +5405,7 @@ def code_show(identifier: str):
     try:
         normalized_code = code_replace_docstring(normalized_code, docstring)
         pinned = mapping_load_json(hash_value, lang, selected_hash).get('pinned') or []
-        original_code = code_show_pool_names(code_denormalize(normalized_code, name_mapping, alias_mapping), lang, pinned)
+        original_code = code_pretty(code_show_pool_names(code_denormalize(normalized_code, name_mapping, alias_mapping), lang, pinned))
     except Exception as e:
         print(f"Error: Failed to denormalize code: {e}", file=sys.stderr)
         sys.exit(1)
@@ -5914,7 +6068,7 @@ def edit_load_section(func_hash: str, lang: str, name: str = None) -> Dict[str, 
     normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, section_lang, mapping_hash)
     pinned = mapping_load_json(func_hash, section_lang, mapping_hash).get('pinned') or []
     source = code_denormalize(code_replace_docstring(normalized_code, docstring), name_mapping, alias_mapping)
-    source = code_show_pool_names(source, section_lang, pinned)
+    source = code_pretty(code_show_pool_names(source, section_lang, pinned))
     markdown = mapping_load_markdown(func_hash, section_lang, mapping_hash)
     title = name_mapping.get('_bb_v_0', func_hash[:12])
 
