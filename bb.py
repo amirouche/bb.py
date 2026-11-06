@@ -5533,6 +5533,84 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         helper_report_similar(prepared['hash'], helper_lineage(prepared['hash']) | set(check_hashes))
 
 
+def refactor_save(old_hash: str, new_hash: str, new_code: str, checks: List[str], comment: str,
+                  hash_map: Dict[str, str]) -> str:
+    """
+    Save new_hash as the version after old_hash; returns 'new', 'restored' or 'existing'.
+
+    Code that is already in the pool keeps its hash and its place: an
+    older version of the same lineage is restored (a restore record),
+    another function's code is used as it is. The current mappings are
+    copied, their references renamed through hash_map.
+    """
+    pool_dir = storage_get_pool_directory()
+    functions, restores = storage_scan_functions(), storage_scan_restores()
+    step = lineage_current_step(old_hash, functions, restores)
+    if old_hash in review_load_authored():
+        # A mechanical rewrite of your own function: only its references change
+        review_approve_own([new_hash])
+    if code_detect_schema(new_hash) is not None:
+        if lineage_root(new_hash, functions, restores) == lineage_root(old_hash, functions, restores):
+            restore_save(new_hash, step, comment)
+            return 'restored'
+        return 'existing'
+    object_save(new_hash, new_code, code_create_metadata(parent=step), checks=checks,
+                normalization=object_normalization(old_hash))
+    # Copy the current mappings; superseded ones stay reachable through parent
+    old_dir = pool_dir / old_hash[:2] / old_hash[2:]
+    for lang in sorted(item.name for item in old_dir.iterdir() if item.is_dir() and len(item.name) == 3):
+        for mapping_hash in mapping_leaves(old_hash, lang):
+            docstring, name_mapping, alias_mapping, _ = mapping_load(old_hash, lang, mapping_hash)
+            new_alias_mapping = {hash_map.get(h, h): alias for h, alias in alias_mapping.items()}
+            pins = mapping_load_json(old_hash, lang, mapping_hash).get('pinned') or []
+            mapping_save(new_hash, lang, docstring, name_mapping, new_alias_mapping, comment,
+                         mapping_load_markdown(old_hash, lang, mapping_hash),
+                         f"{old_hash}@{lang}@{mapping_hash}", pinned=[hash_map.get(h, h) for h in pins])
+    return 'new'
+
+
+def lineage_newer_version(func_hash: str) -> Optional[str]:
+    """
+    The one current version of func_hash's lineage, when it is not func_hash.
+
+    A caller may use a function that was edited since: rewriting the
+    version it uses would fork it beside that edit, so refactors and
+    updates build on the current version instead. With several current
+    versions (a fork) there is no single one: None, with a warning.
+    """
+    functions, restores = storage_scan_functions(), storage_scan_restores()
+    successors = lineage_successors(functions, restores)
+    heads, stack, seen = set(), [func_hash], set()
+    while stack:
+        node = stack.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        if successors.get(node):
+            stack.extend(successors[node])
+        else:
+            heads.add(lineage_code(node, restores))
+    if len(heads) > 1:
+        print(f"Warning: {helper_function_label(func_hash)} has {len(heads)} current versions; "
+              f"keeping the one in use ({func_hash[:12]}...)", file=sys.stderr)
+        return None
+    head = heads.pop() if heads else func_hash
+    return head if head != func_hash and head in functions else None
+
+
+def code_hash_rewritten(new_code: str, checks: List[str]) -> str:
+    """The hash of rewritten normalized code: computed without its docstring, with its checks."""
+    tree = ast.parse(new_code)
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            _, func_without_docstring = code_extract_docstring(node)
+            imports = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+            module_without_docstring = ast.Module(body=imports + [func_without_docstring], type_ignores=[])
+            ast.fix_missing_locations(module_without_docstring)
+            return code_compute_function_hash(ast.unparse(module_without_docstring), checks)
+    raise ValueError("no function in code")
+
+
 def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str = None, comment: str = None):
     """
     Replace a dependency hash with another in a function.
@@ -5657,66 +5735,6 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
     # We need to refactor all functions in the chain that depend on from_hash
     hash_map = {from_hash: to_hash}  # Maps old_hash -> new_hash
 
-    def refactor_save(old_hash, new_hash, new_code, checks):
-        """
-        Save new_hash as the version after old_hash; returns 'new', 'restored' or 'existing'.
-
-        Code that is already in the pool keeps its hash and its place: an
-        older version of the same lineage is restored (a restore record),
-        another function's code is used as it is.
-        """
-        functions, restores = storage_scan_functions(), storage_scan_restores()
-        step = lineage_current_step(old_hash, functions, restores)
-        if old_hash in review_load_authored():
-            # A mechanical rewrite of your own function: only its references change
-            review_approve_own([new_hash])
-        if code_detect_schema(new_hash) is not None:
-            if lineage_root(new_hash, functions, restores) == lineage_root(old_hash, functions, restores):
-                restore_save(new_hash, step, comment)
-                return 'restored'
-            return 'existing'
-        object_save(new_hash, new_code, code_create_metadata(parent=step), checks=checks,
-                    normalization=object_normalization(old_hash))
-        # Copy the current mappings; superseded ones stay reachable through parent
-        old_dir = pool_dir / old_hash[:2] / old_hash[2:]
-        for lang in sorted(item.name for item in old_dir.iterdir() if item.is_dir() and len(item.name) == 3):
-            for mapping_hash in mapping_leaves(old_hash, lang):
-                docstring, name_mapping, alias_mapping, _ = mapping_load(old_hash, lang, mapping_hash)
-                new_alias_mapping = {hash_map.get(h, h): alias for h, alias in alias_mapping.items()}
-                pins = mapping_load_json(old_hash, lang, mapping_hash).get('pinned') or []
-                mapping_save(new_hash, lang, docstring, name_mapping, new_alias_mapping, comment,
-                             mapping_load_markdown(old_hash, lang, mapping_hash),
-                             f"{old_hash}@{lang}@{mapping_hash}", pinned=[hash_map.get(h, h) for h in pins])
-        return 'new'
-
-    def newer_version(func_hash):
-        """
-        The one current version of func_hash's lineage, when it is not func_hash.
-
-        The root may use a function that was edited since (saved without
-        --refactor): rewriting the version the root uses would fork it beside
-        that edit, so the refactor builds on the current version instead.
-        With several current versions (a fork) there is no single one: None.
-        """
-        functions, restores = storage_scan_functions(), storage_scan_restores()
-        successors = lineage_successors(functions, restores)
-        heads, stack, seen = set(), [func_hash], set()
-        while stack:
-            node = stack.pop()
-            if node in seen:
-                continue
-            seen.add(node)
-            if successors.get(node):
-                stack.extend(successors[node])
-            else:
-                heads.add(lineage_code(node, restores))
-        if len(heads) > 1:
-            print(f"Warning: {helper_function_label(func_hash)} has {len(heads)} current versions; "
-                  f"refactoring the one the root uses ({func_hash[:12]}...)", file=sys.stderr)
-            return None
-        head = heads.pop() if heads else func_hash
-        return head if head != func_hash and head in functions else None
-
     # Process functions in topological order (dependencies first)
     for dep_hash in all_deps:
         if dep_hash == what_hash:
@@ -5725,7 +5743,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
         if dep_hash in hash_map:
             continue  # what is being replaced (FROM), or already rewritten
         # Build on the function's current version when it was edited since the root saw it
-        base = newer_version(dep_hash) or dep_hash
+        base = lineage_newer_version(dep_hash) or dep_hash
         dep_data = object_load(base)
         dep_code = dep_data['normalized_code']
 
@@ -5762,7 +5780,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
             dep_checks = object_load_checks(dep_hash)
             new_dep_hash = code_compute_function_hash(code_without_docstring, dep_checks)
 
-            refactor_save(dep_hash, new_dep_hash, new_dep_code, dep_checks)
+            refactor_save(dep_hash, new_dep_hash, new_dep_code, dep_checks, comment, hash_map)
 
             # Track this replacement for subsequent functions
             hash_map[dep_hash] = new_dep_hash
@@ -5790,7 +5808,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
     what_checks = object_load_checks(what_hash)
     new_hash = code_compute_function_hash(code_without_docstring, what_checks)
 
-    if refactor_save(what_hash, new_hash, new_normalized_code, what_checks) == 'restored':
+    if refactor_save(what_hash, new_hash, new_normalized_code, what_checks, comment, hash_map) == 'restored':
         print(f'restored: {new_hash}')
     else:
         print(f'new hash: {new_hash}')
