@@ -2775,9 +2775,49 @@ def search_lineage_root(index: Dict[str, Any], func_hash: str) -> str:
     return lineage_root(func_hash, index['functions'], index['restores'])
 
 
+def search_pins(function: Dict[str, Any]) -> Set[str]:
+    """Every reference a function pins on purpose (bb.ref), in any language."""
+    return {pin for mapping in function['mappings'].values() for pin in (mapping.get('pinned') or [])}
+
+
+def search_behind(index: Dict[str, Any]) -> Dict[str, List[str]]:
+    """
+    Current functions that must follow once what they use is brought up to date.
+
+    A function is behind when a current function it uses (not pinned) is
+    out of date or behind itself: saving that one makes a new version this
+    one does not use yet. Maps hash -> the functions it uses that hold it back.
+    """
+    functions, current = index['functions'], index['current']
+    memo: Dict[str, bool] = {}
+
+    def lags(func_hash: str, seen: Tuple[str, ...] = ()) -> bool:
+        if func_hash in memo:
+            return memo[func_hash]
+        if func_hash in seen or func_hash not in functions:
+            return False
+        function = functions[func_hash]
+        pins = search_pins(function)
+        deps = [d for d in code_extract_dependencies(function['normalized_code']) if d not in pins]
+        result = any(d in functions and d not in current for d in deps) or \
+            any(d in current and lags(d, seen + (func_hash,)) for d in deps)
+        memo[func_hash] = result
+        return result
+
+    behind = {}
+    for func_hash in current:
+        function = functions[func_hash]
+        pins = search_pins(function)
+        held = [d for d in code_extract_dependencies(function['normalized_code'])
+                if d not in pins and d in current and lags(d)]
+        if held:
+            behind[func_hash] = held
+    return behind
+
+
 def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
                     head_counts: Dict[Tuple[str, str, str], int], match: List[str] = None,
-                    prefer: List[str] = None) -> Dict[str, Any]:
+                    prefer: List[str] = None, behind: Dict[str, List[str]] = None) -> Dict[str, Any]:
     """Everything search shows about one function, as a dict (also the --json form)."""
     function = index['functions'][func_hash]
     lang = helper_display_language(function, prefer)
@@ -2803,6 +2843,7 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
         'current': is_current,
         'diverged': is_current and forks > 1,
         'outdated': outdated_refs,
+        'behind': (behind or {}).get(func_hash, []),
         'pinned': sorted(set(mapping.get('pinned') or [])),
         'forks': forks,
         'namesakes': namesakes,
@@ -2884,7 +2925,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
         candidates.append((func_hash, match, langs_matched))
 
     approved = review_approvals([h for h, _, _ in candidates])
-    results = [search_describe(index, h, approved, head_counts, match, langs)
+    behind = search_behind(index)
+    results = [search_describe(index, h, approved, head_counts, match, langs, behind)
                for h, match, langs in candidates]
 
     if untested:
@@ -2896,7 +2938,7 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     if unused:
         results = [r for r in results if r['callers'] == 0 and not r['is_check']]
     if outdated:
-        results = [r for r in results if r['outdated']]
+        results = [r for r in results if r['outdated'] or r['behind']]
     if uses_hash:
         results = [r for r in results if r['hash'] in index['importers'].get(uses_hash, [])]
 
@@ -2918,7 +2960,10 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     print()
 
     if not results:
-        print("No matches found" if asked else "Nothing listed")
+        if outdated and not query:
+            print("No matches found: nothing outdated")
+        else:
+            print("No matches found" if asked else "Nothing listed")
         return
 
     for r in results:
@@ -2935,6 +2980,9 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
         if r['outdated']:
             names = ', '.join(helper_function_label(dep) for dep in r['outdated'])
             status.append(f"uses {len(r['outdated'])} out-of-date version(s): {names}")
+        if r['behind']:
+            names = ', '.join(helper_function_label(dep) for dep in r['behind'])
+            status.append(f"behind: uses {names}, which is out of date")
         if r['pinned']:
             status.append(f"{len(r['pinned'])} pinned")
         if r['current'] and r['namesakes']:
@@ -2947,6 +2995,15 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
             print(f"Description: {r['description']}")
         print(f"View: bb show {r['hash']}@{r['lang']}")
         print()
+
+    if outdated:
+        # The functions nothing outdated uses: updating them reaches all the others
+        listed = {r['hash'] for r in results}
+        tops = [r for r in results if not any(user in listed for user in index['importers'].get(r['hash'], []))]
+        if tops:
+            print("To bring them all up to date in one step:")
+            for r in tops:
+                print(f"  bb update {r['name']}@{r['lang']}" if r['name'] else f"  bb update {r['hash']}")
 
 
 def code_strip_bb_imports(code: str) -> str:
@@ -5611,6 +5668,72 @@ def code_hash_rewritten(new_code: str, checks: List[str]) -> str:
     raise ValueError("no function in code")
 
 
+def command_update(identifier: str, comment: str = None):
+    """
+    Bring a function and everything it uses up to date, in one step.
+
+    Every function reached from NAME that uses a version which is no
+    longer current is rewritten to use the current one, deepest first,
+    then NAME itself: what `bb search --outdated` lists, paid at once,
+    as if each were edited and saved unchanged. Pinned references
+    (written as bb.ref) are kept. A fork (several current versions) is
+    left as it is, with a warning. One comment goes on every new version.
+
+    ```
+    bb update app@eng -m "use the new layout everywhere"
+    ```
+    """
+    root = helper_resolve_to_hash(identifier)
+    if comment is None:
+        try:
+            comment = input("Comment (press Enter to skip): ").strip()
+        except EOFError:
+            comment = ""
+    done: Dict[str, str] = {}
+    rewritten: List[Tuple[str, str]] = []
+
+    def update(func_hash: str, stack: Tuple[str, ...] = ()) -> str:
+        """The up-to-date hash for func_hash (itself when nothing changes)."""
+        if func_hash in done:
+            return done[func_hash]
+        if func_hash in stack or code_detect_schema(func_hash) is None:
+            return func_hash
+        base = lineage_newer_version(func_hash) or func_hash
+        code = object_load(base)['normalized_code']
+        pins: Set[str] = set()
+        for lang in storage_list_languages(base):
+            for mapping_hash in mapping_leaves(base, lang):
+                pins.update(mapping_load_json(base, lang, mapping_hash).get('pinned') or [])
+        swaps = {}
+        for dep in code_extract_dependencies(code):
+            if dep in pins:
+                continue
+            new_dep = update(dep, stack + (func_hash,))
+            if new_dep != dep:
+                swaps[dep] = new_dep
+        result = base
+        if swaps:
+            new_code = ast.unparse(code_swap_refs(ast.parse(code), swaps))
+            checks = object_load_checks(base)
+            result = code_hash_rewritten(new_code, checks)
+            if result != base:
+                with contextlib.redirect_stdout(io.StringIO()):  # its own Hash: lines would mislead
+                    refactor_save(base, result, new_code, checks, comment, swaps)
+                rewritten.append((base, result))
+        done[func_hash] = done[base] = result
+        return result
+
+    new_root = update(root)
+    if not rewritten:
+        print(f"{helper_function_label(root)} is up to date: nothing to save")
+        return
+    print(f"Updated {len(rewritten)} function(s), deepest first:")
+    for old, new in rewritten:
+        print(f"  {helper_function_label(new)}: {old[:12]}... -> {new[:12]}...")
+    print("Drafts open on these functions are now stale: write them again.")
+    print(f"Hash: {new_root}")
+
+
 def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str = None, comment: str = None):
     """
     Replace a dependency hash with another in a function.
@@ -6383,6 +6506,7 @@ def command_skills():
         'caller': command_caller,
         'tree': command_tree,
         'refactor': command_refactor,
+        'update': command_update,
         'compile': command_compile,
     }
 
@@ -6670,6 +6794,10 @@ def _build_parser():
     tree_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
 
     # Refactor command
+    update_parser = subparsers.add_parser('update', help='Bring a function and everything it uses up to date')
+    update_parser.add_argument('identifier', help='Function to update (name@lang or hash)')
+    update_parser.add_argument('--comment', '-m', default=None, help='Comment for the new versions (asked when omitted)')
+
     refactor_parser = subparsers.add_parser('refactor', help='Replace a dependency in a function')
     refactor_parser.add_argument('what', help='Function hash to modify')
     refactor_parser.add_argument('from_hash', metavar='from', help='Dependency hash to replace')
@@ -6794,6 +6922,8 @@ def main():
         command_caller(args.identifier, as_json=args.as_json)
     elif args.command == 'tree':
         command_tree(args.identifier, as_json=args.as_json)
+    elif args.command == 'update':
+        command_update(args.identifier, comment=args.comment)
     elif args.command == 'refactor':
         command_refactor(args.what, args.from_hash, args.to_hash, args.at_hash if hasattr(args, 'at_hash') else None,
                          comment=args.comment)
