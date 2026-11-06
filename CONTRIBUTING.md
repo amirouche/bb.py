@@ -77,7 +77,7 @@ uv run python bb.py add parse_frontmatter_eng.py@eng  # leaf — note the hash
 uv run python bb.py add render_post_eng.py@eng         # depends on leaves — note the hash
 ```
 
-A function can import pool functions by name (`from bb.pool import parse_frontmatter`), resolved when you `bb add` it, so add leaves first.
+A function names pool functions with `import bb` and `parse_frontmatter = bb.latest("parse_frontmatter")`, resolved when you `bb add` it, so add leaves first.
 
 ## Using `bb refactor`
 

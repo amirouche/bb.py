@@ -46,7 +46,7 @@ def test_a_name_resolves_to_its_one_current_version_and_follows_edits(tmp_path):
     pool = Pool(tmp_path)
     first = hash_of(pool.edit('double', 'def double(n):\n    """Twice n."""\n    return 2 * n\n'))
 
-    saved = pool.edit('quadruple', 'from bb.pool import double\n\n\ndef quadruple(n):\n    """Four times n."""\n'
+    saved = pool.edit('quadruple', 'import bb\ndouble = bb.latest("double")\n\n\ndef quadruple(n):\n    """Four times n."""\n'
                       '    return double(double(n))\n')
     assert saved.returncode == 0, saved.stderr
     assert f'Import: double -> {first}' in saved.stdout
@@ -54,11 +54,11 @@ def test_a_name_resolves_to_its_one_current_version_and_follows_edits(tmp_path):
     assert pool.run(four_times, 3) == '12'
     stored = next((tmp_path / 'bb' / 'pool').glob(f'{four_times[:2]}/{four_times[2:]}/object.json')).read_text()
     assert f"bb.ref('{first}')" in stored  # stored by hash
-    assert 'from bb.pool import double\n' in pool.bb('show', 'quadruple@eng').stdout  # shown by name
+    assert "double = bb.latest('double')" in pool.bb('show', 'quadruple@eng').stdout  # shown by name
 
     # A new version of double: the name now resolves to it; quadruple keeps the version it was saved with
     second = hash_of(pool.edit('double', 'def double(n):\n    """Twice n."""\n    return n + n + 0\n'))
-    again = pool.edit('octuple', 'from bb.pool import double as twice\n\n\ndef octuple(n):\n    """Eight times n."""\n'
+    again = pool.edit('octuple', 'import bb\ntwice = bb.latest("double")\n\n\ndef octuple(n):\n    """Eight times n."""\n'
                       '    return twice(twice(twice(n)))\n')
     assert f'Import: double -> {second}' in again.stdout and pool.run(hash_of(again), 1) == '8'
     # double now names another version: quadruple shows the one it uses, pinned
@@ -69,7 +69,7 @@ def test_two_unrelated_functions_with_one_name_are_refused_with_both_listed(tmp_
     pool = Pool(tmp_path)
     one = hash_of(pool.add('helper', 'def helper(n):\n    """Plus one."""\n    return n + 1\n'))
     two = hash_of(pool.add('helper', 'def helper(n):\n    """Times ten."""\n    return n * 10\n'))
-    refused = pool.edit('user', 'from bb.pool import helper\n\n\ndef user(n):\n    """Use helper."""\n'
+    refused = pool.edit('user', 'import bb\nhelper = bb.latest("helper")\n\n\ndef user(n):\n    """Use helper."""\n'
                         '    return helper(n)\n')
     assert refused.returncode == 1
     assert '2 current versions' in refused.stderr and one in refused.stderr and two in refused.stderr
@@ -80,8 +80,8 @@ def test_two_unrelated_functions_with_one_name_are_refused_with_both_listed(tmp_
 
 def test_an_unknown_name_is_refused_by_add_and_edit(tmp_path):
     pool = Pool(tmp_path)
-    added = pool.add('user', 'from bb.pool import nowhere\n\n\ndef user(n):\n    """Use nowhere."""\n    return nowhere(n)\n')
+    added = pool.add('user', 'import bb\nnowhere = bb.latest("nowhere")\n\n\ndef user(n):\n    """Use nowhere."""\n    return nowhere(n)\n')
     assert added.returncode == 1 and "no function called 'nowhere' in eng" in added.stderr
-    edited = pool.edit('user', 'from bb.pool import nowhere\n\n\ndef user(n):\n    """Use nowhere."""\n'
+    edited = pool.edit('user', 'import bb\nnowhere = bb.latest("nowhere")\n\n\ndef user(n):\n    """Use nowhere."""\n'
                        '    return nowhere(n)\n')
     assert edited.returncode == 1 and "no function called 'nowhere'" in edited.stderr

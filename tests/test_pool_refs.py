@@ -41,15 +41,15 @@ def test_refs_are_loaded_and_swapped(mock_bb_dir):
 def test_a_function_named_object_something_imports_by_name(tmp_path):
     pool = Pool(tmp_path)
     page = hash_of(pool.edit('object_page', 'def object_page(n):\n    """A page."""\n    return n + 1\n'))
-    saved = pool.edit('app', 'from bb.pool import object_page\n\n\ndef app(n):\n    """The app."""\n'
+    saved = pool.edit('app', 'import bb\nobject_page = bb.latest("object_page")\n\n\ndef app(n):\n    """The app."""\n'
                       '    return object_page(n)\n')
     assert saved.returncode == 0, saved.stderr
     assert f'Import: object_page -> {page}' in saved.stdout
     assert pool.run(hash_of(saved), 1) == '2'
 
 
-def test_a_pool_import_inside_the_function_is_refused(tmp_path):
+def test_from_bb_pool_import_is_refused(tmp_path):
     pool = Pool(tmp_path)
     pool.edit('double', 'def double(n):\n    """Twice n."""\n    return 2 * n\n')
-    saved = pool.edit('app', 'def app(n):\n    """The app."""\n    from bb.pool import double\n    return double(n)\n')
-    assert saved.returncode == 1 and 'pool imports go at the top of the file' in saved.stderr
+    saved = pool.edit('app', 'from bb.pool import double\n\n\ndef app(n):\n    """The app."""\n    return double(n)\n')
+    assert saved.returncode == 1 and '`from bb.pool import ...` is gone' in saved.stderr

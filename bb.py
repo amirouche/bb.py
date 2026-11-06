@@ -26,20 +26,22 @@ Writing functions for the pool:
 - One function per file (def or async def), with its imports and, if
   you like, a module docstring. Anything else at module level (classes,
   constants, variables, code) is refused: put data in functions.
-- Use another pool function by importing it by name, at the top of the
-  file (or name an exact version by its hash):
+- Use another pool function through `import bb`: bb.latest("name") names
+  it, bb.ref("<hash>") names an exact version (`from bb.pool import` is
+  gone):
 
-      from bb.pool import parse_amount        # by name
+      import bb
 
-      import bb                               # an exact version, by hash
-      parse_amount = bb.ref("<hash>")
+      parse_amount = bb.latest("parse_amount")   # by name
+      parse_amount = bb.ref("<hash>")            # or an exact version
 
   A name is resolved when you save (bb add, bb edit), in the language you
   save in, to its one current version (the end of its lineage of edits,
   never by date); the stored code holds that hash, so the function keeps
   that version. A name with several current versions (two functions
-  called alike, or a fork) is refused: import one of them by hash
-  (`bb search name` shows hashes). So add helpers before the functions
+  called alike, or a fork) is refused: name one of them with bb.ref
+  (`bb search name` shows hashes). bb.latest is never looked up when the
+  function runs. So add helpers before the functions
   that use them. Stored code refers to each one as bb.ref("<hash>"); bb
   show and bb edit display it by name when the name picks that version.
 - Arguments are positional: bb stores parameters as placeholders
@@ -109,8 +111,29 @@ BB_IMPORT_PREFIX = "object_"
 NORMALIZATION_VERSION = 4
 
 _HASH_RE = re.compile(r'^[0-9a-f]{64}$')
-BB_HASH_IMPORT_HINT = ("importing by hash (from bb.pool import object_<hash>) is gone: "
-                       "write `import bb` and `NAME = bb.ref(\"<hash>\")`, or import by name")
+BB_POOL_IMPORT_HINT = ("`from bb.pool import ...` is gone: write `import bb`, then "
+                       "`NAME = bb.latest(\"NAME\")` (by name) or `NAME = bb.ref(\"<hash>\")` (an exact version)")
+
+
+def code_latest_name(node: ast.AST) -> Optional[str]:
+    """The name in a bb.latest("name") call, or None when node is not one."""
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'latest'
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == 'bb'
+            and len(node.args) == 1 and not node.keywords and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str) and node.args[0].value.isidentifier()):
+        return node.args[0].value
+    return None
+
+
+def code_replace_spans(source_code: str, spans: List[Tuple[ast.AST, str]]) -> str:
+    """Replace the source of each node with its text (AST columns count UTF-8 bytes)."""
+    lines = source_code.splitlines(keepends=True)
+    for node, text in sorted(spans, key=lambda span: (span[0].lineno, span[0].col_offset), reverse=True):
+        first = lines[node.lineno - 1].encode('utf-8')
+        last = lines[node.end_lineno - 1].encode('utf-8')
+        merged = first[:node.col_offset].decode('utf-8') + text + last[node.end_col_offset:].decode('utf-8')
+        lines[node.lineno - 1:node.end_lineno] = [merged]
+    return ''.join(lines)
 
 
 def code_ref_hash(node: ast.AST) -> Optional[str]:
@@ -375,8 +398,8 @@ def code_collect_pool_refs(tree: ast.Module) -> Tuple[ast.Module, Dict[str, str]
     """
     Take the pool functions a module names out of its top level.
 
-    They are named by `alias = bb.ref("<hash>")` (an import by name is
-    resolved to this form first, see code_resolve_pool_names) or used as
+    They are named by `alias = bb.ref("<hash>")` (bb.latest("name") is
+    resolved to bb.ref first, see code_resolve_pool_names) or used as
     bb.ref("<hash>") directly; `import bb` is dropped, as the loader
     provides bb. Every use is then
     written bb.ref("<hash>") (see code_replace_bb_calls).
@@ -400,9 +423,7 @@ def code_collect_pool_refs(tree: ast.Module) -> Tuple[ast.Module, Dict[str, str]
     for node in tree.body:
         if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
             names = ', '.join(alias.name for alias in node.names)
-            if any(code_pool_import_hash(alias.name) for alias in node.names):
-                raise ValueError(f"from bb.pool import {names}: {BB_HASH_IMPORT_HINT}")
-            raise ValueError(f"from bb.pool import {names}: not resolved to a pool function")
+            raise ValueError(f"from bb.pool import {names}: {BB_POOL_IMPORT_HINT}")
         if isinstance(node, ast.Import) and [(a.name, a.asname) for a in node.names] == [('bb', None)]:
             continue
         if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
@@ -414,12 +435,14 @@ def code_collect_pool_refs(tree: ast.Module) -> Tuple[ast.Module, Dict[str, str]
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == 'bb':
+            if node.attr == 'latest':
+                raise ValueError(f"{ast.unparse(node)}: bb.latest is resolved when saving (bb add, bb edit)")
             if node.attr != 'ref':
-                raise ValueError(f"bb.{node.attr}: bb only provides bb.ref(\"<hash>\")")
+                raise ValueError(f"bb.{node.attr}: bb provides bb.latest(\"NAME\") and bb.ref(\"<hash>\")")
         elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'ref'
               and isinstance(node.func.value, ast.Name) and node.func.value.id == 'bb' and code_ref_hash(node) is None):
             raise ValueError(f"{ast.unparse(node)}: bb.ref takes one pool function's hash, as a string "
-                             f"(import by name with `from bb.pool import NAME`)")
+                             f"(by name: bb.latest(\"NAME\"))")
         elif ((isinstance(node, ast.Name) and node.id == 'bb' and not isinstance(node.ctx, ast.Load))
               or (isinstance(node, ast.arg) and node.arg == 'bb')):
             raise ValueError("the name bb is reserved for bb.ref: give this variable another name")
@@ -3122,23 +3145,21 @@ def code_imports_bb(tree: ast.Module) -> bool:
 
 def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") -> Tuple[str, Dict[str, str]]:
     """
-    Turn imports of pool functions by name into references by hash.
+    Turn pool functions named by name into references by hash.
 
-    `from bb.pool import helper` (or `... import helper as h`) names
-    `helper@lang`, resolved by lineage to its single current version (the
-    one no other function names as its parent); the import becomes
-    `helper = bb.ref("<hash>")`, and `import bb` is added. Stored code
-    always holds a hash, so a function keeps the version it was saved
-    with. Never resolved by time: a name with several current versions
-    (two unrelated functions, or a fork) or none is refused, and so are
-    the old imports by hash (from bb.pool import object_<hash>), pool
-    imports inside the function, and bb.ref without `import bb`.
+    bb.latest("helper") names `helper@lang`, resolved by lineage to its
+    single current version (the one no other function names as its
+    parent), and becomes bb.ref("<hash>"): stored code always holds a
+    hash, so a function keeps the version it was saved with. Never
+    resolved by time: a name with several current versions (two unrelated
+    functions, or a fork) or none is refused, and so are `from bb.pool
+    import ...` (gone) and bb.latest or bb.ref without `import bb`.
 
     Returns:
-        (source with every pool function named by bb.ref, {name: hash} resolved)
+        (source with every bb.latest turned into bb.ref, {name: hash} resolved)
 
     Raises:
-        ValueError: naming each import that does not resolve to one version
+        ValueError: naming each reference that does not resolve to one version
     """
     try:
         tree = ast.parse(source_code)
@@ -3146,56 +3167,40 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
         return source_code, {}  # code_prepare_source reports it
     resolved: Dict[str, str] = {}
     problems: List[str] = []
-    replacements = []
-    top = {id(node) for node in tree.body}
+    spans = []
     if code_uses_bb(tree) and not code_imports_bb(tree):
-        problems.append("  bb.ref is used without `import bb`: add it at the top of the file")
+        problems.append("  bb.latest and bb.ref need `import bb` at the top of the file")
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool' and id(node) not in top:
-            problems.append(f"  line {node.lineno}: {ast.unparse(node)}: pool imports go at the top of the "
-                            f"file, before the def")
-    for node in tree.body:
-        if not (isinstance(node, ast.ImportFrom) and node.module == 'bb.pool'):
+        if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
+            problems.append(f"  line {node.lineno}: {BB_POOL_IMPORT_HINT}")
+        name = code_latest_name(node)
+        if name is None:
             continue
-        bindings = []
-        for alias in node.names:
-            if code_pool_import_hash(alias.name):
-                problems.append(f"  line {node.lineno}: {BB_HASH_IMPORT_HINT}")
-                continue
-            heads, functions = helper_find_heads_by_name(alias.name, lang)
-            if len(heads) == 1:
-                resolved[alias.name] = heads[0]
-                bindings.append(f"{alias.asname or alias.name} = bb.ref({heads[0]!r})")
-            elif not heads:
-                problems.append(f"  {alias.name}: no function called '{alias.name}' in {lang}")
-            else:
-                problems.append(f"  {alias.name}: {len(heads)} current versions; name one by its hash "
-                                f"(`import bb`, then `{alias.asname or alias.name} = bb.ref(\"<hash>\")`):")
-                problems += [f"    {helper_describe_function(functions[h], lang)}" for h in heads]
-        replacements.append((node.lineno, node.end_lineno, '\n'.join(bindings)))
+        heads, functions = helper_find_heads_by_name(name, lang)
+        if len(heads) == 1:
+            resolved[name] = heads[0]
+            spans.append((node, f"bb.ref({heads[0]!r})"))
+        elif not heads:
+            problems.append(f"  line {node.lineno}: no function called '{name}' in {lang}")
+        else:
+            problems.append(f"  line {node.lineno}: '{name}' has {len(heads)} current versions; "
+                            f"name one with bb.ref(\"<hash>\"):")
+            problems += [f"    {helper_describe_function(functions[h], lang)}" for h in heads]
     if problems:
-        raise ValueError(f"{where}: pool imports must be at the top of the file and name one current version:\n"
-                         + '\n'.join(problems))
-    if not replacements:
-        return source_code, resolved
-    lines = source_code.splitlines(keepends=True)
-    for start, end, text in sorted(replacements, reverse=True):
-        lines[start - 1:end] = [text + '\n'] if text else []
-    if not code_imports_bb(tree):
-        first = replacements[0][0]
-        lines[first - 1:first - 1] = ['import bb\n']
-    return ''.join(lines), resolved
+        raise ValueError(f"{where}: pool functions must be named by bb.latest(\"NAME\") with one current "
+                         f"version, or by bb.ref(\"<hash>\"):\n" + '\n'.join(problems))
+    return code_replace_spans(source_code, spans), resolved
 
 
 def code_show_pool_names(source_code: str, lang: str) -> str:
     """
-    Write the pool functions a displayed function uses as imports by name.
+    Write the pool functions a displayed function uses by name where possible.
 
     `alias = bb.ref("<hash>")` (and the older `from bb.pool import
-    object_<hash> as alias`) becomes `from bb.pool import NAME` (or
-    `... import NAME as alias`) when NAME@lang has exactly that hash as its
-    one current version, so saving it back picks the same function.
-    Otherwise it stays pinned, as `alias = bb.ref("<hash>")`.
+    object_<hash> as alias`) becomes `alias = bb.latest("NAME")` when
+    NAME@lang has exactly that hash as its one current version, so saving
+    it back picks the same function. Otherwise it stays pinned, as
+    `alias = bb.ref("<hash>")`. Either way the code has `import bb`.
     """
     try:
         tree = ast.parse(source_code)
@@ -3203,13 +3208,12 @@ def code_show_pool_names(source_code: str, lang: str) -> str:
         return source_code
 
     def as_text(func_hash, alias):
-        mapping_lang = lang if lang in storage_list_languages(func_hash) else None
         name = None
-        if mapping_lang:
-            mapping = mapping_load_json(func_hash, mapping_lang, mapping_select(func_hash, mapping_lang))
+        if lang in storage_list_languages(func_hash):
+            mapping = mapping_load_json(func_hash, lang, mapping_select(func_hash, lang))
             name = mapping.get('name_mapping', {}).get('_bb_v_0')
         if name and helper_find_heads_by_name(name, lang)[0] == [func_hash]:
-            return f"from bb.pool import {name}" + (f" as {alias}" if alias != name else "")
+            return f"{alias} = bb.latest({name!r})"
         return f"{alias} = bb.ref({func_hash!r})"
 
     replacements = []
@@ -3221,19 +3225,12 @@ def code_show_pool_names(source_code: str, lang: str) -> str:
               and all(code_pool_import_hash(a.name) and a.asname for a in node.names)):
             replacements.append((node.lineno, node.end_lineno, '\n'.join(
                 as_text(code_pool_import_hash(a.name), a.asname) for a in node.names)))
-    pinned = any(text.endswith(')') for _, _, text in replacements)
-    if not pinned:
-        # Nothing pinned is left: the `import bb` that came with the bindings goes too
-        replacements += [(node.lineno, node.end_lineno, None) for node in tree.body
-                         if isinstance(node, ast.Import) and [(a.name, a.asname) for a in node.names] == [('bb', None)]
-                         and not code_uses_bb(ast.Module(body=[n for n in tree.body if not (
-                             isinstance(n, ast.Assign) and code_ref_hash(n.value))], type_ignores=[]))]
-    elif not code_imports_bb(tree):
+    if replacements and not code_imports_bb(tree):
         first = min(start for start, _, _ in replacements)
         replacements.append((first, first - 1, 'import bb'))
     lines = source_code.splitlines(keepends=True)
     for start, end, text in sorted(replacements, key=lambda r: (r[0], r[1]), reverse=True):
-        lines[start - 1:end] = [text + '\n'] if text is not None else []
+        lines[start - 1:end] = [text + '\n']
     return ''.join(lines)
 
 
@@ -4995,7 +4992,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         existing = edit_load_section(prepared['hash'], lang)['title']
         if existing != edit_section_name(section, prepared):
             print(f"Error: this code is already in the pool as {existing} ({prepared['hash']}). Nothing saved: "
-                  f"use that function (from bb.pool import {existing}), or give "
+                  f"use that function (bb.latest(\"{existing}\")), or give "
                   f"{edit_section_name(section, prepared)} code of its own.", file=sys.stderr)
             sys.exit(1)
 

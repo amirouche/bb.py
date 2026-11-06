@@ -4,9 +4,9 @@ from tests.test_import_by_name import Pool, hash_of
 
 def chain(pool):
     pool.edit('double', 'def double(n):\n    """Twice n."""\n    return 2 * n\n')
-    pool.edit('quadruple', 'from bb.pool import double\n\n\ndef quadruple(n):\n    """Four times n."""\n'
+    pool.edit('quadruple', 'import bb\ndouble = bb.latest("double")\n\n\ndef quadruple(n):\n    """Four times n."""\n'
               '    return double(double(n))\n')
-    return hash_of(pool.edit('app', 'from bb.pool import quadruple\n\n\ndef app(n):\n    """The app."""\n'
+    return hash_of(pool.edit('app', 'import bb\nquadruple = bb.latest("quadruple")\n\n\ndef app(n):\n    """The app."""\n'
                              '    return quadruple(n) + 1\n'))
 
 

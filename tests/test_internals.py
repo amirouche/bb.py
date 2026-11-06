@@ -614,7 +614,8 @@ def test_normalize_refuses_imports_by_hash():
 @pytest.mark.parametrize("code, message", [
     ("def foo(bb):\n    return bb\n", "reserved"),
     ("def foo(x):\n    return bb.ref(x)(1)\n", "bb.ref takes one"),
-    ("def foo(x):\n    return bb.pool\n", "bb only provides"),
+    ("def foo(x):\n    return bb.pool\n", "bb provides bb.latest"),
+    ("def foo(x):\n    return bb.latest('double')(x)\n", "resolved when saving"),
 ])
 def test_normalize_refuses_other_uses_of_bb(code, message):
     with pytest.raises(ValueError, match=message):
