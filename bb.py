@@ -4623,7 +4623,7 @@ def helper_ask_yes(question: str) -> bool:
 
 
 def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
-                 refactor: str = None, at: str = None):
+                 refactor: str = None, at: str = None, file: str = None):
     """
     Edit a function and its checks as one markdown file, then save a fork.
 
@@ -4649,6 +4649,12 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     ROOT must use the edited function. Without --refactor, functions using
     it keep the version they were saved with.
 
+    With FILE, no editor opens: when FILE is missing, the edit file is
+    written there and nothing is saved; when it exists, it is saved (and
+    rewritten to the saved version, so editing can go on in it). A FILE
+    drafted from another version than the current one is refused, so a
+    stale draft never undoes changes made since.
+
     A name no function has yet (in any language) starts a new function
     from a template; it is saved with no parent. The language is then
     required, as in `bb edit slugify@eng`.
@@ -4659,6 +4665,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     bb edit compute_pi@eng
     bb edit compute_pi@eng --comment "Faster convergence"
     bb edit slugify@eng          # a new function
+    bb edit slugify@eng slugify.md                # write slugify.md; run again to save it
     bb edit parse_amount@eng --refactor app@eng   # and update app to it
     ```
     """
@@ -4707,15 +4714,48 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         original_checks.append(edit_load_section(check_hash, lang))
 
     text = markdown_render_edit(original['title'], original, original_checks)
-    # Kept next to the pool, so an abandoned edit is easy to find again
-    edit_dir = storage_get_bb_directory() / 'edit'
-    edit_dir.mkdir(parents=True, exist_ok=True)
-    fd, path = tempfile.mkstemp(prefix=f"{original['title']}-", suffix='.md', dir=edit_dir)
-    with os.fdopen(fd, 'w', encoding='utf-8') as f:
-        f.write(text)
+    if file is not None:
+        if not os.path.exists(file):
+            # First call: write the edit file, save nothing
+            with open(file, 'w', encoding='utf-8') as f:
+                f.write(text)
+            print(f"Wrote {file}. Change it, then run the same command again to save it.")
+            return
+        path = file
+    else:
+        # Kept next to the pool, so an abandoned edit is easy to find again
+        edit_dir = storage_get_bb_directory() / 'edit'
+        edit_dir.mkdir(parents=True, exist_ok=True)
+        fd, path = tempfile.mkstemp(prefix=f"{original['title']}-", suffix='.md', dir=edit_dir)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(text)
+
+    def discard():
+        """Remove bb's own temporary file; a file the user named is theirs."""
+        if file is None:
+            os.unlink(path)
 
     # Edit until the file is usable and every check passes
-    while True:
+    while file is not None:
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                plan = edit_prepare(f.read(), lang, unreviewed)
+            passed = check_report(plan['results'])
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            passed = False
+        if not passed:
+            print(f"Nothing saved; {file} is unchanged.", file=sys.stderr)
+            sys.exit(1)
+        drafted_from = plan['implementation'][0]['parent']
+        if drafted_from != hash_value:
+            what = f"the current version of {name} is {hash_value}" if hash_value else f"{name} has no version"
+            since = f"{file} was drafted from {drafted_from}" if drafted_from else f"{file} has no bb:parent marker"
+            print(f"Error: {since}, but {what}. Nothing saved: write a new draft with "
+                  f"bb edit {identifier} NEW_FILE and make your change there.", file=sys.stderr)
+            sys.exit(1)
+        break
+    while file is None:
         try:
             helper_run_editor(path)
             with open(path, 'r', encoding='utf-8') as f:
@@ -4734,7 +4774,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
 
     section, prepared = plan['implementation']
     if hash_value is None and section['source'].strip() == original['source'].strip() and not plan['checks']:
-        os.unlink(path)
+        discard()
         print("Nothing saved: the edited file still holds the template, so no function was created.")
         return
     # Without a marker, the implementation still descends from the edited function
@@ -4757,7 +4797,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
 
     if (prepared['hash'] == hash_value and unchanged(section, prepared)
             and all(unchanged(s, p) for s, p in plan['checks'])):
-        os.unlink(path)
+        discard()
         print("No changes.")
         return
 
@@ -4781,7 +4821,13 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
                           unchanged=unchanged(section, prepared),
                           mapping_parent=loaded_mappings.get(section['parent'], ""))
 
-    os.unlink(path)
+    discard()
+    if file is not None:
+        # The file now drafts from the saved version, so editing can go on in it
+        saved = edit_load_section(prepared['hash'], lang)
+        saved_checks = [edit_load_section(c, lang) for c in object_load_checks(prepared['hash'])]
+        with open(file, 'w', encoding='utf-8') as f:
+            f.write(markdown_render_edit(saved['title'], saved, saved_checks))
 
     print(f"Hash: {prepared['hash']}")
     if hash_value and prepared['hash'] != hash_value:
@@ -5875,6 +5921,8 @@ def _build_parser():
     # Edit command
     edit_parser = subparsers.add_parser('edit', help='Edit a function and its checks, then save a fork')
     edit_parser.add_argument('identifier', help='Hash or name, with optional @lang (e.g., compute_pi@eng)')
+    edit_parser.add_argument('file', nargs='?', default=None,
+                             help='Edit file instead of $EDITOR: written when missing, saved from when present')
     edit_parser.add_argument('--comment', '-m', default=None, help='Comment for the new version (asked when omitted)')
     edit_parser.add_argument('--refactor', metavar='ROOT', default=None,
                              help='Then update ROOT (a function using it, e.g. app@eng) to the new version')
@@ -6010,7 +6058,7 @@ def main():
         command_run(args.identifier, func_args=args.func_args)
     elif args.command == 'edit':
         command_edit(args.identifier, comment=args.comment, unreviewed=args.unreviewed,
-                     refactor=args.refactor, at=args.at)
+                     refactor=args.refactor, at=args.at, file=args.file)
     elif args.command == 'review':
         command_review(args.identifier, comment=args.comment)
     elif args.command == 'reviews':
