@@ -102,6 +102,60 @@ Writing functions for the pool:
   - After a save, bb rewrites FILE in stored form (single quotes, its own
     line breaks, `# bb:` notes) so you can go on editing it: read it again
     before changing it rather than editing the text you remember.
+  - The documentation is the prose under `## Implementation`, before the
+    code (per language, outside the hash). Each check is a `###` section
+    whose function takes the implementation as its only argument and
+    returns True when it passes; checks run when you save and are part of
+    the definition (changing them forks the function). A check does not
+    import what it tests, so the same check can test a fork or another
+    function with the same contract. Checks are worth it for central
+    functions (many callers, see `bb caller`) and tricky logic, less for
+    plain views. A file with every part (bb adds the bb:parent line):
+
+      # parse_amount
+
+      ## Implementation
+
+      Turns what a user typed in a price or quantity field into a number of
+      cents. Every form that takes money calls it, so it accepts the usual
+      ways people type amounts ("12", "12.5", "12,50", " 1 200.00 ") and
+      returns None for anything else, never raising: the caller shows the
+      form error.
+
+      ```python def
+      def parse_amount(text):
+          \"\"\"The amount typed in text, in cents, or None when it is not an amount.\"\"\"
+          cleaned = text.strip().replace(' ', '').replace(',', '.')
+          if not cleaned or cleaned.count('.') > 1:
+              return None
+          whole, _, cents = cleaned.partition('.')
+          if not whole.isdigit() or (cents and (not cents.isdigit())) or len(cents) > 2:
+              return None
+          return int(whole) * 100 + int(cents.ljust(2, '0') or 0)
+      ```
+
+      ## Checks
+
+      ### check_rejects_garbage
+
+      ```python def
+      def check_rejects_garbage(parse):
+          \"\"\"Anything that is not an amount gives None instead of raising.\"\"\"
+          return all((parse(text) is None for text in ['', 'abc', '1.2.3', '-5', '1.999']))
+      ```
+
+      ### check_reads_common_forms
+
+      ```python def
+      def check_reads_common_forms(parse):
+          \"\"\"Whole, decimal point, decimal comma and spaced thousands all read right.\"\"\"
+          return parse('12') == 1200 and parse('12.5') == 1250 and (parse('12,50') == 1250) and (parse(' 1 200.00 ') == 120000)
+      ```
+
+- Context: `bb tree name@lang` shows what a function uses, down to the
+  leaves, with each one's docstring, and marks what is `[out of date]`,
+  `[behind]`, `[pinned]` or `[not yet translated ...]`; `bb caller
+  name@lang` shows what uses it. Look at both before changing a function.
 
 Functions are stored in $BB_DIRECTORY/pool/ (default: ~/.local/bb/pool/):
 pool/functions/ holds JSON objects with the normalized code, pool/mappings/
