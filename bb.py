@@ -48,6 +48,12 @@ Writing functions for the pool:
   saved with until someone edits it (its debt, listed by bb search
   --outdated and noted in drafts as `# bb: out of date`). What you write
   with bb.ref stays pinned across edits.
+- Checks run the function they test, with what it imports from the pool.
+  bb runs only code you have read: functions you saved yourself (bb add,
+  bb edit, recorded in your private state) and functions you approved
+  with bb review. So a check may test a function that uses your own pool
+  functions; one that uses someone else's needs a bb review first.
+  Running a program (bb run) or serving it still requires bb review.
 - Arguments are positional: bb stores parameters as placeholders
   (_bb_v_0, ...), so a keyword cannot reach them. Call pool functions,
   the function itself and functions defined inside it without keywords
@@ -1592,6 +1598,39 @@ def review_list_shared(func_hash: str) -> List[Dict[str, Any]]:
                         record['status'] = 'untrusted'
         reviews.append(record)
     return reviews
+
+
+def review_authored_path() -> Path:
+    """Path of the file listing the functions you saved yourself (private state)."""
+    return storage_get_state_directory() / 'authored.json'
+
+
+def review_load_authored() -> Set[str]:
+    """Hashes of the functions you saved with bb add or bb edit (or a refactor of them)."""
+    path = review_authored_path()
+    try:
+        return set(json.loads(path.read_text(encoding='utf-8')).get('authored', []))
+    except (OSError, ValueError):
+        return set()
+
+
+def review_approve_own(hashes: List[str]):
+    """
+    Record functions you just saved yourself.
+
+    You wrote them, so bb edit may run them when it runs checks: a check
+    on a function that imports your own pool functions needs no bb review
+    of them first. This is all the record allows: bb run, bb validate
+    --checks and serving still require bb review. It goes to your private
+    state, never to the shared pool, so a function someone else commits
+    under your name is not on it.
+    """
+    hashes = {h for h in hashes if h}
+    if hashes:
+        path = review_authored_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({'authored': sorted(review_load_authored() | hashes)}, indent=2),
+                        encoding='utf-8')
 
 
 def review_approvals(hashes: List[str]) -> Set[str]:
@@ -3201,6 +3240,7 @@ def code_add(file_path_with_lang: str, comment: str = ""):
     # Save to v1 format (docstring stored separately in mapping.json)
     code_save(prepared['hash'], lang, prepared['normalized_code'], prepared['docstring'],
               prepared['name_mapping'], prepared['alias_mapping'], comment, pinned=prepared['pinned'])
+    review_approve_own([prepared['hash']])
 
     for name, func_hash in sorted(resolved.items()):
         print(f"Import: {name} -> {func_hash}")
@@ -4963,7 +5003,8 @@ def edit_prepare(text: str, lang: str, unreviewed: bool = False) -> Dict[str, An
     imported = {dep for _, p in [(implementation, prepared_implementation)] + checks
                 for dep in p['alias_mapping']}
     needed = {h for dep in imported for h in code_resolve_dependencies(dep)}
-    missing = sorted(needed - review_approvals(list(needed)))
+    # Functions you saved yourself may run in your checks; others need bb review
+    missing = sorted(needed - review_approvals(list(needed)) - review_load_authored())
     if missing and unreviewed:
         print(f"Warning: running {len(missing)} imported function(s) nobody reviewed "
               "(--dangerously-unreviewed).", file=sys.stderr)
@@ -5057,8 +5098,9 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     Saving requires the file to parse and every check to pass. Only checks
     run the code: a function without checks is saved without running it,
     whatever it imports. With checks, the pool functions it imports must be
-    reviewed first, unless --dangerously-unreviewed (for experiments) runs
-    them anyway. The new
+    yours (saved by you with bb add or bb edit, recorded in your private
+    state) or reviewed with bb review, unless --dangerously-unreviewed (for
+    experiments) runs them anyway. The new
     function records the edited one as its parent and lists its checks;
     changed checks record their own parents. The comment (asked for when
     --comment is not given) is stored in the new mappings.
@@ -5263,6 +5305,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
                   f"({prepared['hash']}), another function. Nothing saved.", file=sys.stderr)
             sys.exit(1)
         restore_save(prepared['hash'], section['parent'], comment)
+        review_approve_own([prepared['hash']] + check_hashes)
         discard()
         rewrite_file(prepared['hash'])
         print(f"Restored: {prepared['hash']}")
@@ -5287,6 +5330,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
                           mapping_parent=loaded_mappings.get(section['parent'], ""))
 
     discard()
+    review_approve_own([prepared['hash']] + check_hashes)
     rewrite_file(prepared['hash'])
 
     for name, check_hash in new_checks:
@@ -5456,6 +5500,9 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
         """
         functions, restores = storage_scan_functions(), storage_scan_restores()
         step = lineage_current_step(old_hash, functions, restores)
+        if old_hash in review_load_authored():
+            # A mechanical rewrite of your own function: only its references change
+            review_approve_own([new_hash])
         if code_detect_schema(new_hash) is not None:
             if lineage_root(new_hash, functions, restores) == lineage_root(old_hash, functions, restores):
                 restore_save(new_hash, step, comment)

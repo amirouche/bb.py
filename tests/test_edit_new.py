@@ -69,13 +69,21 @@ def test_saving_runs_nothing_without_checks_and_checks_need_reviewed_imports(tmp
     saved = bb(write, 'edit', 'quadruple@eng', '-m', 'new')
     assert saved.returncode == 0 and 'Hash:' in saved.stdout and 'reviewed' not in saved.stderr
 
-    # A check runs the code: it needs double reviewed, or the flag
+    # A check runs the code. double was saved here, by you: it may run
     bb(read, 'edit', 'quadruple@eng')
-    draft.write_text(draft.read_text().rstrip('\n') + '\n\n### check_quadruple\n\n```python def\n'
-                     'def check_quadruple(quadruple):\n    """Four times one."""\n    return quadruple(1) == 4\n```\n')
-    refused = bb(write, 'edit', 'quadruple@eng', '-m', 'with a check')
+    with_check = draft.read_text().rstrip('\n') + ('\n\n### check_quadruple\n\n```python def\n'
+                                                   'def check_quadruple(quadruple):\n    """Four times one."""\n'
+                                                   '    return quadruple(1) == 4\n```\n')
+    draft.write_text(with_check)
+    ran = bb(write, 'edit', 'quadruple@eng', '-m', 'with a check')
+    assert ran.returncode == 0 and 'PASS check_quadruple' in ran.stdout, ran.stderr
+
+    # Someone else's double (here: another user's private state) is not reviewed: refused, or the flag
+    other = {**write, 'BB_STATE_DIRECTORY': str(tmp_path / 'other-state')}
+    draft.write_text(with_check.replace('quadruple(1) == 4', 'quadruple(2) == 8'))
+    refused = bb(other, 'edit', 'quadruple@eng', '-m', 'their check')
     assert refused.returncode == 1 and 'not reviewed' in refused.stderr
-    allowed = bb(write, 'edit', 'quadruple@eng', '-m', 'with a check', '--dangerously-unreviewed')
+    allowed = bb(other, 'edit', 'quadruple@eng', '-m', 'their check', '--dangerously-unreviewed')
     assert allowed.returncode == 0 and 'nobody reviewed' in allowed.stderr and 'Parent:' in allowed.stdout
 
 
