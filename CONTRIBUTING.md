@@ -77,7 +77,7 @@ uv run python bb.py add parse_frontmatter_eng.py@eng  # leaf — note the hash
 uv run python bb.py add render_post_eng.py@eng         # depends on leaves — note the hash
 ```
 
-Functions must have real hashes in their `from bb.pool import object_<hash>` lines before you can `bb add` them.
+A function can import pool functions by name (`from bb.pool import parse_frontmatter`), resolved when you `bb add` it, so add leaves first.
 
 ## Using `bb refactor`
 

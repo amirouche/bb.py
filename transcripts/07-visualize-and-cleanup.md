@@ -75,8 +75,8 @@ def multiply_numbers(a, b):
 
 ### Calculator Main `calculator_main_eng.py`
 ```python
-from bb.pool import object_7d6a6678b904949efee273af50a807c1f98d8aee6346226bc5a57f09ea966335 as add_numbers
-from bb.pool import object_eff47a2b6bf77dd428e60e2edc5d15a084aab8602cd33a122f7e9c49bffedb85 as multiply_numbers
+from bb.pool import object_787f49c0f1dda4e9b962de4e79a2353cb134a2f0285e74159f94d52b3d8f17ae as add_numbers
+from bb.pool import object_0b33195070de0a53ecc52f3f66084b23b2829a9eb78fc8ad54bc96c56733db24 as multiply_numbers
 
 def calculator_main(x, y):
     """Perform calculations using add and multiply."""

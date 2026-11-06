@@ -22,7 +22,7 @@ Functions with identical logic but different naming (e.g., English vs French var
 3. **Bidirectional mapping**: Original names preserved for reconstruction in target language
 4. **Content-addressed storage**: Functions stored by hash in `$HOME/.local/bb/pool/xx/yy.../object.json` (configurable via `BB_DIRECTORY` environment variable)
 5. **Single-file architecture**: All code resides in `bb.py` - no modularization into separate packages. This keeps the tool simple, self-contained, and easy to distribute as a single script.
-6. **Object prefix for valid identifiers**: BB imports use `object_` prefix (e.g., `from bb.pool import object_abc123 as func`) to ensure valid Python identifiers since SHA256 hashes can start with digits (0-9)
+6. **Pool references by hash**: stored code refers to a pool function as `bb.ref("<hash>")` where it is used (normalization 4). Authors import by name (`from bb.pool import func`), resolved to a hash when saving; older objects use `from bb.pool import object_<hash>` and keep loading
 
 ### Storage Location Configuration
 
@@ -148,42 +148,32 @@ Understanding how imports are processed is critical to the normalization system.
 - **Usage**: Names like `math`, `Counter`, `np` are **never renamed** to `_bb_v_X`
 
 #### 2. BB Imports (Pool Functions)
-**Examples**: `from bb.pool import object_abc123def as helper`
-
-**Important**: BB imports must use the `object_` prefix followed by the hash. This ensures valid Python identifiers since SHA256 hashes can start with digits (0-9), which would otherwise be invalid identifiers.
+**Examples**: `from bb.pool import helper` (by name), `helper = bb.ref("<hash>")` (an exact version)
 
 **Before storage (normalization)**:
 ```python
-from bb.pool import object_abc123def as helper
+from bb.pool import helper            # resolved when saving to: object_<hash> as helper
 ```
 ↓ becomes ↓
 ```python
-from bb.pool import object_abc123def
+def _bb_v_0(_bb_v_1):
+    return bb.ref('<hash>')(_bb_v_1)
 ```
-- Alias removed: `as helper` is dropped
-- Alias tracked in `alias_mapping`: `{"abc123def": "helper"}` (actual hash without prefix)
-- Function calls transformed: `helper(x)` → `object_abc123def._bb_v_0(x)`
+- The import is removed; every use of `helper` becomes `bb.ref('<hash>')`
+- Alias tracked in `alias_mapping`: `{"<hash>": "helper"}`
+- `bb` is reserved: never renamed, and only `bb.ref("<64 hex>")` is allowed
 
 **From storage (denormalization)**:
-```python
-from bb.pool import object_abc123def
-```
-↓ becomes ↓
-```python
-from bb.pool import object_abc123def as helper
-```
-- Language-specific alias restored: `as helper` (from `alias_mapping[lang]`)
-- Function calls transformed back: `object_abc123def._bb_v_0(x)` → `helper(x)`
+- Each `bb.ref('<hash>')` becomes its alias, bound once after the imports: `helper = bb.ref('<hash>')`
+- `bb show` and `bb edit` turn that binding into `from bb.pool import helper` when `helper@lang` has exactly that hash as its one current version
+
+Objects stored before normalization 4 hold `from bb.pool import object_<hash>` and `object_<hash>._bb_v_0(...)`; they load, display and refactor as before.
 
 ### Why This Design?
 
 - **Standard imports** are universal (same across all languages)
-- **BB imports** have language-specific aliases:
-  - English: `from bb.pool import object_abc123 as helper`
-  - French: `from bb.pool import object_abc123 as assistant`
-  - Spanish: `from bb.pool import object_abc123 as ayudante`
-
-All normalize to: `from bb.pool import object_abc123`, ensuring identical hashes.
+- **BB references** have language-specific aliases (`helper`, `assistant`, `ayudante`) kept in the mappings; the stored code holds only `bb.ref('<hash>')`, so the hash is identical in every language
+- A name cannot be mistaken for a hash, and a hash needs no identifier prefix
 
 ## Key Algorithms
 
@@ -194,9 +184,9 @@ All normalize to: `from bb.pool import object_abc123`, ensuring identical hashes
 2. Sort imports lexicographically
 3. Extract function definition
 4. Extract docstring from function
-5. Rewrite bb imports (remove aliases)
+5. Take pool imports and `alias = bb.ref(...)` bindings out (aliases go to alias_mapping)
 6. Create name mapping (excluding builtins, imports, bb aliases)
-7. Replace bb calls (alias → HASH._bb_v_0)
+7. Replace uses of pool functions (alias → bb.ref("HASH"))
 8. Apply name normalization
 9. Clear AST location info
 10. Unparse to normalized code

@@ -109,7 +109,7 @@ def render_post(file_content, site_title):
 import os
 from bb.pool import object_25f5b25a43080344597fea475adc88ecb0fc56e05b843a8668a1eb1822219df9 as parse_frontmatter
 from bb.pool import object_1085d7f5f9104a833c0ec8f9c095a836712e257636da67dbff473bc0bed64ea7 as markdown_to_html
-from bb.pool import object_df0eaf3e5dd509f4c933266d045c17170d7b5e12c1e5b0b698a8901e5c14b052 as render_post
+from bb.pool import object_b093d0f0140640938cc41216c2c113cd87c75b0580330fae1ca30885acb7b4bf as render_post
 
 
 def build_blog(source_dir, output_dir, site_title, site_url):
@@ -286,7 +286,7 @@ def render_tag_page(tag, posts, site_title):
 import os
 from bb.pool import object_25f5b25a43080344597fea475adc88ecb0fc56e05b843a8668a1eb1822219df9 as parse_frontmatter
 from bb.pool import object_1085d7f5f9104a833c0ec8f9c095a836712e257636da67dbff473bc0bed64ea7 as markdown_to_html
-from bb.pool import object_df0eaf3e5dd509f4c933266d045c17170d7b5e12c1e5b0b698a8901e5c14b052 as render_post
+from bb.pool import object_b093d0f0140640938cc41216c2c113cd87c75b0580330fae1ca30885acb7b4bf as render_post
 from bb.pool import object_7be41b434e25f5904709f0c6c3b907bc0768c45259c3de49928346e6debfdc99 as collect_tags
 from bb.pool import object_da4b01118cdbdc7bab7dabf52630f6db1ca25a259e7457e2fd7daeae6e269e40 as render_tag_page
 
@@ -566,7 +566,7 @@ def generer_page_etiquette(etiquette, articles, titre_site):
 import os
 from bb.pool import object_25f5b25a43080344597fea475adc88ecb0fc56e05b843a8668a1eb1822219df9 as analyser_entete
 from bb.pool import object_1085d7f5f9104a833c0ec8f9c095a836712e257636da67dbff473bc0bed64ea7 as markdown_vers_html
-from bb.pool import object_df0eaf3e5dd509f4c933266d045c17170d7b5e12c1e5b0b698a8901e5c14b052 as generer_page_article
+from bb.pool import object_b093d0f0140640938cc41216c2c113cd87c75b0580330fae1ca30885acb7b4bf as generer_page_article
 from bb.pool import object_7be41b434e25f5904709f0c6c3b907bc0768c45259c3de49928346e6debfdc99 as regrouper_etiquettes
 from bb.pool import object_da4b01118cdbdc7bab7dabf52630f6db1ca25a259e7457e2fd7daeae6e269e40 as generer_page_etiquette
 

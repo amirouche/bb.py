@@ -476,8 +476,8 @@ def foo(x):
     new_tree = bb.code_replace_bb_calls(tree, alias_mapping, name_mapping)
     result = ast.unparse(new_tree)
 
-    # helper(x) should become abc123._bb_v_0(x)
-    assert "abc123._bb_v_0" in result
+    # helper(x) should become bb.ref('abc123')(x)
+    assert "bb.ref('abc123')(x)" in result
     assert "helper" not in result
 
 
@@ -623,8 +623,9 @@ def foo():
 
 def test_normalize_ast_with_bb_import():
     """Test normalizing function with bb import"""
-    code = """
-from bb.pool import abc123 as helper
+    helper_hash = "abc123" + "0" * 58
+    code = f"""
+from bb.pool import object_{helper_hash} as helper
 
 def foo(x):
     \"\"\"Process with helper\"\"\"
@@ -635,15 +636,34 @@ def foo(x):
     code_with_doc, code_without_doc, docstring, name_mapping, alias_mapping = \
         bb.code_normalize(tree, "eng")
 
-    # Should remove alias but keep bb.pool module name
-    assert "from bb.pool import abc123" in code_with_doc
-    assert "as helper" not in code_with_doc
+    # The import goes: the pool function is referred to where it is used
+    assert "bb.pool" not in code_without_doc and "helper" not in code_without_doc
+    assert f"return bb.ref('{helper_hash}')(_bb_v_1)" in code_with_doc
 
     # Should track alias
-    assert alias_mapping["abc123"] == "helper"
+    assert alias_mapping[helper_hash] == "helper"
 
-    # Should replace calls
-    assert "abc123._bb_v_0" in code_with_doc
+
+def test_normalize_names_a_pool_function_once_in_any_form():
+    """An import, a bb.ref binding and a bb.ref call of the same function hash alike"""
+    helper_hash = "abc123" + "0" * 58
+    forms = [
+        f"from bb.pool import object_{helper_hash} as helper\n\ndef foo(x):\n    return helper(x)\n",
+        f"helper = bb.ref('{helper_hash}')\n\ndef foo(x):\n    return helper(x)\n",
+        f"import bb\n\ndef foo(x):\n    return bb.ref('{helper_hash}')(x)\n",
+    ]
+    hashes = {bb.code_compute_function_hash(bb.code_normalize(ast.parse(f), "eng")[1]) for f in forms}
+    assert len(hashes) == 1
+
+
+@pytest.mark.parametrize("code, message", [
+    ("def foo(bb):\n    return bb\n", "reserved"),
+    ("def foo(x):\n    return bb.ref(x)(1)\n", "bb.ref takes one"),
+    ("def foo(x):\n    return bb.pool\n", "bb only provides"),
+])
+def test_normalize_refuses_other_uses_of_bb(code, message):
+    with pytest.raises(ValueError, match=message):
+        bb.code_normalize(ast.parse(code), "eng")
 
 
 # ============================================================================
@@ -1433,8 +1453,8 @@ def test_find_similar_survives_an_extra_early_variable(mock_bb_dir):
 def test_objects_record_their_normalization(mock_bb_dir):
     """New objects say which normalization produced them; old ones read as version 1"""
     func = _pool_add("def one():\n    return 1\n")
-    assert bb.object_load(func)['normalization'] == bb.NORMALIZATION_VERSION == 3
-    assert bb.object_normalization(func) == 3
+    assert bb.object_load(func)['normalization'] == bb.NORMALIZATION_VERSION == 4
+    assert bb.object_normalization(func) == 4
 
     legacy = _save_legacy_inner_import('random')
     assert bb.object_normalization(legacy) == 1

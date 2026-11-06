@@ -62,8 +62,8 @@ def farewell(first, last):
 
 ### Ceremony `ceremony_eng.py`
 ```python
-from bb.pool import object_60081acc7222a2d6343cd23a619c80f773c6fee312ee41d67943e5f351d851dd as greet
-from bb.pool import object_e44c6ba9183d24d9df3529843f951c402ffb734378898d42fbef6ab504584117 as farewell
+from bb.pool import object_3bfa21c578f56a0926eb4ad65589f200094a1a054987dc34fe79a8f3aa1995ac as greet
+from bb.pool import object_d819752004c2f8ffebe5b06fb19a39aa3f88122887a3dfa1785d9d4048713bbe as farewell
 
 
 def ceremony(first, last):
@@ -113,8 +113,8 @@ different hashes
 ### Step 6: Verify the diamond call graph
 ```bash
 $ bb show $CEREMONY@eng | grep '^from '
-from bb.pool import object_60081acc7222a2d6343cd23a619c80f773c6fee312ee41d67943e5f351d851dd as greet
-from bb.pool import object_e44c6ba9183d24d9df3529843f951c402ffb734378898d42fbef6ab504584117 as farewell
+from bb.pool import greet
+from bb.pool import farewell
 ```
 
 ---

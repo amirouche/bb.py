@@ -26,10 +26,11 @@ Writing functions for the pool:
 - One function per file (def or async def), with its imports and, if
   you like, a module docstring. Anything else at module level (classes,
   constants, variables, code) is refused: put data in functions.
-- Use another pool function by importing it by name or by hash:
+- Use another pool function by importing it by name, at the top of the
+  file (or name an exact version by its hash):
 
       from bb.pool import parse_amount
-      from bb.pool import object_<hash> as parse_amount
+      parse_amount = bb.ref("<hash>")
 
   A name is resolved when you save (bb add, bb edit), in the language you
   save in, to its one current version (the end of its lineage of edits,
@@ -37,7 +38,8 @@ Writing functions for the pool:
   that version. A name with several current versions (two functions
   called alike, or a fork) is refused: import one of them by hash
   (`bb search name` shows hashes). So add helpers before the functions
-  that use them.
+  that use them. Stored code refers to each one as bb.ref("<hash>"); bb
+  show and bb edit display it by name when the name picks that version.
 - Arguments are positional: bb stores parameters as placeholders
   (_bb_v_0, ...), so a keyword cannot reach them. Call pool functions,
   the function itself and functions defined inside it without keywords
@@ -100,7 +102,72 @@ BB_IMPORT_PREFIX = "object_"
 #   2: they are kept, like top-level imports
 #   3: `import a.b` binds `a`, which is kept too (version 2 renamed it, so
 #      such functions failed at run time: there is nothing to repair)
-NORMALIZATION_VERSION = 3
+#   4: a pool function is referred to as bb.ref("<hash>") where it is used,
+#      instead of `from bb.pool import object_<hash>` and object_<hash>._bb_v_0
+NORMALIZATION_VERSION = 4
+
+_HASH_RE = re.compile(r'^[0-9a-f]{64}$')
+
+
+def code_ref_hash(node: ast.AST) -> Optional[str]:
+    """The hash in a bb.ref("<hash>") call, or None when node is not one."""
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'ref'
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == 'bb'
+            and len(node.args) == 1 and not node.keywords and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str) and _HASH_RE.match(node.args[0].value)):
+        return node.args[0].value
+    return None
+
+
+def code_make_ref(func_hash: str) -> ast.Call:
+    """The expression bb.ref("<hash>"): the pool function func_hash."""
+    return ast.Call(func=ast.Attribute(value=ast.Name(id='bb', ctx=ast.Load()), attr='ref', ctx=ast.Load()),
+                    args=[ast.Constant(value=func_hash)], keywords=[])
+
+
+def code_pool_import_hash(name: str) -> Optional[str]:
+    """The hash in an import name object_<hash>, or None (then it is a function's name)."""
+    if name.startswith(BB_IMPORT_PREFIX) and _HASH_RE.match(name[len(BB_IMPORT_PREFIX):]):
+        return name[len(BB_IMPORT_PREFIX):]
+    return None
+
+
+def code_swap_refs(tree: ast.Module, hash_map: Dict[str, str]) -> ast.Module:
+    """
+    Point a stored function's pool references at other versions (old -> new hash).
+
+    Handles both stored forms: bb.ref("<hash>") (normalization 4) and
+    `from bb.pool import object_<hash>` with object_<hash>._bb_v_0 (before).
+    Imports are sorted again, so the result stays in normal form.
+    """
+    class Swapper(ast.NodeTransformer):
+        def visit_Call(self, node):
+            func_hash = code_ref_hash(node)
+            if func_hash in hash_map:
+                return code_make_ref(hash_map[func_hash])
+            self.generic_visit(node)
+            return node
+
+        def visit_ImportFrom(self, node):
+            if node.module == 'bb.pool':
+                for alias in node.names:
+                    func_hash = alias.name[len(BB_IMPORT_PREFIX):]
+                    if alias.name.startswith(BB_IMPORT_PREFIX) and func_hash in hash_map:
+                        alias.name = BB_IMPORT_PREFIX + hash_map[func_hash]
+            return node
+
+        def visit_Attribute(self, node):
+            if isinstance(node.value, ast.Name) and node.attr == '_bb_v_0':
+                func_hash = node.value.id[len(BB_IMPORT_PREFIX):]
+                if node.value.id.startswith(BB_IMPORT_PREFIX) and func_hash in hash_map:
+                    node.value.id = BB_IMPORT_PREFIX + hash_map[func_hash]
+            self.generic_visit(node)
+            return node
+
+    tree = Swapper().visit(tree)
+    tree = code_sort_imports(tree)
+    ast.fix_missing_locations(tree)
+    return tree
 
 
 
@@ -350,27 +417,83 @@ def code_rewrite_bb_imports(imports: List[ast.stmt]) -> Tuple[List[ast.stmt], Di
     return new_imports, alias_mapping
 
 
+def code_collect_pool_refs(tree: ast.Module) -> Tuple[ast.Module, Dict[str, str]]:
+    """
+    Take the pool functions a module names out of its top level.
+
+    They are named by `from bb.pool import object_<hash> as alias` (an
+    import by name is resolved to this form first) or `alias = bb.ref("<hash>")`;
+    `import bb` is dropped, as bb is always there. Every use is then
+    written bb.ref("<hash>") (see code_replace_bb_calls).
+
+    Returns:
+        (module without them, alias_mapping {hash: alias})
+
+    Raises:
+        ValueError: for a pool import not resolved to a hash, a pool function
+        given two names, or a use of `bb` other than bb.ref("<hash>")
+    """
+    alias_mapping: Dict[str, str] = {}
+
+    def bind(func_hash, alias):
+        if alias and alias_mapping.get(func_hash, alias) != alias:
+            raise ValueError(f"{func_hash[:12]}... is imported twice, as {alias_mapping[func_hash]} and {alias}")
+        if alias:
+            alias_mapping[func_hash] = alias
+
+    body = []
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
+            for alias in node.names:
+                func_hash = code_pool_import_hash(alias.name)
+                if func_hash is None:
+                    raise ValueError(f"from bb.pool import {alias.name}: not a pool function's hash")
+                bind(func_hash, alias.asname)
+            continue
+        if isinstance(node, ast.Import) and [(a.name, a.asname) for a in node.names] == [('bb', None)]:
+            continue
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                and code_ref_hash(node.value)):
+            bind(code_ref_hash(node.value), node.targets[0].id)
+            continue
+        body.append(node)
+    tree.body = body
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == 'bb':
+            if node.attr != 'ref':
+                raise ValueError(f"bb.{node.attr}: bb only provides bb.ref(\"<hash>\")")
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'ref'
+              and isinstance(node.func.value, ast.Name) and node.func.value.id == 'bb' and code_ref_hash(node) is None):
+            raise ValueError(f"{ast.unparse(node)}: bb.ref takes one pool function's hash, as a string "
+                             f"(import by name with `from bb.pool import NAME`)")
+        elif ((isinstance(node, ast.Name) and node.id == 'bb' and not isinstance(node.ctx, ast.Load))
+              or (isinstance(node, ast.arg) and node.arg == 'bb')):
+            raise ValueError("the name bb is reserved for bb.ref: give this variable another name")
+    return tree, alias_mapping
+
+
 def code_replace_bb_calls(tree: ast.AST, alias_mapping: Dict[str, str], name_mapping: Dict[str, str]):
     """
-    Replace calls to aliased bb functions.
-    E.g., kawa(...) becomes object_c0ffeebad._bb_v_0(...)
+    Write every use of a pool function as bb.ref("<hash>").
 
-    alias_mapping maps actual hash (without prefix) -> alias name
-    The replacement uses object_<hash> to match the import name.
+    E.g. kawa(...) becomes bb.ref("c0ffeebad...")(...), and so does
+    object_c0ffeebad..._bb_v_0(...) (an import without alias).
+
+    alias_mapping maps hash -> alias name
     """
+    by_alias = {alias: func_hash for func_hash, alias in alias_mapping.items()}
+
     class BBCallReplacer(ast.NodeTransformer):
         def visit_Name(self, node):
-            # If this name is an alias for a bb function
-            for func_hash, alias in alias_mapping.items():
-                if node.id == alias:
-                    # Replace with object_c0ffeebad._bb_v_0
-                    # Use prefixed name to match the import statement
-                    prefixed_name = BB_IMPORT_PREFIX + func_hash
-                    return ast.Attribute(
-                        value=ast.Name(id=prefixed_name, ctx=ast.Load()),
-                        attr='_bb_v_0',
-                        ctx=node.ctx
-                    )
+            if node.id in by_alias and isinstance(node.ctx, ast.Load):
+                return code_make_ref(by_alias[node.id])
+            return node
+
+        def visit_Attribute(self, node):
+            if isinstance(node.value, ast.Name) and node.attr == '_bb_v_0' and code_pool_import_hash(node.value.id):
+                return code_make_ref(code_pool_import_hash(node.value.id))
+            self.generic_visit(node)
             return node
 
     replacer = BBCallReplacer()
@@ -419,17 +542,17 @@ def code_normalize(tree: ast.Module, lang: str) -> Tuple[str, str, str, Dict[str
     # Sort imports
     tree = code_sort_imports(tree)
 
+    # Pool functions are referred to by bb.ref("<hash>"), not imported
+    tree, alias_mapping = code_collect_pool_refs(tree)
+
     # Extract function and imports
     function_def, imports = code_extract_definition(tree)
 
     # Extract docstring from function
     docstring, function_without_docstring = code_extract_docstring(function_def)
 
-    # Rewrite bb imports
-    imports, alias_mapping = code_rewrite_bb_imports(imports)
-
-    # Get the set of bb aliases (values in alias_mapping)
-    bb_aliases = set(alias_mapping.values())
+    # bb itself is never renamed, nor the aliases of pool functions
+    bb_aliases = set(alias_mapping.values()) | {'bb'}
 
     # Create name mapping
     forward_mapping, reverse_mapping = code_create_name_mapping(function_def, imports, bb_aliases)
@@ -1003,10 +1126,12 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
     """
     Denormalize code by applying reverse name mappings.
     name_mapping: maps normalized names (_bb_v_X) to original names
-    alias_mapping: maps actual hash IDs (without object_ prefix) to alias names
+    alias_mapping: maps function hashes to alias names
 
-    Normalized code uses object_<hash> in imports and attributes.
-    This function restores the original aliases.
+    Normalized code refers to pool functions as bb.ref("<hash>")
+    (normalization 4) or object_<hash>._bb_v_0 with an import (before).
+    Uses become the alias again; for bb.ref, each one used is bound once
+    after the imports, as `alias = bb.ref("<hash>")`.
     """
     tree = ast.parse(normalized_code)
 
@@ -1047,6 +1172,15 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
             # Replace normalized exception variable name
             if node.name and node.name in name_mapping:
                 node.name = name_mapping[node.name]
+            self.generic_visit(node)
+            return node
+
+        def visit_Call(self, node):
+            # Replace bb.ref("c0ffeebad...")(...) with alias(...)
+            func_hash = code_ref_hash(node)
+            if func_hash in hash_to_alias:
+                bound.setdefault(func_hash, hash_to_alias[func_hash])
+                return ast.Name(id=hash_to_alias[func_hash], ctx=ast.Load())
             self.generic_visit(node)
             return node
 
@@ -1094,8 +1228,17 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
                 node.names = new_names
             return node
 
+    bound: Dict[str, str] = {}
     denormalizer = Denormalizer()
     tree = denormalizer.visit(tree)
+
+    # Each pool function used is named once, after the imports: alias = bb.ref("<hash>")
+    if bound:
+        position = sum(1 for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom)))
+        bindings = [ast.Assign(targets=[ast.Name(id=alias, ctx=ast.Store())], value=code_make_ref(func_hash))
+                    for func_hash, alias in bound.items()]
+        tree.body[position:position] = bindings
+        ast.fix_missing_locations(tree)
 
     return code_unparse_readable(tree)
 
@@ -1111,6 +1254,9 @@ def code_extract_dependencies(normalized_code: str) -> List[str]:
     tree = ast.parse(normalized_code)
 
     for node in ast.walk(tree):
+        func_hash = code_ref_hash(node)
+        if func_hash and func_hash not in dependencies:
+            dependencies.append(func_hash)
         if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
             for alias in node.names:
                 import_name = alias.name  # e.g., "object_c0ff33..."
@@ -3038,10 +3184,15 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
     resolved: Dict[str, str] = {}
     problems: List[str] = []
     replacements = []
+    top = {id(node) for node in tree.body}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool' and id(node) not in top:
+            problems.append(f"  line {node.lineno}: {ast.unparse(node)}: pool imports go at the top of the "
+                            f"file, before the def")
     for node in tree.body:
         if not (isinstance(node, ast.ImportFrom) and node.module == 'bb.pool'):
             continue
-        names = [alias for alias in node.names if not alias.name.startswith(BB_IMPORT_PREFIX)]
+        names = [alias for alias in node.names if code_pool_import_hash(alias.name) is None]
         if not names:
             continue
         for alias in names:
@@ -3056,11 +3207,51 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
                 problems += [f"    {helper_describe_function(functions[h], lang)}" for h in heads]
         replacements.append((node.lineno, node.end_lineno, ast.unparse(node)))
     if problems:
-        raise ValueError(f"{where}: pool imports by name must name one current version:\n" + '\n'.join(problems))
+        raise ValueError(f"{where}: pool imports must be at the top of the file and name one current version:\n" + '\n'.join(problems))
     lines = source_code.splitlines(keepends=True)
     for start, end, text in sorted(replacements, reverse=True):
         lines[start - 1:end] = [text + '\n']
     return ''.join(lines), resolved
+
+
+def code_show_pool_names(source_code: str, lang: str) -> str:
+    """
+    Write the pool functions a displayed function uses as imports by name.
+
+    `alias = bb.ref("<hash>")` (and the older `from bb.pool import
+    object_<hash> as alias`) becomes `from bb.pool import NAME` (or
+    `... import NAME as alias`) when NAME@lang has exactly that hash as its
+    one current version, so saving it back picks the same function.
+    Otherwise it stays pinned, as `alias = bb.ref("<hash>")`.
+    """
+    try:
+        tree = ast.parse(source_code)
+    except SyntaxError:
+        return source_code
+
+    def as_text(func_hash, alias):
+        mapping_lang = lang if lang in storage_list_languages(func_hash) else None
+        name = None
+        if mapping_lang:
+            mapping = mapping_load_json(func_hash, mapping_lang, mapping_select(func_hash, mapping_lang))
+            name = mapping.get('name_mapping', {}).get('_bb_v_0')
+        if name and helper_find_heads_by_name(name, lang)[0] == [func_hash]:
+            return f"from bb.pool import {name}" + (f" as {alias}" if alias != name else "")
+        return f"{alias} = bb.ref({func_hash!r})"
+
+    replacements = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) \
+                and code_ref_hash(node.value):
+            replacements.append((node.lineno, node.end_lineno, as_text(code_ref_hash(node.value), node.targets[0].id)))
+        elif (isinstance(node, ast.ImportFrom) and node.module == 'bb.pool'
+              and all(code_pool_import_hash(a.name) and a.asname for a in node.names)):
+            replacements.append((node.lineno, node.end_lineno, '\n'.join(
+                as_text(code_pool_import_hash(a.name), a.asname) for a in node.names)))
+    lines = source_code.splitlines(keepends=True)
+    for start, end, text in sorted(replacements, reverse=True):
+        lines[start - 1:end] = [text + '\n']
+    return ''.join(lines)
 
 
 def code_check_positional(source_code: str, tree: ast.Module, where: str):
@@ -3082,6 +3273,8 @@ def code_check_positional(source_code: str, tree: ast.Module, where: str):
     function_def, _ = code_extract_definition(tree)
     pool_aliases = {alias.asname or alias.name for node in tree.body
                     if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool' for alias in node.names}
+    pool_aliases |= {node.targets[0].id for node in tree.body if isinstance(node, ast.Assign)
+                     and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and code_ref_hash(node.value)}
     local = {function_def.name}
     definitions = []
     for node in ast.walk(function_def):
@@ -3758,7 +3951,7 @@ def code_show(identifier: str):
     # Replace docstring and denormalize
     try:
         normalized_code = code_replace_docstring(normalized_code, docstring)
-        original_code = code_denormalize(normalized_code, name_mapping, alias_mapping)
+        original_code = code_show_pool_names(code_denormalize(normalized_code, name_mapping, alias_mapping), lang)
     except Exception as e:
         print(f"Error: Failed to denormalize code: {e}", file=sys.stderr)
         sys.exit(1)
@@ -4197,6 +4390,7 @@ def code_execute_source(source_code: str, lang: str) -> Callable:
 
     namespace: Dict[str, Any] = {}
     cache: Dict[str, Callable] = {}
+    namespace['bb'] = code_load_refs(tree, cache)
     body = []
     for node in tree.body:
         if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
@@ -4207,7 +4401,10 @@ def code_execute_source(source_code: str, lang: str) -> Callable:
                 else:
                     namespace[alias.name] = types.SimpleNamespace(_bb_v_0=dep)
             continue
-        if isinstance(node, (ast.Import, ast.ImportFrom)) or node is function_def:
+        if isinstance(node, ast.Import) and [(a.name, a.asname) for a in node.names] == [('bb', None)]:
+            continue  # bb is bb.ref, bound above
+        if (isinstance(node, (ast.Import, ast.ImportFrom)) or node is function_def
+                or (isinstance(node, ast.Assign) and code_ref_hash(node.value))):
             body.append(node)
     tree.body = body
 
@@ -4297,6 +4494,21 @@ def code_restore_inner_imports(tree: ast.Module, func_hash: str):
         ASTNormalizer(rename).visit(tree)
 
 
+def code_load_refs(tree: ast.AST, cache: Dict[str, Callable]) -> types.SimpleNamespace:
+    """
+    The `bb` a function runs with: bb.ref("<hash>") gives the pool function.
+
+    Every function the code refers to is loaded first, so a missing one
+    fails at load time, not when it is first called.
+    """
+    loaded = {}
+    for node in ast.walk(tree):
+        func_hash = code_ref_hash(node)
+        if func_hash and func_hash not in loaded:
+            loaded[func_hash] = code_load_normalized(func_hash, cache)
+    return types.SimpleNamespace(ref=loaded.__getitem__)
+
+
 def code_load_normalized(func_hash: str, cache: Dict[str, Callable] = None) -> Callable:
     """
     Load a pool function from its normalized code, exactly as hashed.
@@ -4321,7 +4533,7 @@ def code_load_normalized(func_hash: str, cache: Dict[str, Callable] = None) -> C
     if data.get('normalization', 1) < 2:
         code_restore_inner_imports(tree, func_hash)
 
-    namespace: Dict[str, Any] = {}
+    namespace: Dict[str, Any] = {'bb': code_load_refs(tree, cache)}
     body = []
     for node in tree.body:
         if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
@@ -4456,6 +4668,7 @@ def edit_load_section(func_hash: str, lang: str) -> Dict[str, Any]:
     mapping_hash = mapping_select(func_hash, section_lang)
     normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, section_lang, mapping_hash)
     source = code_denormalize(code_replace_docstring(normalized_code, docstring), name_mapping, alias_mapping)
+    source = code_show_pool_names(source, section_lang)
     markdown = mapping_load_markdown(func_hash, section_lang, mapping_hash)
 
     return {
@@ -4989,44 +5202,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
 
         if needs_refactor:
             # Refactor this function with all accumulated replacements
-            dep_tree = ast.parse(dep_code)
-
-            class DependencyReplacer(ast.NodeTransformer):
-                def visit_ImportFrom(self, node):
-                    if node.module == 'bb.pool':
-                        new_names = []
-                        for alias in node.names:
-                            import_name = alias.name
-                            if import_name.startswith(BB_IMPORT_PREFIX):
-                                actual_hash = import_name[len(BB_IMPORT_PREFIX):]
-                            else:
-                                actual_hash = import_name
-
-                            # Replace with mapped hash if it exists
-                            if actual_hash in hash_map:
-                                new_name = BB_IMPORT_PREFIX + hash_map[actual_hash]
-                                new_names.append(ast.alias(name=new_name, asname=alias.asname))
-                            else:
-                                new_names.append(alias)
-                        node.names = new_names
-                    return node
-
-                def visit_Attribute(self, node):
-                    if (isinstance(node.value, ast.Name) and node.attr == '_bb_v_0'):
-                        prefixed_name = node.value.id
-                        if prefixed_name.startswith(BB_IMPORT_PREFIX):
-                            actual_hash = prefixed_name[len(BB_IMPORT_PREFIX):]
-                        else:
-                            actual_hash = prefixed_name
-
-                        if actual_hash in hash_map:
-                            node.value.id = BB_IMPORT_PREFIX + hash_map[actual_hash]
-                    self.generic_visit(node)
-                    return node
-
-            replacer = DependencyReplacer()
-            dep_tree = replacer.visit(dep_tree)
-            ast.fix_missing_locations(dep_tree)
+            dep_tree = code_swap_refs(ast.parse(dep_code), hash_map)
 
             new_dep_code = ast.unparse(dep_tree)
 
@@ -5078,80 +5254,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
             hash_map[dep_hash] = new_dep_hash
 
     # Now refactor what_hash itself with all accumulated replacements
-    tree = ast.parse(normalized_code)
-
-    class DependencyReplacer(ast.NodeTransformer):
-        def visit_ImportFrom(self, node):
-            if node.module == 'bb.pool':
-                new_names = []
-                for alias in node.names:
-                    import_name = alias.name
-                    # Check if this is the from_hash import
-                    if import_name.startswith(BB_IMPORT_PREFIX):
-                        actual_hash = import_name[len(BB_IMPORT_PREFIX):]
-                    else:
-                        actual_hash = import_name
-
-                    if actual_hash == from_hash:
-                        # Replace with to_hash
-                        new_name = BB_IMPORT_PREFIX + to_hash
-                        new_names.append(ast.alias(name=new_name, asname=alias.asname))
-                    else:
-                        new_names.append(alias)
-                node.names = new_names
-            return node
-
-        def visit_Attribute(self, node):
-            # Transform object_from_hash._bb_v_0 -> object_to_hash._bb_v_0
-            if (isinstance(node.value, ast.Name) and
-                node.attr == '_bb_v_0'):
-                prefixed_name = node.value.id
-                if prefixed_name.startswith(BB_IMPORT_PREFIX):
-                    actual_hash = prefixed_name[len(BB_IMPORT_PREFIX):]
-                else:
-                    actual_hash = prefixed_name
-
-                if actual_hash == from_hash:
-                    node.value.id = BB_IMPORT_PREFIX + to_hash
-            self.generic_visit(node)
-            return node
-
-    class FinalReplacer(ast.NodeTransformer):
-        def visit_ImportFrom(self, node):
-            if node.module == 'bb.pool':
-                new_names = []
-                for alias in node.names:
-                    import_name = alias.name
-                    if import_name.startswith(BB_IMPORT_PREFIX):
-                        actual_hash = import_name[len(BB_IMPORT_PREFIX):]
-                    else:
-                        actual_hash = import_name
-
-                    # Replace with mapped hash if it exists
-                    if actual_hash in hash_map:
-                        new_name = BB_IMPORT_PREFIX + hash_map[actual_hash]
-                        new_names.append(ast.alias(name=new_name, asname=alias.asname))
-                    else:
-                        new_names.append(alias)
-                node.names = new_names
-            return node
-
-        def visit_Attribute(self, node):
-            if (isinstance(node.value, ast.Name) and node.attr == '_bb_v_0'):
-                prefixed_name = node.value.id
-                if prefixed_name.startswith(BB_IMPORT_PREFIX):
-                    actual_hash = prefixed_name[len(BB_IMPORT_PREFIX):]
-                else:
-                    actual_hash = prefixed_name
-
-                if actual_hash in hash_map:
-                    node.value.id = BB_IMPORT_PREFIX + hash_map[actual_hash]
-            self.generic_visit(node)
-            return node
-
-    replacer = FinalReplacer()
-    tree = replacer.visit(tree)
-    ast.fix_missing_locations(tree)
+    tree = code_swap_refs(ast.parse(normalized_code), hash_map)
 
     new_normalized_code = ast.unparse(tree)
 
@@ -5398,6 +5501,32 @@ def code_execute(func_hash: str, lang: str, args: list):
     return runtime_dir
 
 
+def code_inline_refs(normalized_code: str, names: Dict[str, str]) -> str:
+    """
+    Call bundled functions by name: bb.ref("<hash>") and object_<hash>._bb_v_0
+    become names[hash], and bb.pool imports go (for bb compile).
+    """
+    class Inliner(ast.NodeTransformer):
+        def visit_Call(self, node):
+            func_hash = code_ref_hash(node)
+            if func_hash in names:
+                return ast.Name(id=names[func_hash], ctx=ast.Load())
+            self.generic_visit(node)
+            return node
+
+        def visit_Attribute(self, node):
+            func_hash = code_pool_import_hash(node.value.id) if isinstance(node.value, ast.Name) else None
+            if node.attr == '_bb_v_0' and func_hash in names:
+                return ast.Name(id=names[func_hash], ctx=ast.Load())
+            self.generic_visit(node)
+            return node
+
+    tree = Inliner().visit(ast.parse(normalized_code))
+    tree.body = [node for node in tree.body if not (isinstance(node, ast.ImportFrom) and node.module == 'bb.pool')]
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
+
+
 def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool = False) -> str:
     """
     Generate a single Python file that includes all dependencies.
@@ -5471,9 +5600,10 @@ def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool =
             mapping_hash = mappings[0][0]
             docstring, name_mapping, alias_mapping, _ = mapping_load(dep_hash, lang, mapping_hash)
 
-            # Denormalize the code
+            # Denormalize the code; pool references already name bundled functions
             normalized_code_with_doc = code_replace_docstring(normalized_code, docstring)
-            code = code_denormalize(normalized_code_with_doc, name_mapping, alias_mapping)
+            code = code_denormalize(code_inline_refs(normalized_code_with_doc, hash_to_func_name),
+                                    name_mapping, {})
 
             # Make function name unique by appending hash prefix (prevents name collisions)
             original_func_name = name_mapping.get('_bb_v_0', '_bb_v_0')
@@ -5504,17 +5634,9 @@ def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool =
             tree = FunctionRenamer().visit(tree)
             code = ast.unparse(tree)
 
-            # Replace calls to other bb functions with their unique names
-            # alias_mapping structure: {hash: alias_name}
-            for other_hash, alias in alias_mapping.items():
-                # Get the unique function name for this hash
-                unique_name = hash_to_func_name.get(other_hash)
-                if unique_name:
-                    # Replace alias() with unique_name()
-                    code = code.replace(f'{alias}(', f'{unique_name}(')
         else:
             # Normal mode: use normalized code with unique function names
-            code = normalized_code
+            code = code_inline_refs(normalized_code, hash_to_func_name)
             func_name = hash_to_func_name[dep_hash]
 
             # Rename the function from _bb_v_0 to unique name using AST
@@ -5544,10 +5666,6 @@ def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool =
             tree = FunctionRenamer().visit(tree)
             code = ast.unparse(tree)
 
-            # Replace calls to other bb functions with their unique names
-            for other_hash, other_name in hash_to_func_name.items():
-                # Replace object_HASH._bb_v_0 with the unique function name
-                code = code.replace(f'object_{other_hash}._bb_v_0', other_name)
 
         # Strip bb imports - dependencies will be included inline
         code = code_strip_bb_imports(code)

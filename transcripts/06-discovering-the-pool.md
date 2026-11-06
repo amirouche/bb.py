@@ -95,7 +95,7 @@ def count_words(text):
 
 ### Text Summarizer `summarize_text_eng.py`
 ```python
-from bb.pool import object_80fbe90f88b2111ec0eedb666ef519b80003de52e2247233f0669dda0f354d86 as count_words
+from bb.pool import object_ad391f1465ab827da3ebb58e8f8418a57407fdd7bf21f64f82144adfa4084c23 as count_words
 
 def summarize_text(text):
     """Generate text statistics: total words, unique words, top word."""
