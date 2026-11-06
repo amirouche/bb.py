@@ -78,6 +78,7 @@ import hashlib
 import io
 import itertools
 import json
+import keyword
 import os
 import re
 import shlex
@@ -5783,15 +5784,31 @@ def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool =
 
     # In debug mode, we need to load mappings first to build proper unique names
     if debug_mode:
+        # Plain names when they are unique in the file: editing a helper then
+        # changes its own lines only. A hash suffix tells apart two functions
+        # called alike, and keeps a name off builtins and imported modules.
+        original = {}
+        imported = {'sys'}  # the entry point imports sys
         for dep_hash in deps:
             mappings = mappings_list(dep_hash, lang)
             if mappings:
-                mapping_hash = mappings[0][0]
-                _, name_mapping, _, _ = mapping_load(dep_hash, lang, mapping_hash)
-                original_func_name = name_mapping.get('_bb_v_0', '_bb_v_0')
-                hash_to_func_name[dep_hash] = f'{original_func_name}_{dep_hash[:8]}'
-            else:
+                _, name_mapping, _, _ = mapping_load(dep_hash, lang, mappings[0][0])
+                original[dep_hash] = name_mapping.get('_bb_v_0', '_bb_v_0')
+            for node in ast.walk(ast.parse(object_load(dep_hash)['normalized_code'])):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    imported.update((a.asname or a.name).split('.')[0] for a in node.names)
+        counts = {}
+        for name in original.values():
+            counts[name] = counts.get(name, 0) + 1
+        reserved = PYTHON_BUILTINS | set(keyword.kwlist) | imported
+        for dep_hash in deps:
+            name = original.get(dep_hash)
+            if name is None:
                 hash_to_func_name[dep_hash] = f'_bb_{dep_hash[:8]}'
+            elif counts[name] == 1 and name not in reserved:
+                hash_to_func_name[dep_hash] = name
+            else:
+                hash_to_func_name[dep_hash] = f'{name}_{dep_hash[:8]}'
     else:
         for dep_hash in deps:
             hash_to_func_name[dep_hash] = f'_bb_{dep_hash[:8]}'
@@ -5811,9 +5828,9 @@ def compile_generate_python(func_hash: str, lang: str = None, debug_mode: bool =
             code = code_denormalize(code_inline_refs(normalized_code_with_doc, hash_to_func_name),
                                     name_mapping, {})
 
-            # Make function name unique by appending hash prefix (prevents name collisions)
+            # The name chosen above: plain when unique, with a hash suffix otherwise
             original_func_name = name_mapping.get('_bb_v_0', '_bb_v_0')
-            func_name = f'{original_func_name}_{dep_hash[:8]}'
+            func_name = hash_to_func_name[dep_hash]
 
             # Rename the denormalized function to the unique name
             tree = ast.parse(code)
