@@ -31,3 +31,15 @@ def test_a_refactor_composes_with_an_edit_the_root_does_not_use_yet(tmp_path):
     main = current(pool, 'main')
     assert pool.run(main, 1) == '33'  # ...with both changes: (1 + 10) * 3
     assert 'No matches found' in pool.bb('search', '--diverged').stdout
+
+
+def test_rm_refuses_a_function_still_in_use(tmp_path):
+    pool = Pool(tmp_path)
+    leaf = hash_of(pool.edit('leaf', 'def leaf(n):\n    """Leaf."""\n    return n + 1\n'))
+    user = hash_of(pool.edit('user', 'import bb\nleaf = bb.latest("leaf")\n\n\ndef user(n):\n    """User."""\n    return leaf(n)\n'))
+    refused = pool.bb('rm', leaf)
+    assert refused.returncode == 1 and f'used by user {user}' in refused.stderr
+    assert pool.bb('latest', 'leaf@eng').returncode == 0  # still there
+    assert pool.bb('rm', user).returncode == 0  # nothing uses user
+    assert pool.bb('rm', leaf).returncode == 0  # and now nothing uses leaf
+    assert pool.bb('rm', '--force', 'x' * 64).returncode == 1  # a missing function is still an error

@@ -3078,7 +3078,7 @@ def command_translate(identifier_with_lang: str, target_lang: str, recursive: bo
             command_translate(f"{dep_hash}@{source_lang}", target_lang, recursive=True)
 
 
-def command_rm(identifier: str):
+def command_rm(identifier: str, force: bool = False):
     """
     Remove a function or a specific language mapping.
 
@@ -3086,6 +3086,10 @@ def command_rm(identifier: str):
 
     - bb rm identifier@lang - Remove only the language mapping
     - bb rm identifier - Remove the entire function with all mappings
+
+    A function that other functions still use (as a dependency or a
+    check) or that a restore record names is not removed, since they would
+    then refer to nothing; bb lists them. --force removes it anyway.
     """
     import shutil
 
@@ -3117,6 +3121,19 @@ def command_rm(identifier: str):
         # Remove the entire function
         if not func_dir.exists():
             print(f"Error: Function directory not found: {hash_value}", file=sys.stderr)
+            sys.exit(1)
+        index = storage_pool_index()
+        users = sorted(set(index['importers'].get(hash_value, [])) | set(index['checked_by'].get(hash_value, [])))
+        records = sorted(rid for rid, r in index['restores'].items() if hash_value in (r['restores'], r['supersedes']))
+        if (users or records) and not force:
+            print(f"Error: {helper_function_label(hash_value)} ({hash_value}) is still in use; nothing removed:",
+                  file=sys.stderr)
+            for user in users:
+                state = "current" if user in index['current'] else "older version"
+                print(f"  used by {helper_function_label(user)} {user} ({state})", file=sys.stderr)
+            for rid in records:
+                print(f"  named by restore record {rid}", file=sys.stderr)
+            print("Remove those first, or use --force to leave them referring to nothing.", file=sys.stderr)
             sys.exit(1)
 
         # Get list of languages before deletion
@@ -6293,6 +6310,8 @@ def _build_parser():
     # Rm command
     rm_parser = subparsers.add_parser('rm', help='Remove function or language mapping')
     rm_parser.add_argument('identifier', help='Hash or name, with optional @lang to remove only that language')
+    rm_parser.add_argument('--force', action='store_true',
+                           help='Remove a function even though other functions still use it')
 
     # Run command
     run_parser = subparsers.add_parser('run', help='Execute a function from the pool')
@@ -6436,7 +6455,7 @@ def main():
     elif args.command == 'translate':
         command_translate(args.identifier, args.target_lang, recursive=args.recursive)
     elif args.command == 'rm':
-        command_rm(args.identifier)
+        command_rm(args.identifier, force=args.force)
     elif args.command == 'run':
         command_run(args.identifier, func_args=args.func_args)
     elif args.command == 'edit':

@@ -205,8 +205,15 @@ The function is still accessible in English.
 When you want to completely remove a function from the pool, use `bb rm HASH` (without the language suffix). This removes the function and all its language mappings.
 
 ### Step 15: Remove get_pi (creates broken dependencies)
+bb refuses to remove a function other functions still use, and lists them:
 ```bash
-$ bb rm $PI_HASH | head -1
+$ (bb rm $PI_HASH 2>&1 || true) | grep -c "still in use"
+1
+```
+
+`--force` removes it anyway, leaving its users referring to nothing:
+```bash
+$ bb rm --force $PI_HASH | head -1
 Removed function: $PI_HASH
 ```
 
@@ -233,22 +240,24 @@ The tree shows that `add_numbers` depends on a missing function (hash shown, mar
 
 Let's clean up the remaining functions to demonstrate complete removal.
 
-### Step 18: Remove multiply_numbers
+Callers go first: a function is removed once nothing uses it.
+
+### Step 18: Remove calculator_main
+```bash
+$ bb rm $CALC_HASH | head -1
+Removed function: $CALC_HASH
+```
+
+### Step 19: Remove multiply_numbers
 ```bash
 $ bb rm $MUL_HASH | head -1
 Removed function: $MUL_HASH
 ```
 
-### Step 19: Remove add_numbers
+### Step 20: Remove add_numbers
 ```bash
 $ bb rm $ADD_HASH | head -1
 Removed function: $ADD_HASH
-```
-
-### Step 20: Remove calculator_main
-```bash
-$ bb rm $CALC_HASH | head -1
-Removed function: $CALC_HASH
 ```
 
 ### Step 21: Verify pool is empty
