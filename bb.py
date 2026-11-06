@@ -3370,7 +3370,8 @@ def command_rm(identifier: str, force: bool = False):
     import shutil
 
     hash_value, lang = helper_parse_identifier(identifier)
-    remove_lang_only = lang is not None
+    # Only an explicit @lang removes one mapping: a bare name resolves with a language too
+    remove_lang_only = '@' in identifier
 
     pool_dir = storage_get_pool_directory()
     func_dir = pool_dir / hash_value[:2] / hash_value[2:]
@@ -3527,7 +3528,7 @@ def code_shingles(normalized_code: str, size: int = 3) -> Set[Tuple[str, ...]]:
 
 
 def code_find_similar(func_hash: str, exclude: Set[str] = None,
-                      threshold: float = 0.4, min_size: int = 10) -> List[Tuple[float, str]]:
+                      threshold: float = 0.4, min_size: int = 20) -> List[Tuple[float, str]]:
     """
     Find current functions whose structure is close to func_hash.
 
@@ -3535,8 +3536,9 @@ def code_find_similar(func_hash: str, exclude: Set[str] = None,
     node types, with variables encoded by distance (see code_shape_tokens).
     On the transcripts, small edits of a function score 0.48 to 0.88 and
     unrelated functions or real rewrites at most 0.31, hence 0.4.
-    Tiny functions (under min_size 3-grams) are never reported: they look
-    alike by nature. Checks are left out on both sides for the same reason.
+    Small functions (under min_size 3-grams, about a three-line body) are
+    never reported: they look alike by nature (two stores that each return
+    shared(name, factory) score 100%). Checks are left out on both sides for the same reason.
 
     Args:
         func_hash: The function to compare
@@ -3571,9 +3573,13 @@ def helper_report_similar(func_hash: str, exclude: Set[str] = None):
     similar = code_find_similar(func_hash, exclude)
     if not similar:
         return
-    print("Note: similar functions already exist; consider reusing or forking one:", file=sys.stderr)
+    mine = helper_function_label(func_hash)
+    print(f"Note: {mine} looks like these other functions; "
+          f"consider using or forking one instead:", file=sys.stderr)
     for score, other_hash in similar:
-        print(f"  {score:.0%}  {other_hash}  {helper_function_label(other_hash)}", file=sys.stderr)
+        label = helper_function_label(other_hash)
+        same = "  (another function with the same name)" if label == mine else ""
+        print(f"  {score:.0%} like {label} ({other_hash}){same}", file=sys.stderr)
 
 
 def helper_lineage(func_hash: str) -> Set[str]:

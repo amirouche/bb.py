@@ -299,8 +299,8 @@ def split_words(sentence):
 
 ```bash
 $ (bb add split_words_eng.py@eng 2>&1) | grep -v "^Hash\|^Mapping"
-Note: similar functions already exist; consider reusing or forking one:
-  55%  $TOK_HASH  tokenize
+Note: split_words looks like these other functions; consider using or forking one instead:
+  55% like tokenize ($TOK_HASH)
 ```
 
 ---

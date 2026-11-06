@@ -48,3 +48,12 @@ def test_update_keeps_pins(tmp_path):
     pool.edit('keep', pinned)
     assert 'is up to date' in pool.bb('update', 'keep@eng', '-m', 'no').stdout
     assert f"qux = bb.ref('{v1}')" in pool.bb('show', 'keep@eng').stdout
+
+
+def test_rm_name_without_lang_removes_the_whole_function(tmp_path):
+    pool = Pool(tmp_path)
+    pool.edit('lonely', 'def lonely():\n    """L."""\n    return 7\n')
+    removed = pool.bb('rm', 'lonely')
+    assert removed.returncode == 0 and 'Removed function' in removed.stdout, removed.stdout + removed.stderr
+    assert 'No language mappings remain' not in removed.stdout
+    assert 'Functions (0 current versions)' in pool.bb('search').stdout
