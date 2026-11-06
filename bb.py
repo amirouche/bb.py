@@ -2066,6 +2066,7 @@ def command_log():
     message, in your preferred language when translated.
     """
     entries = []
+    names = {func_hash: function['names'] for func_hash, function in storage_scan_functions().items()}
 
     pool_dir = storage_get_pool_directory()
     if pool_dir.exists():
@@ -2083,8 +2084,11 @@ def command_log():
                     continue
                 metadata = data.get('metadata', {})
                 langs = sorted(item.name for item in func_dir.iterdir() if item.is_dir() and len(item.name) == 3)
-                lines = [f"Hash: {data['hash']}",
-                         f"Date: {metadata.get('created', 'unknown')}",
+                lines = [f"Hash: {data['hash']}"]
+                named = names.get(data['hash'], {})
+                if named:
+                    lines.append(f"Names: {', '.join(f'{name}@{lang}' for lang, name in sorted(named.items()))}")
+                lines += [f"Date: {metadata.get('created', 'unknown')}",
                          f"Author: {helper_format_author(metadata)}"]
                 if metadata.get('parent'):
                     lines.append(f"Parent: {metadata['parent']}")
@@ -2681,7 +2685,7 @@ def helper_resolve_name(name: str, lang: str = None) -> Tuple[str, str]:
     return head, lang or (matching[0] if matching else helper_pick_language(head))
 
 
-def command_latest(name: str, lang: str = None, as_json: bool = False):
+def command_latest(name: str, lang: str = None, as_json: bool = False, hash_only: bool = False):
     """
     List the current versions of a function by name.
 
@@ -2693,12 +2697,18 @@ def command_latest(name: str, lang: str = None, as_json: bool = False):
     Args:
         name: Function name to search for
         lang: Optional language code to filter results
+        hash_only: print only the hashes, one per line (for scripts)
     """
     heads, functions = helper_find_heads_by_name(name, lang)
     lang_str = f"@{lang}" if lang else ""
     if not heads:
         print(f"No function found with name: {name}{lang_str}", file=sys.stderr)
         sys.exit(1)
+
+    if hash_only:
+        for func_hash in heads:
+            print(func_hash)
+        return
 
     if as_json:
         print(json.dumps([{'hash': h, 'created': functions[h]['metadata'].get('created', ''),
@@ -2818,6 +2828,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     whether their name has diverged into several current versions. Only
     current versions (that nobody forked) are listed unless --all.
 
+    With no words and no filter, every current function is listed.
+
     Filters, combinable with words or used alone:
 
     ```
@@ -2832,12 +2844,6 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     --json        machine-readable output
     ```
     """
-    filters = untested or unreviewed or diverged or unused or uses or outdated
-    if not query and not filters:
-        print("Error: Give search terms, a filter (--untested, --unreviewed, --diverged, "
-              "--unused, --outdated, --uses), or both (bb log lists every function)", file=sys.stderr)
-        sys.exit(1)
-
     uses_hash = helper_resolve_to_hash(uses) if uses else None
     terms = [term.lower() for term in query]
     index = storage_pool_index()
@@ -2904,12 +2910,15 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
                                                     ('--diverged', diverged), ('--unused', unused),
                                                     ('--outdated', outdated)) if on]
                      + ([f"--uses {uses}"] if uses else []))
-    print(f"Search Results ({len(results)} matches for: {asked})")
+    if asked:
+        print(f"Search Results ({len(results)} matches for: {asked})")
+    else:
+        print(f"Functions ({len(results)} current versions)")
     print("=" * 80)
     print()
 
     if not results:
-        print("No matches found")
+        print("No matches found" if asked else "Nothing listed")
         return
 
     for r in results:
@@ -6599,6 +6608,8 @@ def _build_parser():
     latest_parser.add_argument('name', help='Function name to find (or name@lang)')
     latest_parser.add_argument('lang', nargs='?', help='Optional language code to filter (e.g., eng, fra)')
     latest_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
+    latest_parser.add_argument('--hash', dest='hash_only', action='store_true',
+                               help='Print only the hashes of current versions, one per line')
 
     # Worklog command with subcommands
     worklog_parser = subparsers.add_parser('worklog', help='Write, translate and list worklogs')
@@ -6711,7 +6722,7 @@ def main():
         name, lang = args.name, args.lang
         if '@' in name and not lang:
             name, lang = name.rsplit('@', 1)  # name@lang, as every other command takes it
-        command_latest(name, lang, as_json=args.as_json)
+        command_latest(name, lang, as_json=args.as_json, hash_only=args.hash_only)
     elif args.command == 'worklog':
         if args.worklog_command == 'new':
             command_worklog_new(args.references, message=args.message)

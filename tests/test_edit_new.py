@@ -94,4 +94,18 @@ def test_latest_takes_name_at_lang_like_every_other_command(tmp_path):
     draft.write_text(draft.read_text().replace('raise NotImplementedError', 'return 1'))
     assert bb(editor_env(tmp_path, f'cp {draft}'), 'edit', 'slugify@eng', '-m', 'new').returncode == 0
     assert bb(read, 'latest', 'slugify@eng').stdout == bb(read, 'latest', 'slugify', 'eng').stdout != ''
-    assert 'bb log lists every function' in bb(read, 'search').stderr
+
+
+def test_search_alone_lists_functions_log_names_them_latest_hash_prints_hashes(tmp_path):
+    draft = tmp_path / 'draft.md'
+    read = editor_env(tmp_path, f'sh -c \'cp "$0" {draft}\'')
+    bb(read, 'edit', 'slugify@eng')
+    draft.write_text(draft.read_text().replace('raise NotImplementedError', 'return 1'))
+    saved = bb(editor_env(tmp_path, f'cp {draft}'), 'edit', 'slugify@eng', '-m', 'new')
+    func_hash = saved.stdout.split('Hash:')[1].split()[0]
+
+    listed = bb(read, 'search')
+    assert listed.returncode == 0 and 'Functions (1 current versions)' in listed.stdout
+    assert 'Name: slugify (eng)' in listed.stdout
+    assert 'Names: slugify@eng' in bb(read, 'log').stdout
+    assert bb(read, 'latest', 'slugify@eng', '--hash').stdout == func_hash + '\n'

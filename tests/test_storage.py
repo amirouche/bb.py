@@ -661,7 +661,7 @@ def test_search_diverged_filter(mock_bb_dir, capsys):
     assert sorted(r['hash'] for r in _search(capsys, diverged=True)) == [one, two]
 
 
-def test_search_needs_terms_or_filter(mock_bb_dir):
-    """Searching for nothing at all is an error"""
-    with pytest.raises(SystemExit):
-        bb.command_search([])
+def test_search_alone_lists_the_pool(mock_bb_dir, capsys):
+    """Searching for nothing at all lists every current function (an empty pool: nothing)"""
+    bb.command_search([])
+    assert 'Functions (0 current versions)' in capsys.readouterr().out
