@@ -35,6 +35,9 @@ Writing functions for the pool:
       parse_amount = bb.resolve("parse_amount")  # by name
       parse_amount = bb.ref("<hash>")            # or an exact version
 
+  These lines go at module level, above the def, with the other imports:
+  bb refuses `import bb` and bb.resolve inside a function body.
+
   A name is resolved when you save (bb add, bb edit), in the language you
   save in (then your `bb whoami language` languages, then any), to its one
   current version (the end of that name's lineage of edits, never by
@@ -160,7 +163,9 @@ Writing functions for the pool:
   exists, bb saves every section that changed, functions before the
   sections that use them, and stops at the first that cannot be saved.
   Add a function by adding a `# new_name` section. Edit related functions
-  together this way rather than one draft each.
+  together this way rather than one draft each. Saving an existing file
+  needs no names (`bb scratchpad FILE -m why`): its language is the first of
+  your `bb whoami` languages unless a NAME@lang says otherwise.
 - Context: `bb tree name@lang` shows what a function uses, down to the
   leaves, with each one's docstring, and marks what is `[out of date]`,
   `[behind]`, `[pinned]` or `[not yet translated ...]`; `bb caller
@@ -6762,7 +6767,11 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
             print(f"Error: {file}: {e}", file=sys.stderr)
             sys.exit(1)
         if lang is None:
-            print("Error: give the scratchpad's language with at least one NAME@lang", file=sys.stderr)
+            # An existing scratchpad names its functions itself: its language is yours
+            lang = (storage_read_config()['user'].get('languages') or [None])[0]
+        if lang is None:
+            print("Error: give the scratchpad's language with one NAME@lang, or set yours with "
+                  "bb whoami language LANG", file=sys.stderr)
             sys.exit(1)
         titles = [name for name, _ in sections]
         if len(set(titles)) != len(titles):

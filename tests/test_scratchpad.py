@@ -96,3 +96,14 @@ def test_tree_opens_a_function_and_all_it_uses_and_one_section_is_an_edit_file(t
     pool.bb('scratchpad', 'money@eng', str(one))
     pool.bb('edit', 'money@eng', str(edit))
     assert one.read_text() == edit.read_text()
+
+
+def test_saving_an_existing_scratchpad_needs_no_names(tmp_path):
+    pool = Pool(tmp_path)
+    pool.bb('whoami', 'language', 'eng')
+    pool.edit('money', MONEY)
+    pad = tmp_path / 'pad.md'
+    pool.bb('scratchpad', 'money@eng', str(pad))
+    pad.write_text(pad.read_text().replace(':.2f', ':.3f'))
+    saved = pool.bb('scratchpad', str(pad), '-m', 'no names')
+    assert saved.returncode == 0 and 'saved money' in saved.stdout, saved.stderr
