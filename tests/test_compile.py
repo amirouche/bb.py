@@ -55,3 +55,13 @@ def test_compiled_functions_keep_their_names_unless_that_would_clash(cli_runner,
     assert 'def sum(' not in text and 'def sum_' in text  # would shadow the builtin
     result = subprocess.run([sys.executable, str(program), '1', '2', '3'], capture_output=True, text=True)
     assert result.stdout == '12\n', result.stderr
+
+
+def test_compiling_needs_no_review_running_with_bb_does(cli_runner, tmp_path):
+    source = tmp_path / 'hello_eng.py'
+    source.write_text('def hello(*argv):\n    """Greet."""\n    print("hello")\n', encoding='utf-8')
+    cli_runner.add(str(source), 'eng')
+    program = tmp_path / 'hello.py'
+    assert bb(cli_runner, 'compile', '--output', str(program), 'hello@eng').returncode == 0
+    assert subprocess.run([sys.executable, str(program)], capture_output=True, text=True).stdout == 'hello\n'
+    assert bb(cli_runner, 'run', 'hello@eng').returncode != 0  # running in bb still needs review

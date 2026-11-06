@@ -399,7 +399,7 @@ def render_tag_page(tag, posts, site_title, locale):
 
 ### Step 7: Compile the locale-prefixed builder
 ```bash
-# bb only runs or compiles code you have reviewed
+# bb only runs code you have reviewed
 $ yes | bb review $BUILD_HASH@eng > /dev/null
 $ bb compile --output blog_locale.py $BUILD_HASH@eng
 ```
@@ -448,7 +448,7 @@ def construire_blog(repertoire_source, repertoire_sortie, titre_site, url_site, 
 ### Step 11: Compile with French identifiers
 ```bash
 # SKIP-TEST: compile demonstration
-# bb only runs or compiles code you have reviewed
+# bb only runs code you have reviewed
 $ yes | bb review $BUILD_HASH@fra > /dev/null
 $ bb compile --output moteur_blog_locale.py $BUILD_HASH@fra
 $ head -3 moteur_blog_locale.py

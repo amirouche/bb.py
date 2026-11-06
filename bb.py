@@ -5945,9 +5945,12 @@ def command_compile(identifier: str, debug_mode: bool = False, output_path: Opti
     Compile a function into a standalone Python file.
 
     Accepts a hash or function name (with optional @lang suffix).
-    Refuses unless you approved the function and its dependencies with
-    bb review. When a name is provided with @lang, debug mode is implicit.
-    The generated file can be run directly with Python or compiled separately
+    Compiling only writes a file, so it needs no review: running that file
+    is the reader's decision, as with any script (bb run, which runs code,
+    still requires bb review). When a name is provided with @lang, debug
+    mode is implicit, and functions keep their names (a hash suffix only
+    where two are called alike, or a name would shadow a builtin or an
+    import). The generated file can be run directly with Python or compiled separately
     with tools like Nuitka, PyInstaller, or PyOxidizer.
     """
     # Check if identifier is a name (not a full hash) with @lang suffix
@@ -5961,9 +5964,6 @@ def command_compile(identifier: str, debug_mode: bool = False, output_path: Opti
         debug_mode = True
 
     func_hash, lang = helper_parse_identifier(identifier)
-
-    # A compiled file runs anywhere: only package code you have read
-    review_require(func_hash, "compile")
 
     # Debug mode requires language
     if debug_mode and lang is None:

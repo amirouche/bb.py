@@ -200,7 +200,7 @@ def render_post(file_content, site_title):
 
 ### Step 6: Compile the blog builder to a standalone script
 ```bash
-# bb only runs or compiles code you have reviewed
+# bb only runs code you have reviewed
 $ yes | bb review $BUILD_HASH@eng > /dev/null
 $ bb compile --output blog_engine.py $BUILD_HASH@eng
 ```
@@ -380,7 +380,7 @@ $ BUILD_V2_HASH=$(bb add build_blog_with_tags_eng.py@eng | grep '^Hash:' | awk '
 ### Step 11: Compile and test with tagged posts
 ```bash
 # SKIP-TEST: compile and heredoc demonstration
-# bb only runs or compiles code you have reviewed
+# bb only runs code you have reviewed
 $ yes | bb review $BUILD_V2_HASH@eng > /dev/null
 $ bb compile --output blog_engine_v2.py $BUILD_V2_HASH@eng
 $ mkdir -p posts_v2
@@ -718,7 +718,7 @@ def regrouper_etiquettes(articles):
 ### Step 22: Compile with French identifiers
 ```bash
 # SKIP-TEST: compile demonstration
-# bb only runs or compiles code you have reviewed
+# bb only runs code you have reviewed
 $ yes | bb review $BUILD_V2_HASH@fra > /dev/null
 $ bb compile --output moteur_blog.py $BUILD_V2_HASH@fra
 $ head -5 moteur_blog.py

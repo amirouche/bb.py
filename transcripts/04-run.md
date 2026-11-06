@@ -78,7 +78,7 @@ $ PRINT_HASH=$(bb add print_pi_eng.py@eng | grep '^Hash:' | awk '{print $2}')
 
 ### Step 3: Run by name
 ```bash
-# bb only runs or compiles code you have reviewed
+# bb only runs code you have reviewed
 $ yes | bb review print_pi@eng > /dev/null
 $ bb run print_pi@eng 3
 3.466666666666667
@@ -86,7 +86,7 @@ $ bb run print_pi@eng 3
 
 ### Step 4: Run by hash
 ```bash
-# bb only runs or compiles code you have reviewed
+# bb only runs code you have reviewed
 $ yes | bb review $PRINT_HASH@eng > /dev/null
 $ bb run $PRINT_HASH@eng 100
 3.1315929035585537
@@ -94,7 +94,7 @@ $ bb run $PRINT_HASH@eng 100
 
 ### Step 5: Calling compute_pi directly prints nothing
 ```bash
-# bb only runs or compiles code you have reviewed
+# bb only runs code you have reviewed
 $ yes | bb review compute_pi@eng > /dev/null
 $ bb run compute_pi@eng 3 | wc -c
 0

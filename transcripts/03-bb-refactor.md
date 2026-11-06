@@ -163,7 +163,7 @@ def ceremony(first, last):
 
 ### Step 10: Compile and run the global-refactored ceremony
 ```bash
-# bb only runs or compiles code you have reviewed
+# bb only runs code you have reviewed
 $ yes | bb review $CEREMONY_GLOBAL@eng > /dev/null
 $ bb compile --output ceremony_global.py $CEREMONY_GLOBAL@eng
 ```
@@ -210,7 +210,7 @@ global != surgical
 
 ### Step 14: Compile the surgical-refactored ceremony
 ```bash
-# bb only runs or compiles code you have reviewed
+# bb only runs code you have reviewed
 $ yes | bb review $CEREMONY_SURGICAL@eng > /dev/null
 $ bb compile --output ceremony_surgical.py $CEREMONY_SURGICAL@eng
 ```
