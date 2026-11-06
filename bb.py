@@ -1094,7 +1094,7 @@ class _ReadableUnparser(_ast_unparser_class() or object):
 
     def visit_Constant(self, node):
         value = node.value
-        if (isinstance(value, str) and '\n' in value and node.kind is None
+        if (isinstance(value, str) and '\n' in value.rstrip('\n') and node.kind is None
                 and not getattr(self, '_avoid_backslashes', False) and not getattr(self, '_in_fstring', False)):
             for quote in ('"""', "'''"):
                 if quote in value or value.endswith(quote[0]):
@@ -4681,6 +4681,11 @@ def edit_load_section(func_hash: str, lang: str) -> Dict[str, Any]:
     }
 
 
+def edit_section_name(section: Dict[str, Any], prepared: Dict[str, Any]) -> str:
+    """The name an edit file gives its function."""
+    return prepared['name_mapping'].get('_bb_v_0') or section.get('title', '')
+
+
 def edit_fingerprint(func_hash: str, docstring: str, name_mapping: Dict[str, str],
                      alias_mapping: Dict[str, str], markdown: str) -> Tuple[str, str]:
     """Identify a section by function hash and mapping content (comment excluded)."""
@@ -5000,6 +5005,14 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     check_hashes = sorted(set(p['hash'] for _, p in plan['checks']))
     # The checks are part of the implementation's definition, hence of its hash
     prepared['hash'] = code_compute_function_hash(prepared['normalized_code'], check_hashes)
+    if hash_value is None and code_detect_schema(prepared['hash']) is not None:
+        # Same code, same function: a second name would hide behind the first one's mapping
+        existing = edit_load_section(prepared['hash'], lang)['title']
+        if existing != edit_section_name(section, prepared):
+            print(f"Error: this code is already in the pool as {existing} ({prepared['hash']}). Nothing saved: "
+                  f"use that function (from bb.pool import {existing}), or give "
+                  f"{edit_section_name(section, prepared)} code of its own.", file=sys.stderr)
+            sys.exit(1)
 
     # Compare with what was loaded: hashes, names and documentation
     original_prints = {s['fingerprint'] for s in [original] + original_checks}

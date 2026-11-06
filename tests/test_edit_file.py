@@ -57,3 +57,17 @@ def test_a_failing_save_leaves_the_file_alone(tmp_path):
     failed = pool.bb('edit', 'broken@eng', str(draft), '-m', 'x')
     assert failed.returncode == 1 and 'unchanged' in failed.stderr
     assert draft.read_text() == text
+
+
+def test_a_new_name_for_code_already_in_the_pool_is_refused(tmp_path):
+    pool = Pool(tmp_path)
+    pool.edit('double', 'def double(n):\n    """Twice n."""\n    return 2 * n\n')
+    same = pool.edit('twice', 'def twice(n):\n    """Twice n."""\n    return 2 * n\n')
+    assert same.returncode == 1 and 'already in the pool as double' in same.stderr
+
+
+def test_a_bare_newline_stays_escaped():
+    import ast
+    import bb
+    assert bb.code_unparse_readable(ast.parse('x = "\\n"\n')) == "x = '\\n'"
+    assert bb.code_unparse_readable(ast.parse('x = "a\\nb"\n')) == 'x = """a\nb"""'
