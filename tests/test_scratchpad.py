@@ -111,3 +111,13 @@ def test_saving_an_existing_scratchpad_needs_no_names(tmp_path):
     pad.write_text(pad.read_text().replace(':.2f', ':.3f'))
     saved = pool.bb('scratchpad', str(pad), '-m', 'no names')
     assert saved.returncode == 0 and 'saved money' in saved.stdout, saved.stderr
+
+
+def test_a_section_that_is_only_a_code_block_is_its_implementation(tmp_path):
+    pool = Pool(tmp_path)
+    pad = tmp_path / 'pad.md'
+    pad.write_text(f'# money\n\n```python def\n{MONEY}```\n\n# badge\n\n```python def\n{BADGE}```\n')
+    saved = pool.bb('scratchpad', 'money@eng', str(pad), '-m', 'bare')
+    assert saved.returncode == 0, saved.stderr
+    assert latest(pool, 'money') and latest(pool, 'badge')
+    assert '## Implementation' in pad.read_text()  # rewritten in the full form

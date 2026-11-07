@@ -162,7 +162,8 @@ Writing functions for the pool:
   (`--tree name@lang` adds a function and everything it uses); when it
   exists, bb saves every section that changed, functions before the
   sections that use them, and stops at the first that cannot be saved.
-  Add a function by adding a `# new_name` section. Edit related functions
+  Add a function by adding a `# new_name` section (a section that is only
+  a ```python def block needs no `## Implementation` heading). Edit related functions
   together this way rather than one draft each. Saving an existing file
   needs no names (`bb scratchpad FILE -m why`): its language is the first of
   your `bb whoami` languages unless a NAME@lang says otherwise.
@@ -5189,6 +5190,10 @@ def markdown_parse_edit(text: str) -> Dict[str, Any]:
             if current in sections:
                 raise EditFormatError(f"Duplicate section: '## {current}'")
             sections[current] = []
+        elif current is None and kind == 'open' and not sections:
+            # A code block with no heading above it is the implementation (a function with no prose)
+            current = EDIT_IMPLEMENTATION_HEADING
+            sections[current] = [(line, kind)]
         elif current is None:
             if (line.strip() and not line.startswith('# ') and not _EDIT_MARKER_RE.match(line.strip())
                     and not _EDIT_COMMENT_RE.match(line.strip())):
