@@ -6815,6 +6815,26 @@ def scratchpad_tree_names(identifier: str) -> List[str]:
     return [f"{name}@{lang}" for name in order]
 
 
+def scratchpad_compact_report(report: str) -> str:
+    """
+    A section's bb edit report, shorter: one scratchpad saves many
+    functions, so "No checks." goes and the section's imports fold into
+    one line with short hashes. Check results and the hash stay.
+    """
+    lines, imports = [], []
+    for line in report.splitlines(True):
+        found = re.match(r'Import: (\S+) -> ([0-9a-f]{64})(?: \(was ([0-9a-f]{64})\))?\s*$', line)
+        if found:
+            was = f" (was {found.group(3)[:12]})" if found.group(3) else ""
+            imports.append(f"{found.group(1)} -> {found.group(2)[:12]}{was}")
+        elif line.strip() != 'No checks.':
+            lines.append(line)
+    if imports:
+        at = next((i for i, line in enumerate(lines) if line.startswith('Hash: ')), len(lines))
+        lines.insert(at, f"Imports: {', '.join(imports)}\n")
+    return ''.join(lines)
+
+
 def command_scratchpad(identifiers: List[str], file: str, comment: str = None, tree: str = None,
                        unreviewed: bool = False):
     """
@@ -6919,7 +6939,7 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
                     failed = name
             finally:
                 # bb's own draft file stands for a section of the scratchpad
-                print(output.getvalue().replace(str(draft), where), end='')
+                print(scratchpad_compact_report(output.getvalue().replace(str(draft), where)), end='')
                 sys.stdout.flush()  # the section's report comes before the reason it stopped
                 # The summary below says what was kept: drop bb edit's own "Not saved" line
                 errors = io.StringIO(''.join(line for line in errors.getvalue().splitlines(True)

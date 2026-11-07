@@ -28,7 +28,8 @@ def test_write_then_save_unchanged_then_edit_two_of_three(tmp_path):
     assert 'saved money, label; unchanged badge' in saved.stdout
     assert latest(pool, 'badge') == before
     # label was saved after money and uses its new version
-    assert f"Import: money -> {latest(pool, 'money')[0]}" in saved.stdout
+    assert f"Imports: money -> {latest(pool, 'money')[0][:12]}" in saved.stdout
+    assert 'No checks.' not in saved.stdout
 
 
 def test_a_new_function_in_the_file_is_saved_before_what_uses_it(tmp_path):
