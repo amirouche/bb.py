@@ -202,6 +202,7 @@ import shlex
 import subprocess
 import sys
 import struct
+import symtable
 import shutil
 import tempfile
 import time
@@ -4837,6 +4838,60 @@ def code_check_positional(source_code: str, tree: ast.Module, where: str):
         raise ValueError('\n'.join(lines))
 
 
+MODULE_GLOBALS = {'__name__', '__file__', '__doc__', '__builtins__', '__spec__', '__loader__', '__package__'}
+
+
+def code_check_defined(source_code: str, tree: ast.Module, where: str):
+    """
+    Refuse a function that reads a name defined nowhere.
+
+    A name is defined when the function (or a function inside it) binds
+    it, an import or a bb binding (NAME = bb.resolve("NAME") or bb.ref)
+    gives it, or it is a builtin. Anything else would only fail with a
+    NameError when the function runs, for example a bb.resolve binding
+    that was dropped while unused and is now used again. A file with
+    `from x import *` is not checked.
+
+    Raises:
+        ValueError: listing each undefined name with the line of its first use
+    """
+    if any(isinstance(node, ast.ImportFrom) and any(a.name == '*' for a in node.names) for node in tree.body):
+        return
+    try:
+        table = symtable.symtable(source_code, where, 'exec')
+    except SyntaxError:
+        return
+    defined = {sym.get_name() for sym in table.get_symbols() if sym.is_assigned() or sym.is_imported()}
+    defined |= PYTHON_BUILTINS | MODULE_GLOBALS | {'bb'}
+    undefined = set()
+
+    def visit(scope):
+        for sym in scope.get_symbols():
+            if (sym.is_referenced() and sym.is_global() and not sym.is_assigned()
+                    and not sym.is_parameter() and not sym.is_local() and not sym.is_free()
+                    and sym.get_name() not in defined):
+                undefined.add(sym.get_name())
+        for child in scope.get_children():
+            visit(child)
+
+    for child in table.get_children():
+        visit(child)
+    undefined |= {sym.get_name() for sym in table.get_symbols()
+                  if sym.is_referenced() and not sym.is_assigned() and not sym.is_imported()
+                  and sym.get_name() not in defined}
+    if not undefined:
+        return
+    first = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in undefined and isinstance(node.ctx, ast.Load):
+            first[node.id] = min(first.get(node.id, node.lineno), node.lineno)
+    lines = [f"{where} uses names that are defined nowhere (they would fail with a NameError when it runs):"]
+    lines += [f"  line {first.get(name, '?')}: {name}" for name in sorted(undefined, key=lambda n: (first.get(n, 0), n))]
+    lines.append('Define them in the function, import them, or name a pool function with')
+    lines.append('NAME = bb.resolve("NAME") above the def.')
+    raise ValueError('\n'.join(lines))
+
+
 def code_prepare_source(source_code: str, lang: str, where: str = None) -> Dict[str, Any]:
     """
     Parse, normalize and hash a function's source, without saving it.
@@ -4884,6 +4939,7 @@ def code_prepare_source(source_code: str, lang: str, where: str = None) -> Dict[
         raise ValueError('\n'.join(lines))
 
     code_check_positional(source_code, tree, where)
+    code_check_defined(source_code, tree, where)
 
     try:
         _, normalized_code_without_docstring, docstring, name_mapping, alias_mapping = code_normalize(tree, lang)
