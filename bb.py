@@ -4011,7 +4011,15 @@ def command_rm(identifier: str, force: bool = False):
         if remaining_langs:
             print(f"Remaining languages: {', '.join(remaining_langs)}")
         else:
-            print("Warning: No language mappings remain for this function")
+            print(f"Note: {hash_value[:12]} has no name left; it stays in the pool "
+                  f"(bb rm {hash_value} removes it)")
+        storage_cache_clear()
+        if name:
+            # The name's previous version is current again: say so, an author removing a duplicate expects it gone
+            back = helper_find_heads_by_name(name, lang)[0]
+            for head in back:
+                print(f"{name}@{lang} is current again at its previous version {head} "
+                      f"(bb rm {name}@{lang} again removes that one too)")
     else:
         if code_detect_schema(hash_value) is None:
             print(f"Error: Function not found: {hash_value}", file=sys.stderr)

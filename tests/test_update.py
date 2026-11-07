@@ -85,3 +85,16 @@ def test_search_similar_lists_functions_whose_code_looks_alike(tmp_path):
     assert 'matches for: --similar' in out
     assert 'Name: order_find (eng)' in out and 'looks like product_find' in out
     assert 'lonely' not in out
+
+
+def test_rm_name_says_when_its_previous_version_is_current_again(tmp_path):
+    pool = Pool(tmp_path)
+    first = hash_of(pool.edit('card', 'def card():\n    """First."""\n    return 1\n'))
+    pool.edit('card', 'def card():\n    """Second."""\n    return 2\n')
+    removed = pool.bb('rm', 'card@eng')
+    assert removed.returncode == 0, removed.stderr
+    assert f'card@eng is current again at its previous version {first}' in removed.stdout
+    assert 'Warning' not in removed.stdout and 'has no name left' in removed.stdout
+    again = pool.bb('rm', 'card@eng')
+    assert again.returncode == 0 and 'current again' not in again.stdout
+    assert 'Functions (0 current versions)' in pool.bb('search').stdout
