@@ -2,50 +2,53 @@
 
 ![Tests](https://github.com/amirouche/bb.py/actions/workflows/test.yml/badge.svg)
 
-**Nurturing a society that recognizes diversity as strength through verifiable knowledge sharing.**
+**Diversity as strength, made verifiable.**
+
+Write a function in your language; if someone else, human or machine, had the same thought, the hash will show it.
 
 > **Experimental**: This is research software under active development.
 
-Every programmer who thinks in Wolof, Tamil, Vietnamese, or Tamazight and codes in English pays a cognitive tax. Every variable named in a second language is a thought translated before it's expressed. This overhead is invisible to the people who don't pay it — and universal for everyone who does.
-
-bb.py makes that tax optional. Write functions in your language — name variables, write documentation, think natively. The tool separates what your code *does* from what you *called* things. Same logic, same hash, regardless of tongue.
-
-Content-addressing gives every function a unique fingerprint. Authorship is preserved. Lineage is traceable. Knowledge is shared without losing track of who made what.
-
-## Same logic, three languages, one hash
-
-```python
-# English
-def calculate_sum(first_number, second_number):
-    """Calculate the sum of two numbers."""
-    result = first_number + second_number
-    return result
-```
+Convergence is detected, divergence is preserved. When two minds write the same logic, they get the same hash, and no shared language was needed to find each other. When they write different logic, they get different hashes, and both are kept. Nothing is flattened into a single English version.
 
 ```python
 # Français
-def calculer_somme(premier_nombre, deuxieme_nombre):
-    """Calculer la somme de deux nombres."""
-    sortie = premier_nombre + deuxieme_nombre
-    return sortie
+def additionner(premier, second):
+    """Additionner deux nombres."""
+    somme = premier + second
+    return somme
+```
+
+```python
+# العربية
+def اجمع(الأول, الثاني):
+    """اجمع عددين."""
+    الناتج = الأول + الثاني
+    return الناتج
 ```
 
 ```python
 # Español
-def calcular_suma(primer_numero, segundo_numero):
-    """Calcular la suma de dos números."""
-    resultado = primer_numero + segundo_numero
-    return resultado
+def sumar(primero, segundo):
+    """Sumar dos números."""
+    suma = primero + segundo
+    return suma
 ```
 
 ```bash
-bb init
-bb add example_simple.py@eng      # → 9f86d0...
-bb add example_simple_french.py@fra   # → 9f86d0...  ← same hash
-bb add example_simple_spanish.py@spa  # → 9f86d0...  ← same hash again
+bb add additionner.py@fra   # → one hash
+bb add اجمع.py@ara          # → the same hash
+bb add sumar.py@spa         # → the same hash again
 ```
 
-Three languages. One identity. No one translated — they wrote originals.
+Three people, or two people and a model prompted in Arabic. Nobody translated; each wrote an original. The names and the docstring stay in their own language, and the hash is computed from the logic alone.
+
+## Why
+
+Students learn to code in English while thinking in their own language, and every name they choose is a thought translated before it is written. Languages in Arabic script also tend to cost more tokens on LLMs for the same meaning, a quiet tax on the people who already pay one.
+
+The machine side is the same question seen from outside. When several LLM agents work on one problem, someone has to know whether two of them really agree, or only sound alike. A shared hash is a cheap, honest answer for the case where the logic is identical, and an honest "no" when it is not.
+
+The project is early. Exact matching is the foundation; near-matches are still a research question (see `LIMITS.md`).
 
 ## What it enables
 
@@ -81,6 +84,12 @@ uv tool install git+https://github.com/amirouche/bb.py.git
 ```
 
 Requires Python 3.11+. No runtime dependencies.
+
+## About
+
+Nurturing a society that recognizes diversity as strength through verifiable knowledge sharing.
+
+Content-addressing gives every function a fingerprint. Authorship is preserved. Lineage is traceable. Knowledge is shared without losing track of who made what.
 
 ## Vision
 
