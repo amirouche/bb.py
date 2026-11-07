@@ -1488,3 +1488,17 @@ def test_a_failing_check_without_source_still_shows_what_it_returned():
     exec(compile(source, '<check>', 'exec'), namespace)
     assert bb.check_run(namespace['check_all'], lambda n: n > 1, source) == \
         ('FAIL', 'returned False: all((f(x) for x in [1, 2])) is False')
+
+
+def test_a_class_defined_inside_a_function_is_renamed_with_its_uses(mock_bb_dir):
+    """The class name was kept while its uses were renamed: the stored code failed with a NameError"""
+    english = ('def make(name):\n    class Member:\n        def __init__(self, n):\n            self.n = n\n\n'
+               '        def label(self):\n            return "@" + self.n\n    return Member(name).label()\n')
+    french = english.replace('Member', 'Membre').replace('name', 'nom')
+    func_hash = _pool_add(english)
+    assert bb.code_load_normalized(func_hash)('ada') == '@ada'
+    assert _pool_add(french, lang='fra') == func_hash  # the class name is a name like any other
+    prepared = bb.code_prepare_source(english, 'eng')
+    assert 'class Member' not in prepared['normalized_code']
+    shown = bb.code_denormalize(prepared['normalized_code'], prepared['name_mapping'], prepared['alias_mapping'])
+    assert 'class Member:' in shown and 'return Member(name).label()' in shown

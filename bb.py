@@ -354,6 +354,13 @@ class ASTNormalizer(ast.NodeTransformer):
         self.generic_visit(node)
         return node
 
+    def visit_ClassDef(self, node):
+        # A class defined inside the function is renamed like its uses
+        if node.name in self.name_mapping:
+            node.name = self.name_mapping[node.name]
+        self.generic_visit(node)
+        return node
+
     def visit_ExceptHandler(self, node):
         """Handle exception variable names in except clauses"""
         if node.name and node.name in self.name_mapping:
@@ -1358,6 +1365,13 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
 
         def visit_AsyncFunctionDef(self, node):
             # Replace normalized async function name
+            if node.name in name_mapping:
+                node.name = name_mapping[node.name]
+            self.generic_visit(node)
+            return node
+
+        def visit_ClassDef(self, node):
+            # A class defined inside the function is renamed like its uses
             if node.name in name_mapping:
                 node.name = name_mapping[node.name]
             self.generic_visit(node)
@@ -7387,6 +7401,13 @@ def code_denormalize(normalized_code: str, name_mapping: dict, alias_mapping: di
             return node
 
         def visit_AsyncFunctionDef(self, node):
+            if node.name in name_mapping:
+                node.name = name_mapping[node.name]
+            self.generic_visit(node)
+            return node
+
+        def visit_ClassDef(self, node):
+            # A class defined inside the function is renamed like its uses
             if node.name in name_mapping:
                 node.name = name_mapping[node.name]
             self.generic_visit(node)
