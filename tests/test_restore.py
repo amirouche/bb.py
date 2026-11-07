@@ -114,3 +114,14 @@ def test_names_show_debt_and_editing_pays_it_while_pins_stay(tmp_path):
     saved = pool.bb('edit', 'app@eng', str(app_draft), '-m', 'catch up')
     assert f'Import: qux -> {v2} (was {v1})' in saved.stdout
     assert 'No matches found' in pool.bb('search', '--outdated').stdout
+
+
+def test_log_of_one_name_shows_its_steps_only(tmp_path):
+    pool = Pool(tmp_path)
+    pool.edit('alpha', 'def alpha():\n    """A."""\n    return 1\n')
+    pool.edit('alpha', 'def alpha():\n    """A again."""\n    return 2\n')
+    pool.edit('beta', 'def beta():\n    """B."""\n    return 3\n')
+    log = pool.bb('log', 'alpha@eng').stdout
+    assert log.startswith('Log of alpha@eng (2 functions, 2 lineage steps')
+    assert 'beta' not in log
+    assert pool.bb('log', 'nobody@eng').returncode == 1

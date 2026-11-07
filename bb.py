@@ -2258,9 +2258,13 @@ def review_run_checks(func_hash: str, reviewed: set) -> bool:
     return check_report(results)
 
 
-def command_log():
+def command_log(identifier: str = None):
     """
     Show the history of the pool: functions, lineage steps and worklogs, newest first.
+
+    With NAME (NAME@lang for one language), only that name's history: its
+    lineage steps, the functions they saved and the worklogs attaching
+    them. With a hash, the steps on that function.
 
     Functions show their names, author and languages. Lineage steps show
     what happened to a name in a language (add, edit, document, rename,
@@ -2270,6 +2274,21 @@ def command_log():
     """
     entries = []
     functions = storage_scan_functions()
+    steps = lineage_index()['steps']
+    keep_steps = keep_functions = None
+    if identifier:
+        name, _, lang = identifier.partition('@')
+        if re.fullmatch(r'[0-9a-f]{64}', name):
+            keep_steps = {i for i, r in steps.items() if r['function'] == name}
+            keep_functions = {name}
+        else:
+            keep_steps = {i for i, r in steps.items() if r['name'] == name and (not lang or r['lang'] == lang)}
+            keep_functions = {steps[i]['function'] for i in keep_steps}
+        if not keep_steps and not (keep_functions & set(functions)):
+            print(f"Error: No history for {identifier}", file=sys.stderr)
+            sys.exit(1)
+        functions = {h: f for h, f in functions.items() if h in keep_functions}
+        steps = {i: r for i, r in steps.items() if i in keep_steps}
     for func_hash, function in functions.items():
         metadata = function['metadata']
         lines = [f"Hash: {func_hash}"]
@@ -2281,15 +2300,15 @@ def command_log():
         lines.append(f"Languages: {', '.join(langs) if langs else 'none'}")
         entries.append((metadata.get('created', ''), func_hash, lines))
 
-    steps = lineage_index()['steps']
+    all_steps = lineage_index()['steps']
     for step_id, record in steps.items():
         metadata = record.get('metadata', {})
         lines = [f"Step: {step_id}",
                  f"{record['relation'].capitalize()}: {record['name']}@{record['lang']} {record['function']}"]
-        previous = steps.get(record.get('from') or '')
+        previous = all_steps.get(record.get('from') or '')
         if previous:
             lines.append(f"From: {previous['name']}@{previous['lang']} {previous['function']}")
-        translated = steps.get(record.get('translates') or '')
+        translated = all_steps.get(record.get('translates') or '')
         if translated:
             lines.append(f"Translates: {translated['name']}@{translated['lang']} {translated['function']}")
         lines += [f"Date: {metadata.get('created', 'unknown')}",
@@ -2299,6 +2318,9 @@ def command_log():
         entries.append((metadata.get('created', ''), step_id, lines))
 
     worklogs = worklog_list()
+    if keep_functions is not None:
+        worklogs = [w for w in worklogs if any(h in str(reference) for reference in w['references']
+                                               for h in keep_functions)]
     for worklog in worklogs:
         metadata = worklog['metadata']
         _, message = worklog_pick_message(worklog)
@@ -2315,7 +2337,8 @@ def command_log():
     entries.sort(key=lambda e: (e[0], e[1]), reverse=True)
 
     stepped = f", {len(steps)} lineage step{'' if len(steps) == 1 else 's'}" if steps else ""
-    print(f"Pool Log ({len(functions)} functions{stepped}, {len(worklogs)} worklogs)")
+    title = f"Log of {identifier}" if identifier else "Pool Log"
+    print(f"{title} ({len(functions)} functions{stepped}, {len(worklogs)} worklogs)")
     print("=" * 80)
     print()
 
@@ -8111,6 +8134,7 @@ def _build_parser():
 
     # Log command
     log_parser = subparsers.add_parser('log', help='Show functions and worklogs, newest first')
+    log_parser.add_argument('identifier', nargs='?', help="Only this name's history (NAME or NAME@lang), or a hash's")
 
     # Search command
     search_parser = subparsers.add_parser('search', help='Search functions by words, status and architecture')
@@ -8256,7 +8280,7 @@ def main():
         else:
             parser.parse_args([args.command, '--help'])
     elif args.command == 'log':
-        command_log()
+        command_log(args.identifier)
     elif args.command == 'search':
         command_search(args.query, all_versions=args.all_versions, as_json=args.as_json,
                        untested=args.untested, unreviewed=args.unreviewed, diverged=args.diverged,
