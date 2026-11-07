@@ -162,6 +162,8 @@ Writing functions for the pool:
   (`--tree name@lang` adds a function and everything it uses); when it
   exists, bb saves every section that changed, functions before the
   sections that use them, and stops at the first that cannot be saved.
+  `-m why --refactor app@lang` then brings app and everything between it and
+  the saved functions up to date (bb update app@lang).
   Add a function by adding a `# new_name` section (a section that is only
   a ```python def block needs no `## Implementation` heading). Edit related functions
   together this way rather than one draft each. Saving an existing file
@@ -6872,9 +6874,13 @@ def scratchpad_compact_report(report: str) -> str:
 
 
 def command_scratchpad(identifiers: List[str], file: str, comment: str = None, tree: str = None,
-                       unreviewed: bool = False):
+                       unreviewed: bool = False, refactor: str = None):
     """
     Edit several functions in one markdown file, then save every one that changed.
+
+    With refactor (--refactor ROOT, e.g. app@eng), a save that went through
+    then brings ROOT and everything between it and the saved functions up
+    to date, as bb update ROOT does, with the same comment.
 
     The file is bb edit files one after another, each starting at its own
     `# name` heading: Implementation (with its bb:parent line and
@@ -7003,6 +7009,8 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
         print(f"Scratchpad {file}: {summary}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    if refactor:
+        command_update(refactor, comment)
 
 
 def refactor_save(old_hash: str, new_hash: str, new_code: str, checks: List[str], comment: str,
@@ -8094,6 +8102,8 @@ def _build_parser():
     scratchpad_parser.add_argument('--tree', metavar='NAME@lang', default=None,
                                    help='Add NAME and everything it uses, as bb tree shows them')
     scratchpad_parser.add_argument('--comment', '-m', default=None, help='Comment for every version saved')
+    scratchpad_parser.add_argument('--refactor', metavar='ROOT', default=None,
+                                   help='After saving, bring ROOT (e.g. app@eng) and everything it uses up to date')
     scratchpad_parser.add_argument('--dangerously-unreviewed', dest='unreviewed', action='store_true',
                                    help='Run checks even on unreviewed functions they import')
 
@@ -8258,7 +8268,8 @@ def main():
     elif args.command == 'run':
         command_run(args.identifier, func_args=args.func_args)
     elif args.command == 'scratchpad':
-        command_scratchpad(args.names, args.file, comment=args.comment, tree=args.tree, unreviewed=args.unreviewed)
+        command_scratchpad(args.names, args.file, comment=args.comment, tree=args.tree, unreviewed=args.unreviewed,
+                           refactor=args.refactor)
     elif args.command == 'edit':
         command_edit(args.identifier, comment=args.comment, unreviewed=args.unreviewed,
                      refactor=args.refactor, at=args.at, file=args.file)

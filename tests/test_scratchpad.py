@@ -121,3 +121,17 @@ def test_a_section_that_is_only_a_code_block_is_its_implementation(tmp_path):
     assert saved.returncode == 0, saved.stderr
     assert latest(pool, 'money') and latest(pool, 'badge')
     assert '## Implementation' in pad.read_text()  # rewritten in the full form
+
+
+def test_refactor_brings_the_root_up_to_date_after_the_save(tmp_path):
+    pool = Pool(tmp_path)
+    app = 'import bb\nlabel = bb.resolve("label")\n\n\ndef app(cents):\n    """The app."""\n    return label(cents)\n'
+    for name, code in (('money', MONEY), ('label', LABEL), ('app', app)):
+        pool.edit(name, code)
+    pad = tmp_path / 'pad.md'
+    pool.bb('scratchpad', 'money@eng', str(pad))
+    pad.write_text(pad.read_text().replace(':.2f', ':.1f'))
+    saved = pool.bb('scratchpad', 'money@eng', str(pad), '-m', 'one decimal', '--refactor', 'app@eng')
+    assert saved.returncode == 0, saved.stderr
+    assert 'Updated 2 function(s)' in saved.stdout
+    assert 'nothing outdated' in pool.bb('search', '--outdated').stdout
