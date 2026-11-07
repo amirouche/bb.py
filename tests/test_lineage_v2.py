@@ -286,3 +286,28 @@ def test_caller_by_name_lists_only_the_callers_that_use_that_name(tmp_path):
     by_register = pool.bb('caller', 'register_page@eng').stdout
     assert uses_login in by_login and uses_login not in by_register
     assert uses_login in pool.bb('caller', shared).stdout  # by hash: every caller
+
+
+def test_caller_lists_current_callers_and_all_shows_old_ones(tmp_path):
+    pool = Pool(tmp_path)
+    pool.edit('helper', PAGE.format(name='helper'))
+    old = hash_of(pool.edit('page', USES.format(name='page', dep='helper')))
+    new = hash_of(pool.edit('page', 'def page():\n    """No helper any more."""\n    return "page"\n'))
+    assert new != old
+    # page's current version no longer uses helper: nothing does
+    assert pool.bb('caller', 'helper@eng').stdout.strip() == ''
+    every = pool.bb('caller', 'helper@eng', '--all').stdout
+    assert f'bb show {old}  # not current' in every
+
+
+def test_caller_follows_a_switch_between_two_names_of_one_code(tmp_path):
+    pool = Pool(tmp_path)
+    shared = hash_of(pool.edit('stats_card', PAGE.format(name='stats_card')))
+    assert hash_of(pool.edit('stat_card', PAGE.format(name='stat_card'))) == shared
+    first = hash_of(pool.edit('page', USES.format(name='page', dep='stats_card')))
+    # Same code, now through the other name: the hash stays, the current mapping changes
+    assert hash_of(pool.edit('page', USES.format(name='page', dep='stat_card'))) == first
+    assert first not in pool.bb('caller', 'stats_card@eng').stdout
+    assert first in pool.bb('caller', 'stat_card@eng').stdout
+    assert first not in pool.bb('search', '--uses', 'stats_card@eng').stdout
+    assert first in pool.bb('search', '--uses', 'stat_card@eng').stdout

@@ -169,7 +169,9 @@ Writing functions for the pool:
 - Context: `bb tree name@lang` shows what a function uses, down to the
   leaves, with each one's docstring, and marks what is `[out of date]`,
   `[behind]`, `[pinned]` or `[not yet translated ...]`; `bb caller
-  name@lang` shows what uses it. Look at both before changing a function.
+  name@lang` shows the current versions that use it (`--all` adds replaced
+  ones), so it lists nothing once a name is unused. Look at both before
+  changing a function.
 
 Functions are stored in $BB_DIRECTORY/pool/ (default: ~/.local/bb/pool/):
 pool/functions/ holds JSON objects with the normalized code, pool/mappings/
@@ -3241,6 +3243,23 @@ def helper_display_language(function: Dict[str, Any], prefer: List[str] = None) 
     return None
 
 
+def search_uses_under_name(caller: Dict[str, Any], dep_hash: str, identifier: str) -> bool:
+    """
+    Whether caller uses dep_hash under the name identifier gives (NAME@lang).
+
+    One code may carry several names (stats_card and stat_card): by name,
+    a caller counts only when its current or unreplaced mappings in that
+    language call the code by that name. A hash, or a name without
+    language, matches every caller.
+    """
+    name, _, lang = identifier.partition('@')
+    if not lang or re.fullmatch(r'[0-9a-f]{64}', name):
+        return True
+    aliases = [m.get('alias_mapping', {}).get(dep_hash) for m in caller['all_mappings'].get(lang, [])]
+    aliases = [alias for alias in aliases if alias]
+    return not aliases or name in aliases
+
+
 def search_pins(function: Dict[str, Any]) -> Set[str]:
     """Every reference a function pins on purpose (bb.ref), in any language."""
     return {pin for mapping in function['mappings'].values() for pin in (mapping.get('pinned') or [])}
@@ -3469,7 +3488,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     if outdated:
         results = [r for r in results if r['outdated'] or r['behind'] or r['untranslated']]
     if uses_hash:
-        results = [r for r in results if r['hash'] in index['importers'].get(uses_hash, [])]
+        results = [r for r in results if r['hash'] in index['importers'].get(uses_hash, [])
+                   and search_uses_under_name(index['functions'][r['hash']], uses_hash, uses)]
     if similar:
         for r in results:
             r['similar'] = [(round(score, 2), other) for score, other in
@@ -5590,40 +5610,37 @@ def schema_validate_directory() -> tuple:
     return is_valid, errors, stats
 
 
-def command_caller(identifier: str, as_json: bool = False):
+def command_caller(identifier: str, as_json: bool = False, every: bool = False):
     """
-    Find all functions that depend on the given function.
+    Find the functions that depend on the given function.
 
-    Accepts a hash or function name (with optional @lang suffix).
-    Scans all functions in the pool and lists each function that
-    imports the given hash. By name, when one code carries several
-    names, only the callers that use it under that name are listed (so
-    `bb caller old_name@eng` shows when nothing uses an old name any
-    more). --json gives hash, name and language.
+    Accepts a hash or function name (with optional @lang suffix). Lists
+    the current versions that import the given hash: a caller replaced
+    by a later version is left out, so `bb caller old_name@eng` lists
+    nothing once nothing uses that name any more. With every (--all),
+    replaced versions are listed too, marked "not current". By name,
+    when one code carries several names, only the callers that use it
+    under that name are listed. --json gives hash, name, language and
+    whether the caller is current.
     """
     hash_value, lang = helper_parse_identifier(identifier)
     functions = storage_scan_functions()
     callers = sorted(func_hash for func_hash, function in functions.items()
                      if hash_value in code_extract_dependencies(function['normalized_code']))
-    name = identifier.split('@')[0]
-    if not re.fullmatch(r'[0-9a-f]{64}', name) and lang:
-        # One code may carry several names: by name, keep the callers that use it under that name
-        def uses_name(caller_hash):
-            aliases = [m.get('alias_mapping', {}).get(hash_value)
-                       for m in functions[caller_hash]['all_mappings'].get(lang, [])]
-            aliases = [alias for alias in aliases if alias]
-            return not aliases or name in aliases
-        callers = [c for c in callers if uses_name(c)]
+    if not every:
+        callers = [c for c in callers if functions[c]['current']]
+    callers = [c for c in callers if search_uses_under_name(functions[c], hash_value, identifier)]
 
     if as_json:
         out = []
         for caller_hash in callers:
             lang = helper_pick_language(caller_hash)
-            out.append({'hash': caller_hash, 'name': helper_function_label(caller_hash), 'lang': lang})
+            out.append({'hash': caller_hash, 'name': helper_function_label(caller_hash), 'lang': lang,
+                        'current': functions[caller_hash]['current']})
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return
     for caller_hash in callers:
-        print(f"bb show {caller_hash}")
+        print(f"bb show {caller_hash}" + ("" if functions[caller_hash]['current'] else "  # not current"))
 
 
 def command_tree(identifier: str, as_json: bool = False):
@@ -8033,6 +8050,8 @@ def _build_parser():
     caller_parser = subparsers.add_parser('caller', help='Find functions that depend on a given function')
     caller_parser.add_argument('identifier', help='Hash or name, with optional @lang')
     caller_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
+    caller_parser.add_argument('--all', dest='every', action='store_true',
+                               help='Also list callers replaced by a later version, marked "not current"')
 
     # Tree command
     tree_parser = subparsers.add_parser('tree', help='Display dependency tree of a function')
@@ -8176,7 +8195,7 @@ def main():
                     print(f"  - {error}", file=sys.stderr)
                 sys.exit(1)
     elif args.command == 'caller':
-        command_caller(args.identifier, as_json=args.as_json)
+        command_caller(args.identifier, as_json=args.as_json, every=args.every)
     elif args.command == 'tree':
         command_tree(args.identifier, as_json=args.as_json)
     elif args.command == 'update':
