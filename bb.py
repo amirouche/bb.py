@@ -92,6 +92,10 @@ Writing functions for the pool:
   it uses, prefilled when that one is already translated), and sections
   for the docstring and documentation; when FILE exists, bb saves it as
   TARGET's translation. The code and its hash do not change.
+  `bb translate --tree app@lang TARGET FILE` does it for app and
+  everything it uses in one file, a section per function not yet in
+  TARGET: a function's first Names line is its name in every caller (no
+  aliases to fill in), and nothing is saved until every section is right.
 - `bb edit name@lang FILE` works on an edit file instead of an editor:
   when FILE is missing, bb writes the function there (a template for a
   new name) and saves nothing; when it exists, bb saves it. The file is
@@ -3831,6 +3835,182 @@ def translate_save_step(hash_value: str, source_lang: str, source_mapping: str, 
                         translates=source_step)
 
 
+def translate_save_parsed(hash_value: str, source_lang: str, target_lang: str, parsed: Dict[str, Any],
+                          comment: str = None) -> str:
+    """Save a parsed translation file (translate_parse_file) as a mapping and a lineage step; returns the mapping hash."""
+    pins = mapping_load_json(hash_value, source_lang, parsed['source_mapping']).get('pinned')
+    with contextlib.redirect_stdout(io.StringIO()):
+        mapping_hash = mapping_save(hash_value, target_lang, parsed['docstring'], parsed['name_mapping'],
+                                    parsed['alias_mapping'], comment or "", parsed['markdown'], pinned=pins)
+    translate_save_step(hash_value, source_lang, parsed['source_mapping'], target_lang, mapping_hash, comment or "")
+    return mapping_hash
+
+
+def translate_tree_plan(identifier: str, target_lang: str) -> Dict[str, Any]:
+    """
+    What bb translate --tree translates: ROOT@lang, every function it uses
+    and their checks, each with its source name.
+
+    Returns:
+        Dict with 'lang', 'order' (hashes, callers before what they use),
+        'source_names' ({hash: name in lang}), 'known' ({hash: name in
+        target_lang} for functions already current there, left out of the file)
+    """
+    root, lang = helper_parse_identifier(identifier)
+    functions = storage_scan_functions()
+    order, seen = [], set()
+
+    def visit(h):
+        if h in seen or h not in functions:
+            return
+        seen.add(h)
+        order.append(h)
+        for dep in code_extract_dependencies(functions[h]['normalized_code']) + functions[h]['checks']:
+            visit(dep)
+
+    visit(root)
+    source_names, known, missing = {}, {}, []
+    for h in order:
+        current = functions[h]['current_names']
+        name = (current.get(lang) or [functions[h]['names'].get(lang)])[0]
+        if name is None:
+            missing.append(h)
+            continue
+        source_names[h] = name
+        if current.get(target_lang):
+            known[h] = current[target_lang][0]
+    if missing:
+        print(f"Error: these functions have no '{lang}' name: "
+              + ', '.join(f"{helper_function_label(h)} ({h[:12]}...)" for h in missing), file=sys.stderr)
+        sys.exit(1)
+    return {'lang': lang, 'order': order, 'source_names': source_names, 'known': known}
+
+
+def translate_tree_render(plan: Dict[str, Any], target_lang: str, root_label: str) -> str:
+    """
+    One file translating a whole tree: a section per function (as a
+    single translation file, under a `# name` heading) without Aliases:
+    the first Names line of a section names that function in every
+    caller.
+    """
+    lang = plan['lang']
+    todo = [h for h in plan['order'] if h not in plan['known']]
+    out = [f"<!-- bb:translate-tree {root_label} {target_lang} -->", '',
+           f"Translate {len(todo)} function(s) from {lang} into {target_lang}. In each section, fill in every",
+           f"name after `->`, then the docstring and the documentation. The first Names line of a section",
+           f"is that function's {target_lang} name, and every caller uses it: there are no aliases to fill in.",
+           f"Run the same bb translate --tree command again to save them all. The code does not change.", '']
+    if plan['known']:
+        out += [f"Already in {target_lang}, used as they are: "
+                + ', '.join(f"{plan['source_names'][h]} -> {plan['known'][h]}" for h in plan['order']
+                            if h in plan['known']), '']
+    for h in todo:
+        lines = translate_render_file(h, lang, target_lang, plan['source_names'][h]).split('\n')
+        lines = lines[2:]  # the title line: the section has its own
+        lines = [l for l in lines if not l.startswith(('Fill in each name after', 'and run the same bb translate'))]
+        # Aliases are filled in from the other sections when saving
+        if '## Aliases' in lines:
+            start = lines.index('## Aliases')
+            end = next(i for i in range(start + 1, len(lines)) if lines[i].startswith('## '))
+            lines = lines[:start] + lines[end:]
+        out += [f"# {plan['source_names'][h]}", ''] + lines
+    return '\n'.join(out).rstrip('\n') + '\n'
+
+
+def translate_tree_split(text: str) -> Dict[str, str]:
+    """{function hash: its section} of a translate --tree file; a section starts at its bb:translate line."""
+    lines = text.split('\n')
+    starts = [i for i, l in enumerate(lines) if TRANSLATE_MARKER_RE.match(l.strip())]
+    sections = {}
+    for n, start in enumerate(starts):
+        end = starts[n + 1] if n + 1 < len(starts) else len(lines)
+        if n + 1 < len(starts):
+            # Leave out the next section's `# name` heading, just above its marker
+            while end - 1 > start and not lines[end - 1].strip():
+                end -= 1
+            if lines[end - 1].startswith('# '):
+                end -= 1
+        sections[TRANSLATE_MARKER_RE.match(lines[start].strip()).group(1)] = '\n'.join(lines[start:end])
+    return sections
+
+
+def command_translate_tree(identifier: str, target_lang: str, file: str, comment: str = None):
+    """
+    bb translate --tree ROOT@lang TARGET FILE: translate ROOT and everything it uses in one file.
+
+    When FILE is missing, bb writes a section for every function of the
+    tree not yet current in TARGET (and its checks). When FILE exists,
+    bb reads every section first and lists every problem at once (a name
+    missing or invalid, one TARGET name given to two functions, a source
+    changed since) without saving anything; otherwise it saves them all.
+    Each function's TARGET name, its first Names line, is used by every
+    caller, so the translated pool calls each function by one name.
+    """
+    if '@' not in identifier:
+        print("Error: Missing @lang suffix. Use format: ROOT@source_lang", file=sys.stderr)
+        sys.exit(1)
+    plan = translate_tree_plan(identifier, target_lang)
+    lang = plan['lang']
+    if not os.path.exists(file):
+        todo = [h for h in plan['order'] if h not in plan['known']]
+        if not todo:
+            print(f"Nothing to translate: {identifier} and everything it uses are already in {target_lang}.")
+            return
+        with open(file, 'w', encoding='utf-8') as f:
+            f.write(translate_tree_render(plan, target_lang, identifier))
+        print(f"Wrote {file} with {len(todo)} function(s) to translate"
+              + (f" ({len(plan['known'])} already in {target_lang})" if plan['known'] else "")
+              + ". Fill it in, then run the same command again to save them.")
+        return
+
+    with open(file, 'r', encoding='utf-8') as f:
+        sections = translate_tree_split(f.read())
+    todo = [h for h in plan['order'] if h not in plan['known']]
+    problems = [f"{plan['source_names'][h]}: no section (write a new file)" for h in todo if h not in sections]
+    # Each function's target name: the first Names line of its section, or its name already in target
+    target_names = dict(plan['known'])
+    for h in todo:
+        if h not in sections:
+            continue
+        names = sections[h].split('## Names', 1)[1].split('\n## ', 1)[0] if '## Names' in sections[h] else ''
+        first = next((TRANSLATE_LINE_RE.match(l.strip()) for l in names.split('\n')
+                      if TRANSLATE_LINE_RE.match(l.strip())), None)
+        if first and first.group(3):
+            target_names[h] = first.group(3)
+    owners = {}
+    for h in todo:
+        if h in target_names:
+            owners.setdefault(target_names[h], []).append(plan['source_names'][h])
+    shared = {name for name, sources in owners.items() if len(sources) > 1}
+    problems += [f"'{name}' is given to {', '.join(sorted(owners[name]))}" for name in sorted(shared)]
+
+    parsed = {}
+    for h in todo:
+        if h not in sections:
+            continue
+        mapping_hash = mapping_select(h, lang, plan['source_names'][h])
+        _, _, aliases, _ = code_load(h, lang, mapping_hash)
+        alias_lines = [f"- {alias} ({dep[:12]}...) -> {target_names.get(dep, '')}" for dep, alias in aliases.items()]
+        text = sections[h] + ('\n\n## Aliases\n\n' + '\n'.join(alias_lines) + '\n' if alias_lines else '')
+        try:
+            parsed[h] = translate_parse_file(text, h, lang, target_lang, plan['source_names'][h])
+        except ValueError as e:
+            problems += [f"{plan['source_names'][h]}: {line.strip()}" for line in str(e).split('\n')
+                         if line.strip() and not line.startswith('the translation is not complete')
+                         # already said once for the whole file
+                         and not any(line.strip() == f"'{name}' is given to two names" for name in shared)]
+    if problems:
+        print(f"Error: {file}: nothing saved; fix these and run the command again:", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        sys.exit(1)
+
+    for h in todo:
+        translate_save_parsed(h, lang, target_lang, parsed[h], comment)
+    print(f"Saved {len(todo)} translation(s) into {target_lang}: "
+          + ', '.join(f"{plan['source_names'][h]} -> {target_names[h]}" for h in todo))
+
+
 def command_translate(identifier_with_lang: str, target_lang: str, recursive: bool = False,
                       file: str = None, comment: str = None):
     """
@@ -3883,12 +4063,7 @@ def command_translate(identifier_with_lang: str, target_lang: str, recursive: bo
             except ValueError as e:
                 print(f"Error: {file}: {e}\nNothing saved.", file=sys.stderr)
                 sys.exit(1)
-        pins = mapping_load_json(hash_value, source_lang, parsed['source_mapping']).get('pinned')
-        with contextlib.redirect_stdout(io.StringIO()):
-            mapping_hash = mapping_save(hash_value, target_lang, parsed['docstring'], parsed['name_mapping'],
-                                        parsed['alias_mapping'], comment or "", parsed['markdown'], pinned=pins)
-        translate_save_step(hash_value, source_lang, parsed['source_mapping'], target_lang, mapping_hash,
-                            comment or "")
+        mapping_hash = translate_save_parsed(hash_value, source_lang, target_lang, parsed, comment)
         print(f"Translation: {hash_value}@{target_lang}@{mapping_hash}")
         print(f"Name: {parsed['name_mapping'].get('_bb_v_0')}@{target_lang}")
         return
@@ -8126,6 +8301,8 @@ def _build_parser():
     translate_parser.add_argument('file', nargs='?', default=None,
                                   help='Translation file instead of prompts: written when missing, saved from when present')
     translate_parser.add_argument('-r', '--recursive', action='store_true', help='Recursively translate dependencies')
+    translate_parser.add_argument('--tree', action='store_true',
+                                  help='Translate IDENTIFIER and everything it uses in one FILE (one name per function)')
     translate_parser.add_argument('--comment', '-m', default=None, help='Comment for the translation (with FILE)')
 
     # Rm command
@@ -8305,8 +8482,14 @@ def main():
     elif args.command == 'show':
         code_show(args.identifier)
     elif args.command == 'translate':
-        command_translate(args.identifier, args.target_lang, recursive=args.recursive,
-                          file=args.file, comment=args.comment)
+        if args.tree:
+            if args.file is None or args.recursive:
+                print("Error: --tree needs a FILE, and does not go with --recursive", file=sys.stderr)
+                sys.exit(1)
+            command_translate_tree(args.identifier, args.target_lang, args.file, comment=args.comment)
+        else:
+            command_translate(args.identifier, args.target_lang, recursive=args.recursive,
+                              file=args.file, comment=args.comment)
     elif args.command == 'rm':
         command_rm(args.identifier, force=args.force)
     elif args.command == 'run':
