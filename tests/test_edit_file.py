@@ -66,7 +66,7 @@ def test_a_failing_save_leaves_the_file_alone(tmp_path):
     set_code(draft, 'def broken(:\n')
     text = draft.read_text()
     failed = pool.bb('edit', 'broken@eng', str(draft), '-m', 'x')
-    assert failed.returncode == 1 and 'unchanged' in failed.stderr
+    assert failed.returncode == 1 and 'Not saved: fix' in failed.stderr
     assert draft.read_text() == text
 
 

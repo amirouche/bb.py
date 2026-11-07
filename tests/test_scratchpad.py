@@ -68,6 +68,9 @@ def test_a_failing_check_stops_and_names_the_section(tmp_path):
     assert result.returncode == 1 and 'Stopped at money' in result.stderr
     assert "FAIL check_money: returned False ('$1.50' == '$1.5')" in result.stdout
     assert not latest(pool, 'badge')  # not tried
+    # The reason is the failing check: no "unchanged" line contradicts it
+    assert 'unchanged' not in result.stderr and 'Not saved: fix' not in result.stderr
+    assert 'Stopped at money: saved nothing; not tried: badge.' in result.stderr
 
 
 def test_a_removed_section_is_not_saved_and_languages_cannot_mix(tmp_path):

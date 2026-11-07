@@ -6638,7 +6638,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
             print(f"Error: {e}", file=sys.stderr)
             passed = False
         if not passed:
-            print(f"Nothing saved; {file} is unchanged.", file=sys.stderr)
+            print(f"Not saved: fix {file} and save it again.", file=sys.stderr)
             sys.exit(1)
         break
     while file is None:
@@ -6920,6 +6920,10 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
             finally:
                 # bb's own draft file stands for a section of the scratchpad
                 print(output.getvalue().replace(str(draft), where), end='')
+                sys.stdout.flush()  # the section's report comes before the reason it stopped
+                # The summary below says what was kept: drop bb edit's own "Not saved" line
+                errors = io.StringIO(''.join(line for line in errors.getvalue().splitlines(True)
+                                             if not line.startswith('Not saved: fix ')))
                 print(errors.getvalue().replace(str(draft), where).replace(
                     f"bb edit {name}@{lang} NEW_FILE", f"bb scratchpad {' '.join(n for n in names) or name + '@' + lang} NEW_FILE"),
                     end='', file=sys.stderr)
@@ -6936,8 +6940,9 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
         summary = (f"saved {', '.join(changed) or 'nothing'}"
                    + (f"; unchanged {', '.join(unchanged)}" if unchanged else ""))
         if failed:
-            print(f"Stopped at {failed}: {summary}; not tried: {', '.join(untouched) or 'nothing'}. "
-                  f"{file} keeps your text for {failed} and those.", file=sys.stderr)
+            rest = f"; not tried: {', '.join(untouched)}" if untouched else ""
+            kept = f"{failed} and those" if untouched else failed
+            print(f"Stopped at {failed}: {summary}{rest}. {file} keeps your text for {kept}.", file=sys.stderr)
             sys.exit(1)
         print(f"Scratchpad {file}: {summary}")
     finally:
