@@ -311,3 +311,14 @@ def test_caller_follows_a_switch_between_two_names_of_one_code(tmp_path):
     assert first in pool.bb('caller', 'stat_card@eng').stdout
     assert first not in pool.bb('search', '--uses', 'stats_card@eng').stdout
     assert first in pool.bb('search', '--uses', 'stat_card@eng').stdout
+
+
+def test_search_similar_lists_one_code_saved_under_two_names(tmp_path):
+    pool = Pool(tmp_path)
+    # Small and identical: too small to score, but the same code under two names is a duplicate
+    pool.edit('stats_card', PAGE.format(name='stats_card'))
+    pool.edit('stat_card', PAGE.format(name='stat_card'))
+    pool.edit('other', 'def other():\n    """Something else."""\n    return 42\n')
+    found = pool.bb('search', '--similar').stdout
+    assert 'same code under the names stat_card, stats_card' in found
+    assert 'Name: other' not in found

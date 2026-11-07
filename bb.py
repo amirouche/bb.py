@@ -3424,7 +3424,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
                   Also versions waiting for a translation: a newer version
                   in another language, not yet translated to this one
     --uses X      functions that import X directly
-    --similar     functions whose code looks like another current function
+    --similar     functions whose code looks like another current function,
+                  or that one code carries under several names
                   (the comparison behind the note after a save): candidates
                   for merging into one shared function
     --json        machine-readable output
@@ -3495,7 +3496,10 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
             r['similar'] = [(round(score, 2), other) for score, other in
                             code_find_similar(r['hash'], helper_lineage(r['hash']) | set(
                                 index['functions'][r['hash']]['checks']))]
-        results = [r for r in results if r['similar']]
+            # The plainest duplicate: one code saved under several names (same hash, so no score)
+            names = index['functions'][r['hash']]['current_names'].get(r['lang'], [])
+            r['same_code'] = names if len(names) > 1 else []
+        results = [r for r in results if r['similar'] or r['same_code']]
 
     results.sort(key=lambda r: (r['created'], r['hash']), reverse=True)
 
@@ -3542,6 +3546,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
             status.append(f"newer version in {newer}, not yet translated to {here}")
         if r['pinned']:
             status.append(f"{len(r['pinned'])} pinned")
+        if r.get('same_code'):
+            status.append("same code under the names " + ', '.join(r['same_code']))
         if r.get('similar'):
             status.append("looks like " + ', '.join(f"{helper_function_label(other)} {score:.0%}"
                                                     for score, other in r['similar']))
@@ -8005,7 +8011,8 @@ def _build_parser():
     search_parser.add_argument('--outdated', action='store_true',
                                help='Only functions using versions that are no longer current (pins excluded)')
     search_parser.add_argument('--similar', action='store_true',
-                               help='Only functions whose code looks like another current function')
+                               help='Only functions whose code looks like another current function, '
+                                    'or one code saved under several names')
     search_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
 
     # Latest command
