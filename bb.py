@@ -6917,6 +6917,20 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
 
     try:
         if not os.path.exists(file):
+            # A check of a function in the file is written under that function's ## Checks only
+            attached = set()
+            for identifier in names:
+                heads, _, _ = helper_resolve_heads(*identifier.split('@'))
+                attached |= {check for head in heads for check in object_load_checks(head)}
+            skipped = []
+            for identifier in list(names):
+                heads, _, _ = helper_resolve_heads(*identifier.split('@'))
+                if heads and all(h in attached for h in heads):
+                    skipped.append(identifier.split('@')[0])
+            names = [n for n in names if n.split('@')[0] not in skipped]
+            if skipped:
+                print(f"Note: {', '.join(skipped)} are checks of functions in the file: they are written "
+                      f"under those functions' ## Checks, not as sections of their own.")
             parts = []
             for identifier in names:
                 draft = work / f"{identifier.split('@')[0]}.md"
@@ -6945,6 +6959,36 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
         if len(set(titles)) != len(titles):
             print(f"Error: {file} has the same function twice", file=sys.stderr)
             sys.exit(1)
+        # A check is saved with its function (a ### subsection of its ## Checks): a section of
+        # its own as well would be a second copy, stale once the function's section saves it
+        as_check = {}
+        for owner, text in sections:
+            try:
+                for check in markdown_parse_edit(text)['checks']:
+                    as_check.setdefault(check['title'], (owner, check))
+            except EditFormatError:
+                continue  # the save below reports it
+        duplicates = []
+        for name, text in sections:
+            if name not in as_check or as_check[name][0] == name:
+                continue
+            owner, check = as_check[name]
+            try:
+                own = markdown_parse_edit(text)['implementation']
+            except EditFormatError:
+                own = None
+            if own is None or (own['source'].strip(), own.get('markdown', '').strip()) != \
+                    (check['source'].strip(), check.get('markdown', '').strip()):
+                print(f"Error: {name} is in {file} twice: as a section of its own and as a check of {owner} "
+                      f"(### {name}), and the two differ. A check is saved with its function: change it "
+                      f"under {owner}'s ## Checks and delete the # {name} section.", file=sys.stderr)
+                sys.exit(1)
+            duplicates.append(name)
+        if duplicates:
+            print(f"Note: {', '.join(duplicates)} also stand as checks of the functions above them; "
+                  f"they are saved with those functions, and their own sections are dropped from {file}.")
+            sections = [(n, t) for n, t in sections if n not in duplicates]
+            titles = [n for n in titles if n not in duplicates]
 
         # A function is saved before the sections that use it
         uses = {name: {ref for ref in SCRATCHPAD_REF.findall(text) if ref in titles and ref != name}

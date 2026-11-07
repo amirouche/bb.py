@@ -135,3 +135,41 @@ def test_refactor_brings_the_root_up_to_date_after_the_save(tmp_path):
     assert saved.returncode == 0, saved.stderr
     assert 'Updated 2 function(s)' in saved.stdout
     assert 'nothing outdated' in pool.bb('search', '--outdated').stdout
+
+
+CHECKED = ('# money\n\n## Implementation\n\n```python def\n' + MONEY + '```\n\n## Checks\n\n### check_money\n\n'
+           '```python def\ndef check_money(money):\n    """Two decimals."""\n    return money(150) == "$1.50"\n```\n')
+
+
+def test_a_check_is_written_under_its_function_only(tmp_path):
+    pool = Pool(tmp_path)
+    first = tmp_path / 'first.md'
+    first.write_text(CHECKED)
+    assert pool.bb('scratchpad', 'money@eng', str(first), '-m', 'checked').returncode == 0
+    pad = tmp_path / 'pad.md'
+    written = pool.bb('scratchpad', 'money@eng', 'check_money@eng', str(pad))
+    assert 'check_money are checks of functions in the file' in written.stdout
+    assert '\n# check_money\n' not in pad.read_text() and '### check_money' in pad.read_text()
+
+
+def test_a_check_also_written_as_its_own_section_is_saved_once(tmp_path):
+    pool = Pool(tmp_path)
+    first = tmp_path / 'first.md'
+    first.write_text(CHECKED)
+    assert pool.bb('scratchpad', 'money@eng', str(first), '-m', 'checked').returncode == 0
+    # A writer adds the check as a section of its own too, the same text: saved once, the copy dropped
+    pad = tmp_path / 'pad.md'
+    pool.bb('scratchpad', 'money@eng', str(pad))
+    copy = pad.read_text().split('### check_money')[1].split('```python def')[1].split('```')[0]
+    pad.write_text(pad.read_text().replace('Cents as dollars', 'Cents shown as dollars')
+                   + f'\n# check_money\n\n## Implementation\n\n```python def{copy}```\n')
+    saved = pool.bb('scratchpad', 'money@eng', str(pad), '-m', 'doc')
+    assert saved.returncode == 0, saved.stderr
+    assert 'their own sections are dropped' in saved.stdout and '\n# check_money\n' not in pad.read_text()
+    # Two copies that differ are refused before anything is saved
+    pad.write_text(pad.read_text().replace('Cents shown as dollars', 'Cents in dollars')
+                   + '\n# check_money\n\n## Implementation\n\n```python def\ndef check_money(money):\n'
+                   '    """Other."""\n    return money(1) == "$0.01"\n```\n')
+    refused = pool.bb('scratchpad', 'money@eng', str(pad), '-m', 'two copies')
+    assert refused.returncode == 1 and 'the two differ' in refused.stderr
+    assert 'Cents shown as dollars' in pool.bb('show', 'money@eng').stdout  # nothing saved
