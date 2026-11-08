@@ -2,15 +2,16 @@ name: Tests
 
 on:
   push:
-    branches: [ main, 'claude/*' ]
+    branches: [ main, hello-beyonder, 'claude/*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, hello-beyonder ]
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest, macos-latest]
         python-version: ['3.11', '3.12', '3.13', '3.14']
       fail-fast: false
 
@@ -37,17 +38,17 @@ jobs:
         uv run pytest -v --tb=short
 
     - name: Run tests with coverage
-      if: matrix.python-version == '3.11'
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
       run: |
         uv run pytest --ignore=tests/transcript --cov=bb --cov-report=term
 
     - name: Run transcript tests with coverage (append)
-      if: matrix.python-version == '3.11'
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
       run: |
         uv run pytest tests/transcript/ -v --cov=bb --cov-append --cov-report=term --cov-report=xml
 
     - name: Upload coverage to Codecov
-      if: matrix.python-version == '3.11'
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
       uses: codecov/codecov-action@v4
       with:
         token: ${{ secrets.CODECOV_TOKEN }}

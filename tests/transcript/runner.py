@@ -166,6 +166,10 @@ class TranscriptRunner:
 
     def _execute_shell_command(self, command: str) -> str:
         """Execute shell command (test, echo, etc.) without coverage."""
+        # On macOS (BSD sed), sed -i requires an extension argument (e.g. sed -i '')
+        if sys.platform == 'darwin' and re.match(r"^\s*sed\s+-i\s+['\"]", command):
+            command = re.sub(r"^(\s*sed\s+-i)\s+(['\"])", r"\1 '' \2", command)
+
         result = subprocess.run(
             command,
             shell=True,
