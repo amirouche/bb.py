@@ -1,5 +1,48 @@
 # Contributing to bb
 
+## First 15 Minutes
+
+A quick path for getting set up and verifying your environment:
+
+### 1. Environment Setup & Install
+
+Using `uv`:
+```bash
+uv sync --dev
+```
+
+Or using standard `venv` and `pip`:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e '.[dev]'
+```
+
+### 2. Run the Tests
+
+Run the test suite:
+```bash
+uv run pytest
+```
+
+> **Note on PATH**: The transcript tests execute `bb` directly through the shell. The virtual environment's `bin` directory must be on your `PATH`; otherwise transcript tests will fail with `bb: not found`. `uv run pytest` automatically handles this environment PATH setup. If invoking pytest manually, ensure the virtual environment is activated (`source .venv/bin/activate`) so `bb` is available in your shell.
+
+### 3. Try bb in a Throwaway Pool
+
+Verify your local CLI build works end-to-end:
+```bash
+export BB_DIRECTORY=$(mktemp -d)
+bb init
+bb add examples/example_simple.py@eng
+bb show
+```
+
+### 4. Where to Look Next
+
+- **Transcripts**: Explore `transcripts/` to understand real command behavior and test scenarios.
+- **Project Roadmap**: Review `TODO.md` for planned features, refactors, and open tasks.
+- **Good First Issues**: Check out GitHub issues with the [`good first issue`](https://github.com/amirouche/bb.py/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label for bite-sized contributions.
+
 ## Learning bb Features
 
 Use `bb skills` to generate comprehensive AI-readable reference documentation:
