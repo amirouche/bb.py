@@ -2,7 +2,7 @@
 
 ## Metadata
 - ID: 11
-- Feature: bb scratchpad, bb search --outdated, bb update, bb.ref pins
+- Feature: bb scratchpad (--refactor), bb search --outdated, bb update, bb.ref pins
 - Date: 2026-11-14
 - Status: draft
 - Complexity: intermediate
@@ -225,6 +225,105 @@ median 2 top 3
 ```bash
 $ bb search --outdated | tail -1
 No matches found: nothing outdated
+$ bb run compare@eng 3,1,1,1,2
+old [1, 2, 3] new [1, 1, 1, 2, 3]
+```
+
+---
+
+# Chapter 5: Fix and Refactor in One Command
+
+Staleness is the default, not a rule. `bb scratchpad --refactor ROOT` saves and then runs `bb update ROOT`, for whoever wants the fix to follow at once. Only the root you name moves. A second program, `summary`, uses `top` and is added now, on the current versions. Then `sort_numbers` gets a second version, the same behavior written as a copy that is sorted in place, and only `report` follows it.
+
+## Source Files
+
+### Summary `summary_eng.py`
+```python
+import bb
+
+top = bb.resolve("top")
+
+
+def summary(text):
+    """Print the top of comma separated numbers."""
+    numbers = [int(word) for word in text.split(',')]
+    print("top", top(numbers))
+```
+
+### Scratchpad with the second version `again.md`
+````markdown
+# sort_numbers
+
+## Implementation
+
+```python def
+def sort_numbers(numbers):
+    """Sort numbers in increasing order, duplicates included."""
+    ordered = list(numbers)
+    ordered.sort()
+    return ordered
+```
+
+## Checks
+
+### check_sort_keeps_duplicates
+
+```python def
+def check_sort_keeps_duplicates(sort_numbers):
+    """Duplicates are kept."""
+    return sort_numbers([2, 1, 2]) == [1, 2, 2]
+```
+````
+
+## Workflow
+
+### Step 12: Add the second program
+```bash
+$ bb add summary_eng.py@eng > /dev/null
+# bb only runs code you have reviewed
+$ yes | bb review summary@eng > /dev/null
+$ bb run summary@eng 3,1,1,1,2
+top 3
+```
+
+### Step 13: Save the new sort and bring report along
+```bash
+$ bb scratchpad sort_numbers@eng pad.md > /dev/null
+$ PARENT=$(grep -m1 'bb:parent' pad.md | awk '{print $3}')
+$ sed "s/^## Implementation$/## Implementation\n\n<!-- bb:parent $PARENT -->/" again.md > pad.md
+$ bb scratchpad sort_numbers@eng pad.md -m "sort a copy in place" --refactor report@eng | grep 'Scratchpad\|Updated'
+Scratchpad pad.md: saved sort_numbers
+Updated 3 function(s), deepest first:
+```
+
+### Step 14: Only the root we named followed
+`summary` was not named, so it is behind and runs with what it was saved with. So is `compare`: its `new_sort` is found by name, so it follows the current version only when updated (its pin never moves). `bb search --outdated` lists both.
+
+```bash
+$ yes | bb review report@eng > /dev/null
+$ bb run report@eng 3,1,1,1,2
+median 1 top 3
+$ bb search --outdated | grep '^Name:' | sort
+Name: compare (eng)
+Name: summary (eng)
+$ bb run summary@eng 3,1,1,1,2
+top 3
+```
+
+### Step 15: It catches up when we choose
+```bash
+$ bb update summary@eng -m "follow the sort" | head -1
+Updated 1 function(s), deepest first:
+$ bb update compare@eng -m "follow the sort" | head -1
+Updated 1 function(s), deepest first:
+$ bb search --outdated | tail -1
+No matches found: nothing outdated
+```
+
+`compare` still pins the very first `sort_numbers`, so the program keeps using three versions of one name.
+
+```bash
+$ yes | bb review compare@eng > /dev/null
 $ bb run compare@eng 3,1,1,1,2
 old [1, 2, 3] new [1, 1, 1, 2, 3]
 ```
