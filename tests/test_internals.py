@@ -973,7 +973,7 @@ EDIT_IMPLEMENTATION = {
 }
 EDIT_CHECK = {
     'title': 'check_small',
-    'source': 'def check_small(double):\n    return double(3) == 6\n',
+    'source': 'def check_small(double):\n    assert double(3) == 6\n',
     'markdown': 'Small integers.',
     'parent': 'b' * 64,
 }
@@ -1043,16 +1043,39 @@ def test_edit_format_errors(text, message):
 # Tests for functor checks
 # ============================================================================
 
+def _check_function(source: str):
+    """The function a check's source defines, compiled the way bb compiles checks."""
+    namespace = {}
+    exec(compile(source, '<check>', 'exec', optimize=0), namespace)
+    return namespace[next(name for name in namespace if name.startswith('check_'))]
+
+
 def test_check_run_statuses():
-    """A check passes on a truthy result, fails on a falsy one, errors on an exception"""
+    """A check passes when it runs, fails on a failed assert, errors on another exception"""
     def double(x):
         return x * 2
 
-    assert bb.check_run(lambda f: f(3) == 6, double) == ('PASS', '')
-    assert bb.check_run(lambda f: f(3) == 7, double) == ('FAIL', 'returned False')
-    status, detail = bb.check_run(lambda f: f(), double)
+    six = _check_function('def check_six(f):\n    assert f(3) == 6\n')
+    seven = _check_function('def check_seven(f):\n    assert f(3) == 7\n')
+    arity = _check_function('def check_arity(f):\n    f()\n    assert True\n')
+    assert bb.check_run(six, double) == ('PASS', '')
+    assert bb.check_run(seven, double) == ('FAIL', 'assertion failed')
+    status, detail = bb.check_run(arity, double)
     assert status == 'ERROR'
     assert detail.startswith('TypeError:')
+
+
+def test_a_check_ignores_what_it_returns():
+    check = _check_function('def check_false(f):\n    assert f(1) == 1\n    return False\n')
+    assert bb.check_run(check, lambda n: n) == ('PASS', '')
+
+
+def test_a_check_without_assert_is_an_error_when_run():
+    source = 'def check_none(f):\n    return f(1) == 2\n'
+    status, detail = bb.check_run(_check_function(source), lambda n: n, source)
+    assert (status, detail) == ('ERROR', bb.CHECK_NO_ASSERT)
+    assert bb.check_has_assert('def check_one(f):\n    assert f(1)\n')
+    assert not bb.check_has_assert(source)
 
 
 def test_check_report_summary(capsys):
@@ -1131,7 +1154,7 @@ def test_review_state_lives_outside_the_shared_directory(mock_bb_dir):
 def test_checks_do_not_run_until_everything_is_approved(mock_bb_dir, tmp_path):
     """An unapproved check never executes, even when the function is approved"""
     marker = tmp_path / 'ran'
-    check = _pool_add(f"def check_side_effect(f):\n    open({str(marker)!r}, 'w').close()\n    return True\n")
+    check = _pool_add(f"def check_side_effect(f):\n    open({str(marker)!r}, 'w').close()\n    assert True\n")
     func = _pool_add("def one():\n    return 1\n", checks=[check])
 
     results, missing = bb.check_run_reviewed(func, {func})
@@ -1143,11 +1166,19 @@ def test_checks_do_not_run_until_everything_is_approved(mock_bb_dir, tmp_path):
     assert marker.exists()
 
 
+def test_a_stored_check_without_assert_is_an_error_when_its_checks_run(mock_bb_dir):
+    """Checks saved before the assert protocol return a value: nothing could fail them, so they do not pass"""
+    check = _pool_add("def check_old(f):\n    return f() == 2\n")
+    func = _pool_add("def one():\n    return 1\n", checks=[check])
+    results, missing = bb.check_run_reviewed(func, {func, check})
+    assert missing == [] and results == [('ERROR', 'check_old', bb.CHECK_NO_ASSERT)]
+
+
 def test_review_closure_includes_check_dependencies(mock_bb_dir):
     """A check's own imports must be approved too"""
     helper = _pool_add("def six():\n    return 6\n")
     check = _pool_add(f"import bb\nsix = bb.ref('{helper}')\n\n"
-                      f"def check_double(f):\n    return f(3) == six()\n")
+                      f"def check_double(f):\n    assert f(3) == six()\n")
     func = _pool_add("def double(x):\n    return x * 2\n", checks=[check])
     assert set(bb.review_closure(func)) == {func, helper, check}
     results, _ = bb.check_run_reviewed(func, {func, helper, check})
@@ -1170,7 +1201,7 @@ def test_edit_runs_nothing_without_checks_and_checks_need_reviewed_imports(mock_
     assert bb.edit_prepare(implementation, 'eng')['results'] == []  # saved without running
 
     with_check = implementation + ("\n## Checks\n\n### check_twelve\n\n```python def\n"
-                                   "def check_twelve(twelve):\n    return twelve() == 12\n```\n")
+                                   "def check_twelve(twelve):\n    assert twelve() == 12\n```\n")
     with pytest.raises(ValueError, match=f"bb review {helper}"):
         bb.edit_prepare(with_check, 'eng')
 
@@ -1182,7 +1213,7 @@ def test_review_order_puts_dependencies_and_checks_first(mock_bb_dir):
     """Levels follow the dependency order; a function's checks come before it"""
     helper = _pool_add("def six():\n    return 6\n")
     check = _pool_add(f"import bb\nsix = bb.ref('{helper}')\n\n"
-                      f"def check_double(f):\n    return f(3) == six()\n")
+                      f"def check_double(f):\n    assert f(3) == six()\n")
     leaf = _pool_add("def two():\n    return 2\n")
     func = _pool_add(f"import bb\ntwo = bb.ref('{leaf}')\n\n"
                      f"def double(x):\n    return x * two()\n", checks=[check])
@@ -1209,7 +1240,7 @@ def test_review_require_refuses_unreviewed_code(mock_bb_dir, capsys):
 
 def test_validate_dangerously_unreviewed_runs_everything(mock_bb_dir, capsys):
     """--dangerously-unreviewed runs unapproved checks, warns, and approves nothing"""
-    check = _pool_add("def check_one(f):\n    return f() == 1\n")
+    check = _pool_add("def check_one(f):\n    assert f() == 1\n")
     func = _pool_add("def one():\n    return 1\n", checks=[check])
 
     bb.command_validate_checks()
@@ -1473,21 +1504,40 @@ def test_code_pretty_leaves_short_code_and_lone_tuple_children_alone():
 
 def test_a_failing_check_says_which_part_was_false_and_what_it_compared():
     source = ('def check_double(double):\n    """Doubles."""\n    expected = 4\n'
-              '    return double(1) == 2 and double(2) == expected\n')
-    namespace = {}
-    exec(compile(source, '<check>', 'exec'), namespace)
-    status, detail = bb.check_run(namespace['check_double'], lambda n: n * 3, source)
+              '    assert double(1) == 2 and double(2) == expected\n')
+    status, detail = bb.check_run(_check_function(source), lambda n: n * 3, source)
     assert status == 'FAIL'
-    assert detail == 'returned False: double(1) == 2 is false (3 == 2)'
+    assert detail == 'assertion failed: double(1) == 2 (3 == 2)'
 
 
-def test_a_failing_check_without_source_still_shows_what_it_returned():
-    assert bb.check_run(lambda f: f(0), lambda n: n) == ('FAIL', 'returned 0')
-    source = 'def check_all(f):\n    """All."""\n    return all(f(x) for x in [1, 2])\n'
-    namespace = {}
-    exec(compile(source, '<check>', 'exec'), namespace)
-    assert bb.check_run(namespace['check_all'], lambda n: n > 1, source) == \
-        ('FAIL', 'returned False: all((f(x) for x in [1, 2])) is False')
+def test_a_failing_assert_shows_its_message_first():
+    source = 'def check_keep(f):\n    assert f([2, 1, 2]) == [1, 2, 2], "duplicates are kept"\n'
+    assert bb.check_run(_check_function(source), lambda numbers: sorted(set(numbers)), source) == \
+        ('FAIL', 'duplicates are kept: f([2, 1, 2]) == [1, 2, 2] ([1, 2] == [1, 2, 2])')
+
+
+def test_a_failing_check_without_source_only_says_the_assert_failed():
+    zero = _check_function('def check_zero(f):\n    assert f(0)\n')
+    assert bb.check_run(zero, lambda n: n) == ('FAIL', 'assertion failed')
+    source = 'def check_all(f):\n    """All."""\n    assert all(f(x) for x in [1, 2])\n'
+    assert bb.check_run(_check_function(source), lambda n: n > 1, source) == \
+        ('FAIL', 'assertion failed: all((f(x) for x in [1, 2])) is False')
+
+
+def test_an_assert_raised_by_a_helper_is_reported_without_guessing():
+    source = ('def check_helper(f):\n    def inner():\n        assert False, "inner broke"\n'
+              '    assert True\n    inner()\n')
+    assert bb.check_run(_check_function(source), lambda n: n, source) == ('FAIL', 'inner broke')
+
+
+def test_asserts_in_a_check_survive_python_optimization():
+    """python -O removes asserts it compiles; bb compiles checks with optimize=0"""
+    code = ("import bb\nsource = 'def check_f(f):\\n    assert f(1) == 2\\n'\n"
+            "namespace = {}\nexec(compile(source, '<c>', 'exec', optimize=0), namespace)\n"
+            "print(bb.check_run(namespace['check_f'], lambda n: n, source)[0])")
+    result = subprocess.run([sys.executable, '-O', '-c', code], cwd=Path(bb.__file__).parent,
+                            capture_output=True, text=True)
+    assert result.stdout.strip() == 'FAIL', result.stderr
 
 
 def test_a_class_defined_inside_a_function_is_renamed_with_its_uses(mock_bb_dir):

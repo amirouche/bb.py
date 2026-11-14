@@ -58,16 +58,28 @@ def test_a_stale_section_stops_the_save_and_keeps_the_rest_as_written(tmp_path):
     assert "'Due: '" in pad.read_text()  # the refused section keeps the text written
 
 
+def test_a_check_without_assert_is_refused(tmp_path):
+    pool = Pool(tmp_path)
+    pad = tmp_path / 'pad.md'
+    check = ('\n## Checks\n\n### check_money\n\n```python def\ndef check_money(money):\n'
+             '    """Two decimals."""\n    return money(150) == "$1.50"\n```\n')
+    pad.write_text(f'# money\n\n## Implementation\n\n```python def\n{MONEY}```\n{check}')
+    result = pool.bb('scratchpad', 'money@eng', str(pad), '-m', 'try')
+    assert result.returncode == 1
+    assert "check 'check_money' has no assert" in result.stderr
+    assert not latest(pool, 'money')
+
+
 def test_a_failing_check_stops_and_names_the_section(tmp_path):
     pool = Pool(tmp_path)
     pad = tmp_path / 'pad.md'
     check = ('\n## Checks\n\n### check_money\n\n```python def\ndef check_money(money):\n'
-             '    """Two decimals."""\n    return money(150) == "$1.5"\n```\n')
+             '    """Two decimals."""\n    assert money(150) == "$1.5"\n```\n')
     pad.write_text(f'# money\n\n## Implementation\n\n```python def\n{MONEY}```\n{check}\n'
                    f'# badge\n\n## Implementation\n\n```python def\n{BADGE}```\n')
     result = pool.bb('scratchpad', 'money@eng', 'badge@eng', str(pad), '-m', 'try')
     assert result.returncode == 1 and 'Stopped at money' in result.stderr
-    assert "FAIL check_money: returned False ('$1.50' == '$1.5')" in result.stdout
+    assert "FAIL check_money: assertion failed: money(150) == '$1.5' ('$1.50' == '$1.5')" in result.stdout
     assert not latest(pool, 'badge')  # not tried
     # The reason is the failing check: no "unchanged" line contradicts it
     assert 'unchanged' not in result.stderr and 'Not saved: fix' not in result.stderr
@@ -138,7 +150,7 @@ def test_refactor_brings_the_root_up_to_date_after_the_save(tmp_path):
 
 
 CHECKED = ('# money\n\n## Implementation\n\n```python def\n' + MONEY + '```\n\n## Checks\n\n### check_money\n\n'
-           '```python def\ndef check_money(money):\n    """Two decimals."""\n    return money(150) == "$1.50"\n```\n')
+           '```python def\ndef check_money(money):\n    """Two decimals."""\n    assert money(150) == "$1.50"\n```\n')
 
 
 def test_a_check_is_written_under_its_function_only(tmp_path):
@@ -169,7 +181,7 @@ def test_a_check_also_written_as_its_own_section_is_saved_once(tmp_path):
     # Two copies that differ are refused before anything is saved
     pad.write_text(pad.read_text().replace('Cents shown as dollars', 'Cents in dollars')
                    + '\n# check_money\n\n## Implementation\n\n```python def\ndef check_money(money):\n'
-                   '    """Other."""\n    return money(1) == "$0.01"\n```\n')
+                   '    """Other."""\n    assert money(1) == "$0.01"\n```\n')
     refused = pool.bb('scratchpad', 'money@eng', str(pad), '-m', 'two copies')
     assert refused.returncode == 1 and 'the two differ' in refused.stderr
     assert 'Cents shown as dollars' in pool.bb('show', 'money@eng').stdout  # nothing saved

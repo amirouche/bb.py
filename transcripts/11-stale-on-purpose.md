@@ -115,7 +115,7 @@ def sort_numbers(numbers):
 ```python def
 def check_sort_keeps_duplicates(sort_numbers):
     """Duplicates are kept."""
-    return sort_numbers([2, 1, 2]) == [1, 2, 2]
+    assert sort_numbers([2, 1, 2]) == [1, 2, 2]
 ```
 ````
 
@@ -271,7 +271,7 @@ def sort_numbers(numbers):
 ```python def
 def check_sort_keeps_duplicates(sort_numbers):
     """Duplicates are kept."""
-    return sort_numbers([2, 1, 2]) == [1, 2, 2]
+    assert sort_numbers([2, 1, 2]) == [1, 2, 2]
 ```
 ````
 
