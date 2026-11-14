@@ -96,7 +96,7 @@ One term of the series is exactly 4.
 ```python def
 def check_pi_n1(compute_pi):
     """Check pi with 1 iteration equals 4."""
-    return compute_pi(1) == 4.0
+    assert compute_pi(1) == 4.0
 ```
 
 ### check_pi_n2
@@ -106,7 +106,7 @@ Even iterations undershoot.
 ```python def
 def check_pi_n2(compute_pi):
     """Check pi with 2 iterations underestimates."""
-    return compute_pi(2) < 3.0
+    assert compute_pi(2) < 3.0
 ```
 
 ### check_pi_n3
@@ -116,7 +116,7 @@ Odd iterations overshoot.
 ```python def
 def check_pi_n3(compute_pi):
     """Check pi with 3 iterations overestimates."""
-    return compute_pi(3) > 3.0
+    assert compute_pi(3) > 3.0
 ```
 
 ### check_pi_n5
@@ -124,7 +124,7 @@ def check_pi_n3(compute_pi):
 ```python def
 def check_pi_n5(compute_pi):
     """Check pi with 5 iterations is between 3 and 4."""
-    return 3.0 < compute_pi(5) < 4.0
+    assert 3.0 < compute_pi(5) < 4.0
 ```
 
 ### check_pi_n8
@@ -132,7 +132,7 @@ def check_pi_n5(compute_pi):
 ```python def
 def check_pi_n8(compute_pi):
     """Check pi with 8 iterations is between 3 and 3.3."""
-    return 3.0 < compute_pi(8) < 3.3
+    assert 3.0 < compute_pi(8) < 3.3
 ```
 ````
 
@@ -152,13 +152,13 @@ PASS check_pi_n3
 PASS check_pi_n5
 PASS check_pi_n8
 5 checks: 5 passed
-Check: 1a98a8c92e2e8401f5b39ea51a5a3729eb756882860c54e8ec5c653fc6b5e620 check_pi_n1
-Check: a658651655db54709ff2e2490f4ba96ebfd3ccbf27b45e043079177ad365ccd7 check_pi_n2
-Check: 6ace86da1614319cf367ee008158c90486c224f0c9282f570d1dde66683a8b26 check_pi_n3
-Check: 4487a0ba57b01c388b6edc53718257681a237607e616e3e765afa0b496159892 check_pi_n5
-Check: 451a1d221bbeb6e40daa71aedbb82fea0a94eb3738dfa59c3b0aef94faa51025 check_pi_n8
+Check: 2167cba54fcc33557df52a907b2505f99e5353f727553761ce20361d3e9bc8a9 check_pi_n1
+Check: 21e213ce99f1901b6fc990357820956883f36ea7b6e6e91b70ac80fb4965e566 check_pi_n2
+Check: 1be89fa3f2bcd4945a558592e1a76c858360d104dcf7f7f21941f76359e28e83 check_pi_n3
+Check: 38e0166a6c0837246b9a296f565a23deb0e1cc1142ffddedded78307ac601149 check_pi_n5
+Check: 5f8de2e0762a54b00e9c4147e65a2a18ec640bcf9bb8bd42a9dc8ec1c7e7bd48 check_pi_n8
 Parent: ddda76213f839382c1f0df754b73d47214cf05859da05a14fe690eff32c24015
-Hash: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
+Hash: 314c0555136ff919d5f0f3b72fea5fe9ced8e67e95d74660b465c48cb3273de9
 ```
 
 ### Step 4: Read before running
@@ -171,7 +171,7 @@ state directory (`~/.local/state/bb/`), not in the shared `$BB_DIRECTORY`.
 ```bash
 $ (bb validate --checks compute_pi@eng || true)
 Not reviewed, checks not run:
-  compute_pi 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885 (6 to approve: bb review 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885)
+  compute_pi 314c0555136ff919d5f0f3b72fea5fe9ced8e67e95d74660b465c48cb3273de9 (6 to approve: bb review 314c0555136ff919d5f0f3b72fea5fe9ced8e67e95d74660b465c48cb3273de9)
 ```
 
 `bb review` goes through the dependency order level by level. A
@@ -183,11 +183,11 @@ answers every question; the `grep` keeps the headings and results.
 
 ```bash
 $ yes | bb review compute_pi@eng | grep -E '^\[|PASS|checks:|^Total'
-[1/6] Function: check_pi_n1 (eng)
-[2/6] Function: check_pi_n5 (eng)
-[3/6] Function: check_pi_n8 (eng)
-[4/6] Function: check_pi_n3 (eng)
-[5/6] Function: check_pi_n2 (eng)
+[1/6] Function: check_pi_n3 (eng)
+[2/6] Function: check_pi_n1 (eng)
+[3/6] Function: check_pi_n2 (eng)
+[4/6] Function: check_pi_n5 (eng)
+[5/6] Function: check_pi_n8 (eng)
 [6/6] Function: compute_pi (eng)
 Run its checks? [y/n/q]: PASS check_pi_n1
 PASS check_pi_n2
@@ -201,7 +201,7 @@ Total reviewed: 6 function(s)
 ### Step 5: Run every reviewed check in the pool
 ```bash
 $ bb validate --checks
-compute_pi 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
+compute_pi 314c0555136ff919d5f0f3b72fea5fe9ced8e67e95d74660b465c48cb3273de9
   PASS check_pi_n1
   PASS check_pi_n2
   PASS check_pi_n3
@@ -247,7 +247,7 @@ def compute_pi(n):
 ```python def
 def check_pi_n1(compute_pi):
     """Check pi with 1 iteration equals 4."""
-    return compute_pi(1) == 4.0
+    assert compute_pi(1) == 4.0
 ```
 
 ### check_pi_n2
@@ -255,7 +255,7 @@ def check_pi_n1(compute_pi):
 ```python def
 def check_pi_n2(compute_pi):
     """Check pi with 2 iterations underestimates."""
-    return compute_pi(2) < 3.0
+    assert compute_pi(2) < 3.0
 ```
 
 ### check_pi_n3
@@ -263,7 +263,7 @@ def check_pi_n2(compute_pi):
 ```python def
 def check_pi_n3(compute_pi):
     """Check pi with 3 iterations overestimates."""
-    return compute_pi(3) > 3.0
+    assert compute_pi(3) > 3.0
 ```
 
 ### check_pi_n5
@@ -271,7 +271,7 @@ def check_pi_n3(compute_pi):
 ```python def
 def check_pi_n5(compute_pi):
     """Check pi with 5 iterations is between 3 and 4."""
-    return 3.0 < compute_pi(5) < 4.0
+    assert 3.0 < compute_pi(5) < 4.0
 ```
 
 ### check_pi_n8
@@ -279,7 +279,7 @@ def check_pi_n5(compute_pi):
 ```python def
 def check_pi_n8(compute_pi):
     """Check pi with 8 iterations is between 3 and 3.3."""
-    return 3.0 < compute_pi(8) < 3.3
+    assert 3.0 < compute_pi(8) < 3.3
 ```
 ````
 
@@ -288,18 +288,27 @@ def check_pi_n8(compute_pi):
 ### Step 6: Try to save the broken version
 ```bash
 $ (EDITOR="cp pi_broken.md" bb edit compute_pi@eng -m "Skip the first term" 2>/dev/null || true)
-FAIL check_pi_n1: returned False (0.0 == 4.0)
+FAIL check_pi_n1: assertion failed: compute_pi(1) == 4.0 (0.0 == 4.0)
 PASS check_pi_n2
-FAIL check_pi_n3: returned False (-0.5333333333333332 > 3.0)
-FAIL check_pi_n5: returned False
-FAIL check_pi_n8: returned False
+FAIL check_pi_n3: assertion failed: compute_pi(3) > 3.0 (-0.5333333333333332 > 3.0)
+FAIL check_pi_n5: assertion failed: 3.0 < compute_pi(5) < 4.0
+FAIL check_pi_n8: assertion failed: 3.0 < compute_pi(8) < 3.3
 5 checks: 1 passed, 4 failed
+```
+
+### Step 6b: A check must assert
+A check passes when it runs without raising, so it needs at least one `assert`. One that only returns a value could never fail, and is refused.
+
+```bash
+$ sed 's/    assert compute_pi(1) == 4.0/    return compute_pi(1) == 4.0/' pi_checks.md > pi_returns.md
+$ (EDITOR="cp pi_returns.md" bb edit compute_pi@eng -m "Return instead of assert" 2>&1 || true) | grep '^Error'
+Error: check 'check_pi_n1' has no assert: a check passes when it runs without raising, so it needs at least one assert (assert f(2) == 4); rewrite it with bb edit
 ```
 
 ### Step 7: The name still points to the checked version
 ```bash
 $ bb latest compute_pi eng | grep Hash
-Hash: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
+Hash: 314c0555136ff919d5f0f3b72fea5fe9ced8e67e95d74660b465c48cb3273de9
 ```
 
 ---
@@ -333,58 +342,58 @@ def compute_pi(n):
 
 ### check_pi_n1
 
-<!-- bb:parent 1a98a8c92e2e8401f5b39ea51a5a3729eb756882860c54e8ec5c653fc6b5e620 -->
+<!-- bb:parent 2167cba54fcc33557df52a907b2505f99e5353f727553761ce20361d3e9bc8a9 -->
 
 One term of the series is exactly 4.
 
 ```python def
 def check_pi_n1(compute_pi):
     """Check pi with 1 iteration equals 4."""
-    return compute_pi(1) == 4.0
+    assert compute_pi(1) == 4.0
 ```
 
 ### check_pi_n2
 
-<!-- bb:parent a658651655db54709ff2e2490f4ba96ebfd3ccbf27b45e043079177ad365ccd7 -->
+<!-- bb:parent 21e213ce99f1901b6fc990357820956883f36ea7b6e6e91b70ac80fb4965e566 -->
 
 Even iterations undershoot.
 
 ```python def
 def check_pi_n2(compute_pi):
     """Check pi with 2 iterations underestimates."""
-    return compute_pi(2) < 3.0
+    assert compute_pi(2) < 3.0
 ```
 
 ### check_pi_n3
 
-<!-- bb:parent 6ace86da1614319cf367ee008158c90486c224f0c9282f570d1dde66683a8b26 -->
+<!-- bb:parent 1be89fa3f2bcd4945a558592e1a76c858360d104dcf7f7f21941f76359e28e83 -->
 
 Odd iterations overshoot.
 
 ```python def
 def check_pi_n3(compute_pi):
     """Check pi with 3 iterations overestimates."""
-    return compute_pi(3) > 3.0
+    assert compute_pi(3) > 3.0
 ```
 
 ### check_pi_n5
 
-<!-- bb:parent 4487a0ba57b01c388b6edc53718257681a237607e616e3e765afa0b496159892 -->
+<!-- bb:parent 38e0166a6c0837246b9a296f565a23deb0e1cc1142ffddedded78307ac601149 -->
 
 ```python def
 def check_pi_n5(compute_pi):
     """Check pi with 5 iterations is between 3 and 4."""
-    return 3.0 < compute_pi(5) < 4.0
+    assert 3.0 < compute_pi(5) < 4.0
 ```
 
 ### check_pi_n8
 
-<!-- bb:parent 451a1d221bbeb6e40daa71aedbb82fea0a94eb3738dfa59c3b0aef94faa51025 -->
+<!-- bb:parent 5f8de2e0762a54b00e9c4147e65a2a18ec640bcf9bb8bd42a9dc8ec1c7e7bd48 -->
 
 ```python def
 def check_pi_n8(compute_pi):
     """Check pi with 8 iterations is between 3 and 3.3."""
-    return 3.0 < compute_pi(8) < 3.3
+    assert 3.0 < compute_pi(8) < 3.3
 ```
 ````
 
@@ -399,8 +408,8 @@ PASS check_pi_n3
 PASS check_pi_n5
 PASS check_pi_n8
 5 checks: 5 passed
-Parent: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
-Hash: 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670
+Parent: 314c0555136ff919d5f0f3b72fea5fe9ced8e67e95d74660b465c48cb3273de9
+Hash: f8026db6c727e0efa3d678440e47a867a7bda4069dc07676ff178da4576ac99e
 ```
 
 ### Step 9: The name now points to the rewrite, which carries the same checks
@@ -409,7 +418,7 @@ resolves to the rewrite.
 
 ```bash
 $ bb latest compute_pi eng | grep Hash
-Hash: 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670
+Hash: f8026db6c727e0efa3d678440e47a867a7bda4069dc07676ff178da4576ac99e
 ```
 
 The checks are already approved, but the rewrite is new code: only it
@@ -418,7 +427,7 @@ needs reading before the checks run again.
 ```bash
 $ (bb validate --checks compute_pi@eng || true)
 Not reviewed, checks not run:
-  compute_pi 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670 (1 to approve: bb review 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670)
+  compute_pi f8026db6c727e0efa3d678440e47a867a7bda4069dc07676ff178da4576ac99e (1 to approve: bb review f8026db6c727e0efa3d678440e47a867a7bda4069dc07676ff178da4576ac99e)
 $ yes | bb review compute_pi@eng | grep -E '^\[|PASS|checks:|^Total'
 [1/1] Function: compute_pi (eng)
 Run its checks? [y/n/q]: PASS check_pi_n1
@@ -437,7 +446,7 @@ so `bb show` uses it.
 
 ```bash
 $ sed 's/More terms give a closer approximation/Each extra term gets closer/' pi_sum.md > pi_doc.md
-$ EDITOR="cp pi_doc.md" bb edit 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670@eng -m "Reword the documentation"
+$ EDITOR="cp pi_doc.md" bb edit f8026db6c727e0efa3d678440e47a867a7bda4069dc07676ff178da4576ac99e@eng -m "Reword the documentation"
 PASS check_pi_n1
 PASS check_pi_n2
 PASS check_pi_n3
@@ -445,8 +454,8 @@ PASS check_pi_n5
 PASS check_pi_n8
 5 checks: 5 passed
 Documentation saved: the code did not change, so the hash stays the same.
-Hash: 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670
-$ bb show 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670@eng | head -1
+Hash: f8026db6c727e0efa3d678440e47a867a7bda4069dc07676ff178da4576ac99e
+$ bb show f8026db6c727e0efa3d678440e47a867a7bda4069dc07676ff178da4576ac99e@eng | head -1
 def compute_pi(n):
 ```
 
@@ -475,7 +484,7 @@ Eight terms already land within 0.15 of pi.
 ```python def
 def check_pi_n8(compute_pi):
     """Check pi with 8 iterations is within 0.15 of pi."""
-    return abs(compute_pi(8) - 3.14159) < 0.15
+    assert abs(compute_pi(8) - 3.14159) < 0.15
 ```
 
 ## Checks
@@ -487,8 +496,8 @@ def check_pi_n8(compute_pi):
 ```bash
 $ EDITOR="cp n8_tighter.md" bb edit check_pi_n8@eng -m "Tighter bound"
 No checks.
-Parent: 451a1d221bbeb6e40daa71aedbb82fea0a94eb3738dfa59c3b0aef94faa51025
-Hash: e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f
+Parent: 5f8de2e0762a54b00e9c4147e65a2a18ec640bcf9bb8bd42a9dc8ec1c7e7bd48
+Hash: 8e64a9a6a0709e6ddee3809bcf4f5cd45fbcacbde56f5166a74950f69b109865
 ```
 
 ### Step 12: The fork knows where it came from
@@ -498,9 +507,9 @@ line, so a draft made before another save is refused as stale.
 
 ```bash
 $ bb latest check_pi_n8 eng | grep -E '^(Hash|Parent):'
-Hash: e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f
-Parent: 451a1d221bbeb6e40daa71aedbb82fea0a94eb3738dfa59c3b0aef94faa51025
-$ EDITOR=cat bb edit e7dd543932d426965adc4081829bdb0ff3b99e05838e9dfb78c07fa99198706f@eng | grep -c 'bb:parent'
+Hash: 8e64a9a6a0709e6ddee3809bcf4f5cd45fbcacbde56f5166a74950f69b109865
+Parent: 5f8de2e0762a54b00e9c4147e65a2a18ec640bcf9bb8bd42a9dc8ec1c7e7bd48
+$ EDITOR=cat bb edit 8e64a9a6a0709e6ddee3809bcf4f5cd45fbcacbde56f5166a74950f69b109865@eng | grep -c 'bb:parent'
 1
 ```
 
@@ -518,22 +527,22 @@ commands that take a name refuse it and ask for a hash.
 ### Step 13: A second fork of the checked version
 ```bash
 $ sed 's/sum((-1)/sum([(-1)/; s/range(n))$/range(n)])/' pi_sum.md > pi_list.md
-$ EDITOR="cp pi_list.md" bb edit 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885@eng -m "Sum a list"
+$ EDITOR="cp pi_list.md" bb edit 314c0555136ff919d5f0f3b72fea5fe9ced8e67e95d74660b465c48cb3273de9@eng -m "Sum a list"
 PASS check_pi_n1
 PASS check_pi_n2
 PASS check_pi_n3
 PASS check_pi_n5
 PASS check_pi_n8
 5 checks: 5 passed
-Parent: 5d30e8bcc5b84de4afc63a87f701eeffd51d335c4435a1ba91e385430c98c885
-Hash: 166d4a9cdf95cc983e6d9bbc77a71512cc5877210d5a4453b2aa89791cba47e3
+Parent: 314c0555136ff919d5f0f3b72fea5fe9ced8e67e95d74660b465c48cb3273de9
+Hash: ec30704cedd60db0786a85051224ad26d51fd16a4095a90fcecb3dfed33cda93
 ```
 
 ### Step 14: The name now has two current versions
 ```bash
 $ bb latest compute_pi eng | grep "^Hash:" | sort
-Hash: 166d4a9cdf95cc983e6d9bbc77a71512cc5877210d5a4453b2aa89791cba47e3
-Hash: 1f04afa267814a78a700bfaacf4dbe5858817e14913016503d4f2804ad4bd670
+Hash: ec30704cedd60db0786a85051224ad26d51fd16a4095a90fcecb3dfed33cda93
+Hash: f8026db6c727e0efa3d678440e47a867a7bda4069dc07676ff178da4576ac99e
 $ (bb show compute_pi@eng 2>&1 || true) | head -1
 Error: 'compute_pi@eng' is ambiguous: it has 2 current versions. Use a hash:
 ```
@@ -547,7 +556,7 @@ secrets and no write access.
 ```bash
 $ bb validate --checks | tail -2
 Not reviewed, checks not run:
-  compute_pi 166d4a9cdf95cc983e6d9bbc77a71512cc5877210d5a4453b2aa89791cba47e3 (1 to approve: bb review 166d4a9cdf95cc983e6d9bbc77a71512cc5877210d5a4453b2aa89791cba47e3)
+  compute_pi ec30704cedd60db0786a85051224ad26d51fd16a4095a90fcecb3dfed33cda93 (1 to approve: bb review ec30704cedd60db0786a85051224ad26d51fd16a4095a90fcecb3dfed33cda93)
 $ bb validate --checks --dangerously-unreviewed | grep -c "5 checks: 5 passed"
 3
 ```

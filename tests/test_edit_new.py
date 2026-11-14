@@ -73,7 +73,7 @@ def test_saving_runs_nothing_without_checks_and_checks_need_reviewed_imports(tmp
     bb(read, 'edit', 'quadruple@eng')
     with_check = draft.read_text().rstrip('\n') + ('\n\n### check_quadruple\n\n```python def\n'
                                                    'def check_quadruple(quadruple):\n    """Four times one."""\n'
-                                                   '    return quadruple(1) == 4\n```\n')
+                                                   '    assert quadruple(1) == 4\n```\n')
     draft.write_text(with_check)
     ran = bb(write, 'edit', 'quadruple@eng', '-m', 'with a check')
     assert ran.returncode == 0 and 'PASS check_quadruple' in ran.stdout, ran.stderr

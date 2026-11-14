@@ -116,8 +116,10 @@ Writing functions for the pool:
   - The documentation is the prose under `## Implementation`, before the
     code (per language, outside the hash). Each check is a `###` section
     whose function takes the implementation as its only argument and
-    returns True when it passes; checks run when you save and are part of
-    the definition (changing them forks the function). A check does not
+    states what must hold with assert (at least one; it passes when it
+    runs without raising, its return value is ignored); checks run when
+    you save and are part of the definition (changing them forks the
+    function). A check does not
     import what it tests, so the same check can test a fork or another
     function with the same contract. Checks are worth it for central
     functions (many callers, see `bb caller`) and tricky logic, less for
@@ -152,7 +154,7 @@ Writing functions for the pool:
       ```python def
       def check_rejects_garbage(parse):
           \"\"\"Anything that is not an amount gives None instead of raising.\"\"\"
-          return all((parse(text) is None for text in ['', 'abc', '1.2.3', '-5', '1.999']))
+          assert all((parse(text) is None for text in ['', 'abc', '1.2.3', '-5', '1.999']))
       ```
 
       ### check_reads_common_forms
@@ -160,7 +162,10 @@ Writing functions for the pool:
       ```python def
       def check_reads_common_forms(parse):
           \"\"\"Whole, decimal point, decimal comma and spaced thousands all read right.\"\"\"
-          return parse('12') == 1200 and parse('12.5') == 1250 and (parse('12,50') == 1250) and (parse(' 1 200.00 ') == 120000)
+          assert parse('12') == 1200
+          assert parse('12.5') == 1250
+          assert parse('12,50') == 1250
+          assert parse(' 1 200.00 ') == 120000
       ```
 
 - `bb scratchpad a@lang b@lang FILE` does the same for several functions
@@ -201,6 +206,7 @@ import ast
 import argparse
 import builtins
 import contextlib
+import copy
 import hashlib
 import io
 import itertools
@@ -5265,7 +5271,7 @@ EDIT_DEFINITION_INFO = 'python def'
 EDIT_IMPLEMENTATION_HEADING = 'Implementation'
 EDIT_CHECKS_HEADING = 'Checks'
 EDIT_CHECKS_HINT = ('<!-- bb: add checks as ### subsections. Each one needs a ```python def block '
-                    'whose function takes the implementation as its only argument and returns True when it passes. -->')
+                    'whose function takes the implementation as its only argument and states what must hold with assert. -->')
 
 _EDIT_FENCE_RE = re.compile(r'^(`{3,}|~{3,})\s*(.*?)\s*$')
 _EDIT_MARKER_RE = re.compile(r'^<!--\s*bb:(.*?)\s*-->$')
@@ -6094,7 +6100,8 @@ def helper_identifier_name(identifier: str) -> Optional[str]:
 # ============================================================================
 #
 # A check is an ordinary pool function that takes the implementation as its
-# only argument and returns a truthy value when it passes. Checks do not
+# only argument and states what must hold with assert: it passes when it
+# runs without raising, and needs at least one assert. Checks do not
 # import the function they test, so one check can run against every fork.
 # They are part of an implementation's definition: object.json lists their
 # hashes under 'checks', and they enter the function hash, so changing the
@@ -6157,90 +6164,113 @@ def code_execute_source(source_code: str, lang: str) -> Callable:
     tree.body = body
 
     try:
-        exec(compile(tree, f'<bb edit {function_def.name}>', 'exec'), namespace)
+        exec(compile(tree, f'<bb edit {function_def.name}>', 'exec', optimize=0), namespace)
     except Exception as e:
         raise ValueError(f"{function_def.name} failed to load: {type(e).__name__}: {e}")
 
     return namespace[function_def.name]
 
 
-def check_explain(source: str, captured: Dict[str, Any], result: Any) -> str:
-    """
-    Say why a check failed, from the expression it returned.
+CHECK_NO_ASSERT = ("no assert: a check passes when it runs without raising, so it needs at least one "
+                   "assert (assert f(2) == 4); rewrite it with bb edit")
 
-    captured holds the check's frame at its return (locals, globals, line).
-    The return statement on that line is evaluated again piece by piece:
-    the first false part of an `and` chain, and for a comparison both of
-    its sides, so `parse('12,50') == 1250` shows `1200 == 1250`. Anything
-    that cannot be evaluated is left out; the returned value is always shown.
+
+def check_has_assert(code: str) -> bool:
+    """True when the code of a check holds at least one assert statement."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return True  # not this function's business: running it says what is wrong
+    return any(isinstance(node, ast.Assert) for node in ast.walk(tree))
+
+
+def check_explain(source: str, check: Callable, error: AssertionError,
+                  names: Dict[str, str] = None) -> str:
     """
-    detail = f"returned {result!r}"
-    if not source or not captured:
+    Say why a check failed, from the assert that raised.
+
+    The assert statement is found in source, the check's code, by the line
+    the traceback reaches in the check, and evaluated again piece by piece
+    with the values the check had: the first false part of an `and` chain,
+    and for a comparison both of its sides, so `assert parse('12,50') ==
+    1250` shows `1200 == 1250`. The assert's own message, when it has one,
+    heads the line. Anything that cannot be evaluated is left out. names
+    maps the normalized names of stored code (_bb_v_1) back to the ones
+    its author wrote, for display only.
+    """
+    detail = str(error) or "assertion failed"
+    code = getattr(check, '__code__', None)
+    tb, found = error.__traceback__, None
+    while tb is not None:
+        if tb.tb_frame.f_code is code:
+            found = tb
+        tb = tb.tb_next
+    if not source or found is None:
         return detail
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return detail
-    returns = [node for node in ast.walk(tree) if isinstance(node, ast.Return) and node.value is not None]
-    on_line = [node for node in returns if node.lineno <= captured['line'] <= node.end_lineno]
-    node = (on_line or returns[-1:] or [None])[0]
+    line, scope = found.tb_lineno, found.tb_frame
+    node = next((n for n in ast.walk(tree)
+                 if isinstance(n, ast.Assert) and n.lineno <= line <= n.end_lineno), None)
     if node is None:
-        return detail
+        return detail  # raised by something the check called
 
     def evaluate(expression: ast.expr):
-        code = compile(ast.fix_missing_locations(ast.Expression(expression)), '<check>', 'eval')
-        return eval(code, captured['globals'], captured['locals'])
+        compiled = compile(ast.fix_missing_locations(ast.Expression(expression)), '<check>', 'eval')
+        return eval(compiled, scope.f_globals, scope.f_locals)
+
+    def show(expression: ast.expr) -> str:
+        shown = copy.deepcopy(expression)
+        for name in ast.walk(shown):
+            if isinstance(name, ast.Name) and name.id in (names or {}):
+                name.id = names[name.id]
+        return ast.unparse(shown)
 
     try:
-        part = node.value
+        part = node.test
         while isinstance(part, ast.BoolOp) and isinstance(part.op, ast.And):
             part = next((value for value in part.values if not evaluate(value)), None)
             if part is None:
                 return detail
+        detail += f": {show(part)}"
         if isinstance(part, ast.Call) and getattr(part.func, 'id', None) == 'all' and len(part.args) == 1:
-            return f"{detail}: {ast.unparse(part)} is False"
-        if part is not node.value:
-            detail += f": {ast.unparse(part)} is false"
+            return f"{detail} is False"
         if isinstance(part, ast.Compare) and len(part.ops) == 1:
             left, right = evaluate(part.left), evaluate(part.comparators[0])
             operator = ast.unparse(ast.Compare(left=ast.Name('a'), ops=part.ops, comparators=[ast.Name('b')]))[2:-2]
             detail += f" ({left!r} {operator} {right!r})"
+        elif part is not node.test:
+            detail += " is false"
     except Exception:
         pass
     return detail
 
 
-def check_run(check: Callable, implementation: Callable, source: str = None) -> Tuple[str, str]:
+def check_run(check: Callable, implementation: Callable, source: str = None,
+              names: Dict[str, str] = None) -> Tuple[str, str]:
     """
     Run one check against an implementation.
 
-    source, the check's code as it was compiled, lets a failure say which
-    part of the returned expression was false and what it compared
-    (check_explain).
+    A check passes when it runs without raising: it states what must hold
+    with assert, and its return value is ignored. A failed assert is FAIL
+    and says which one (check_explain); any other exception is ERROR. With
+    source, the check's code as it was compiled, a check without any
+    assert is an ERROR, since nothing could ever fail it.
 
     Returns:
         (status, detail) where status is PASS, FAIL or ERROR
     """
-    captured: Dict[str, Any] = {}
-    code = getattr(check, '__code__', None)
-
-    def watch(frame, event, arg):
-        if event == 'return':
-            captured.update(locals=dict(frame.f_locals), globals=frame.f_globals, line=frame.f_lineno)
-        return watch
-
-    def calls(frame, event, arg):
-        return watch if frame.f_code is code else None
-
-    previous = sys.gettrace()
-    sys.settrace(calls if code is not None and source else previous)
+    if source and not check_has_assert(source):
+        return 'ERROR', CHECK_NO_ASSERT
     try:
-        result = check(implementation)
+        check(implementation)
+    except AssertionError as e:
+        return 'FAIL', check_explain(source, check, e, names)
     except Exception as e:
         return 'ERROR', f"{type(e).__name__}: {e}"
-    finally:
-        sys.settrace(previous)
-    return ('PASS', '') if result else ('FAIL', check_explain(source, captured, result))
+    return 'PASS', ''
 
 
 def check_report(results: List[Tuple[str, str, str]], indent: str = "") -> bool:
@@ -6364,7 +6394,7 @@ def code_load_normalized(func_hash: str, cache: Dict[str, Callable] = None,
     tree.body = body
 
     try:
-        exec(compile(tree, f'<bb {func_hash[:12]}>', 'exec'), namespace)
+        exec(compile(tree, f'<bb {func_hash[:12]}>', 'exec', optimize=0), namespace)
     except Exception as e:
         raise ValueError(f"{func_hash[:12]}... failed to load: {type(e).__name__}: {e}")
 
@@ -6401,6 +6431,14 @@ def check_run_reviewed(func_hash: str, reviewed: set) -> Tuple[Optional[List[Tup
     return check_run_all(func_hash, object_load_checks(func_hash)), []
 
 
+def helper_display_names(func_hash: str) -> Dict[str, str]:
+    """The names a function's author wrote, by normalized name, in the language you read it in."""
+    lang = helper_pick_language(func_hash)
+    if lang is None:
+        return {}
+    return mapping_load_json(func_hash, lang, mapping_select(func_hash, lang)).get('name_mapping', {})
+
+
 def check_run_all(func_hash: str, checks: List[str], source: str = None,
                   like: str = None) -> List[Tuple[str, str, str]]:
     """
@@ -6423,7 +6461,8 @@ def check_run_all(func_hash: str, checks: List[str], source: str = None,
         except ValueError as e:
             results.append(('ERROR', name, str(e)))
             continue
-        status, detail = check_run(check, implementation, object_load(check_hash).get('normalized_code'))
+        status, detail = check_run(check, implementation, object_load(check_hash).get('normalized_code'),
+                                   helper_display_names(check_hash))
         results.append((status, name, detail))
 
     results.sort(key=lambda r: r[1])
@@ -6609,6 +6648,9 @@ def edit_prepare(text: str, lang: str, unreviewed: bool = False) -> Dict[str, An
         section['source'], names = code_resolve_pool_names(section['source'], lang, where=where)
         resolved.update(names)
     prepared_implementation = code_prepare_source(implementation['source'], lang, where="Implementation")
+    for check in parsed['checks']:
+        if not check_has_assert(check['source']):
+            raise ValueError(f"check '{check['title']}' has {CHECK_NO_ASSERT}")
     checks = [(check, code_prepare_source(check['source'], lang, where=f"check '{check['title']}'"))
               for check in parsed['checks']]
     for section, prepared in [(implementation, prepared_implementation)] + checks:
@@ -6734,8 +6776,9 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     Opens $EDITOR on a file with an Implementation section and a Checks
     section. Each section holds prose and examples, and exactly one code
     block fenced as `python def`: the function that is hashed. Each check
-    takes the implementation as its only argument and returns True when it
-    passes.
+    takes the implementation as its only argument and states what must hold
+    with assert (at least one: a check passes when it runs without raising;
+    one without an assert is refused).
 
     Saving requires the file to parse and every check to pass. Only checks
     run the code: a function without checks is saved without running it,
