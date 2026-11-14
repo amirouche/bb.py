@@ -77,10 +77,10 @@ Exact matching is the foundation — the clean case where two people write the s
 
 ```bash
 # Using pip
-pip install git+https://github.com/amirouche/bb.py.git
+pip install beyondbabel
 
 # Using uv
-uv tool install git+https://github.com/amirouche/bb.py.git
+uv tool install beyondbabel
 ```
 
 Requires Python 3.11+. No runtime dependencies.
