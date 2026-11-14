@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "beyondbabel"
-version = "0.3.0"
+version = "0.4.0"
 description = "A function pool manager for Python that enables multilingual function sharing through AST normalization"
 readme = "README.md"
 license = "MIT"
