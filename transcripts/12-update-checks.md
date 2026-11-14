@@ -65,7 +65,7 @@ def count_distinct(numbers):
 ```python def
 def check_count_distinct(count_distinct):
     """Repeated numbers count once."""
-    return count_distinct([1, 1, 2]) == 2
+    assert count_distinct([1, 1, 2]) == 2
 ```
 ````
 
@@ -164,7 +164,7 @@ Drafts open on these functions are now stale: write them again.
 Hash: HASH
 Not updated, a check failed (1):
   count_distinct: HASH... stays; its update would be HASH...
-    FAIL check_count_distinct: returned False (3 == 2)
+    FAIL check_count_distinct: assertion failed: count_distinct([1, 1, 2]) == 2 (3 == 2)
 Edit them to adapt (bb edit NAME@lang), then update again.
 ```
 
@@ -212,7 +212,7 @@ def count_distinct(numbers):
 ```python def
 def check_count_distinct(count_distinct):
     """Repeated numbers count once."""
-    return count_distinct([1, 1, 2]) == 2
+    assert count_distinct([1, 1, 2]) == 2
 ```
 ````
 

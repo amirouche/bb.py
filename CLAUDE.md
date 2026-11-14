@@ -207,6 +207,10 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
    - no checks: hash = sha256(normalized code), as it always was
    - with checks: hash = sha256 of canonical JSON {checks (sorted), normalized_code}
    Changing checks forks the function; changing documentation does not
+   A check takes the implementation as its only argument and passes when it
+   runs without raising: it needs at least one `assert` (AssertionError = FAIL,
+   other exceptions = ERROR, the return value is ignored). One without an
+   assert is refused when saved and is an ERROR when a stored one runs
 6. object.json is written once (new objects carry no 'parent'); mappings
    name their function and language and are content-addressed with them
 7. Current versions follow lineage steps, never time: append-only records
