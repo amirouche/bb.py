@@ -70,7 +70,10 @@ Writing functions for the pool:
   `bb edit name@lang --refactor app@lang` saves the change and updates
   everything between app and it, and lists what it rewrote (or run
   `bb update app@lang` later: it brings app and everything it uses to
-  their current versions in one step, keeping pins).
+  their current versions in one step, keeping pins). An update is saved
+  only when the checks of what it rewrites pass, as in bb edit: one that
+  fails stays on its version, the rest is updated, the failure is printed
+  and the exit status is 1.
 - Finding functions: `bb search` alone lists every current function;
   `bb search WORDS` searches names, docs and code; `bb latest
   name@lang --hash` prints only the current hash (for scripts); `bb log`
@@ -6319,14 +6322,16 @@ def code_load_refs(tree: ast.AST, cache: Dict[str, Callable]) -> types.SimpleNam
     return types.SimpleNamespace(ref=loaded.__getitem__)
 
 
-def code_load_normalized(func_hash: str, cache: Dict[str, Callable] = None) -> Callable:
+def code_load_normalized(func_hash: str, cache: Dict[str, Callable] = None,
+                         source: str = None, like: str = None) -> Callable:
     """
     Load a pool function from its normalized code, exactly as hashed.
 
     No language mapping is applied, so what runs is the code that was
     hashed and reviewed, whatever names a mapping displays. Each function
     runs in its own namespace, with its bb imports bound to their own
-    loaded functions.
+    loaded functions. With source (and like, the function it rewrites),
+    code that is not in the pool yet is loaded under func_hash.
 
     Raises:
         ValueError: If the function or a dependency is missing or fails to load
@@ -6336,12 +6341,16 @@ def code_load_normalized(func_hash: str, cache: Dict[str, Callable] = None) -> C
     if func_hash in cache:
         return cache[func_hash]
 
-    if code_detect_schema(func_hash) is None:
-        raise ValueError(f"Function not in the local pool: {func_hash}")
-    data = object_load(func_hash)
-    tree = ast.parse(data['normalized_code'])
+    if source is None:
+        if code_detect_schema(func_hash) is None:
+            raise ValueError(f"Function not in the local pool: {func_hash}")
+        data = object_load(func_hash)
+        source, like = data['normalized_code'], func_hash
+    else:
+        data = object_load(like)  # a version not saved yet, loaded like the one it rewrites
+    tree = ast.parse(source)
     if data.get('normalization', 1) < 2:
-        code_restore_inner_imports(tree, func_hash)
+        code_restore_inner_imports(tree, like)
 
     namespace: Dict[str, Any] = {'bb': code_load_refs(tree, cache)}
     body = []
@@ -6389,14 +6398,25 @@ def check_run_reviewed(func_hash: str, reviewed: set) -> Tuple[Optional[List[Tup
     if missing:
         return None, missing
 
+    return check_run_all(func_hash, object_load_checks(func_hash)), []
+
+
+def check_run_all(func_hash: str, checks: List[str], source: str = None,
+                  like: str = None) -> List[Tuple[str, str, str]]:
+    """
+    Run checks against a function, already approved: results for check_report.
+
+    With source and like, the function is code not saved yet (see
+    code_load_normalized). Callers make sure everything that runs was approved.
+    """
     cache: Dict[str, Callable] = {}
     try:
-        implementation = code_load_normalized(func_hash, cache)
+        implementation = code_load_normalized(func_hash, cache, source=source, like=like)
     except ValueError as e:
-        return [('ERROR', helper_function_label(func_hash), str(e))], []
+        return [('ERROR', helper_function_label(like or func_hash), str(e))]
 
     results = []
-    for check_hash in object_load_checks(func_hash):
+    for check_hash in checks:
         name = helper_function_label(check_hash)
         try:
             check = code_load_normalized(check_hash, cache)
@@ -6407,7 +6427,7 @@ def check_run_reviewed(func_hash: str, reviewed: set) -> Tuple[Optional[List[Tup
         results.append((status, name, detail))
 
     results.sort(key=lambda r: r[1])
-    return results, []
+    return results
 
 
 def command_validate_checks(identifier: str = None, unreviewed: bool = False):
@@ -7229,7 +7249,7 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
     finally:
         shutil.rmtree(work, ignore_errors=True)
     if refactor:
-        command_update(refactor, comment)
+        command_update(refactor, comment, unreviewed)
 
 
 def refactor_save(old_hash: str, new_hash: str, new_code: str, checks: List[str], comment: str,
@@ -7269,7 +7289,29 @@ def code_hash_rewritten(new_code: str, checks: List[str]) -> str:
     raise ValueError("no function in code")
 
 
-def command_update(identifier: str, comment: str = None):
+def update_check_rewritten(base: str, new_hash: str, new_code: str, checks: List[str],
+                           unreviewed: bool = False) -> List[str]:
+    """
+    Run the checks of a rewrite before it is saved; the failures, one line each.
+
+    Like bb edit, nothing runs that you have not approved: the rewrite
+    imports pool functions and so do its checks. Those not approved are
+    reported as failures (bb review them), unless unreviewed.
+    """
+    needed = set()
+    for dep in code_extract_dependencies(new_code):
+        needed.update(code_resolve_dependencies(dep))
+    for check_hash in checks:
+        needed.update(code_resolve_dependencies(check_hash))
+    missing = sorted(needed - review_approvals(list(needed)) - review_load_authored())
+    if missing and not unreviewed:
+        return ["not run, review first: " + ', '.join(f"bb review {h}" for h in missing)]
+    results = check_run_all(new_hash, checks, source=new_code, like=base)
+    return [f"{status} {name}: {detail}" if detail else f"{status} {name}"
+            for status, name, detail in results if status != 'PASS']
+
+
+def command_update(identifier: str, comment: str = None, unreviewed: bool = False):
     """
     Bring a function and everything it uses up to date, in one step.
 
@@ -7281,6 +7323,12 @@ def command_update(identifier: str, comment: str = None):
     language's newer version waits for a translation). Pinned references
     (written as bb.ref) are kept. A fork (several current versions) is
     left as it is, with a warning. One comment goes on every new version.
+
+    Like bb edit, a rewrite is saved only when the checks of the function
+    pass with the new versions it uses. One that fails is not saved: it
+    stays on the version it has, its callers stay as they were, and the
+    rest is updated anyway. What failed is printed, and bb update exits
+    with status 1; bb edit the function to adapt it, then update again.
 
     ```
     bb update app@eng -m "use the new layout everywhere"
@@ -7295,6 +7343,7 @@ def command_update(identifier: str, comment: str = None):
             comment = ""
     done: Dict[Tuple[str, Optional[str]], str] = {}
     rewritten: List[Tuple[str, str]] = []
+    failed: List[Tuple[str, str, List[str]]] = []
 
     def update(func_hash: str, name: Optional[str], stack: Tuple[str, ...] = ()) -> str:
         """The up-to-date hash for func_hash, used by name (itself when nothing changes)."""
@@ -7323,6 +7372,11 @@ def command_update(identifier: str, comment: str = None):
             checks = object_load_checks(base)
             result = code_hash_rewritten(new_code, checks)
             followed = {dep: lineage_name_for(dep, lang, aliases.get(dep)) for dep in swaps}
+            problems = update_check_rewritten(base, result, new_code, checks, unreviewed) if checks else []
+            if problems and result != base:
+                failed.append((base, result, problems))
+                done[(func_hash, name)] = done[(base, name)] = base
+                return base
 
             def keep(record):
                 """Names of base that use the swapped functions by other names stay (two names, one code)."""
@@ -7339,14 +7393,27 @@ def command_update(identifier: str, comment: str = None):
         return result
 
     new_root = update(root, helper_identifier_name(identifier) or lineage_name_for(root, lang))
-    if not rewritten:
+    if not rewritten and not failed:
         print(f"{helper_function_label(root)} is up to date: nothing to save")
         return
-    print(f"Updated {len(rewritten)} function(s), deepest first:")
-    for old, new in rewritten:
-        print(f"  {helper_function_label(new)}: {old[:12]}... -> {new[:12]}...")
-    print("Drafts open on these functions are now stale: write them again.")
+    if rewritten:
+        print(f"Updated {len(rewritten)} function(s), deepest first:")
+        for old, new in rewritten:
+            print(f"  {helper_function_label(new)}: {old[:12]}... -> {new[:12]}...")
+        print("Drafts open on these functions are now stale: write them again.")
+    else:
+        print("Nothing updated.")
     print(f"Hash: {new_root}")
+    if failed:
+        sys.stdout.flush()  # what was updated comes before what was not
+        print(f"Not updated, a check failed ({len(failed)}):", file=sys.stderr)
+        for old, new, problems in failed:
+            print(f"  {helper_function_label(old)}: {old[:12]}... stays; its update would be {new[:12]}...",
+                  file=sys.stderr)
+            for problem in problems:
+                print(f"    {problem}", file=sys.stderr)
+        print("Edit them to adapt (bb edit NAME@lang), then update again.", file=sys.stderr)
+        sys.exit(1)
 
 
 def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str = None, comment: str = None):
@@ -8439,6 +8506,8 @@ def _build_parser():
     update_parser = subparsers.add_parser('update', help='Bring a function and everything it uses up to date')
     update_parser.add_argument('identifier', help='Function to update (name@lang or hash)')
     update_parser.add_argument('--comment', '-m', default=None, help='Comment for the new versions (asked when omitted)')
+    update_parser.add_argument('--dangerously-unreviewed', action='store_true',
+                               help='Run checks even on unreviewed functions they import')
 
     refactor_parser = subparsers.add_parser('refactor', help='Replace a dependency in a function')
     refactor_parser.add_argument('what', help='Function hash to modify')
@@ -8583,7 +8652,7 @@ def main():
     elif args.command == 'tree':
         command_tree(args.identifier, as_json=args.as_json)
     elif args.command == 'update':
-        command_update(args.identifier, comment=args.comment)
+        command_update(args.identifier, comment=args.comment, unreviewed=args.dangerously_unreviewed)
     elif args.command == 'refactor':
         command_refactor(args.what, args.from_hash, args.to_hash, args.at_hash if hasattr(args, 'at_hash') else None,
                          comment=args.comment)
