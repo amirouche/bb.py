@@ -82,10 +82,10 @@ Normalization செயல்முறை அனைத்து local variables-
 
 ```bash
 # Using pip
-pip install git+https://github.com/amirouche/bb.py.git
+pip install beyondbabel
 
 # Using uv
-uv tool install git+https://github.com/amirouche/bb.py.git
+uv tool install beyondbabel
 ```
 
 Python 3.11 அல்லது அதற்குப் பிந்தைய பதிப்பு தேவை. இயக்க நேரத்தில் கூடுதல் dependencies எதுவும் தேவையில்லை.
