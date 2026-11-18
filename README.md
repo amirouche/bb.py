@@ -2,6 +2,8 @@
 
 ![Tests](https://github.com/amirouche/bb.py/actions/workflows/test.yml/badge.svg)
 
+[தமிழில் படிக்க](README.tam.md)
+
 **Diversity as strength, made verifiable.**
 
 Write a function in your language; if someone else, human or machine, had the same thought, the hash will show it.
