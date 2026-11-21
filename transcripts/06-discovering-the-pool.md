@@ -177,7 +177,7 @@ Search uses AND logic across terms: every word must appear. `count_words` and `s
 
 # Chapter 4: Finding the Latest Version
 
-As projects evolve, you might have multiple versions of a function with the same name. The `bb latest` command lists the current versions: those no other function was forked from.
+As projects evolve, you might have multiple versions of a function with the same name. The `bb latest` command lists the current versions: those no later version came after.
 
 ### Step 14: Find latest "tokenize"
 ```bash

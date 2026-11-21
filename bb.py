@@ -15,7 +15,7 @@ Typical single-user workflow:
     bb add myfunction.py@eng        # add a function (English naming)
     bb show <hash>@eng              # retrieve and display it
     bb run myfunction 3 5           # execute it with arguments
-    bb edit myfunction@eng          # edit it with its checks, save a fork
+    bb edit myfunction@eng          # edit it with its checks, save a new version
     bb review myfunction@eng        # read it, approve it, run its checks
     bb validate --checks            # run the checks of reviewed functions
     bb refactor <what> <from> <to>  # swap a dependency for a new version
@@ -38,25 +38,32 @@ Writing functions for the pool:
       parse_amount = bb.ref("<hash>")            # or an exact version, kept
 
   These lines go at module level, above the def, with the other imports:
-  bb refuses `import bb` and bb.resolve inside a function body.
+  bb refuses `import bb` inside a function body.
 
-  A name is resolved when you save (bb add, bb edit), in the language you
-  save in (then your `bb whoami language` languages, then any), to its one
-  current version (the end of that name's lineage of edits, never by
-  date); the stored code holds that hash, so the function keeps
-  that version. A name several functions answer to (forks, or functions
-  of another origin called alike) is not guessed: follow the one you mean
-  with bb.follow("<hash>") (`bb search name` tells them apart; bb show
-  and bb edit then write the reference that way, so it keeps following
-  its own lineage). bb.resolve is never looked up when the
-  function runs. So add helpers before the functions
-  that use them. Stored code refers to each one as bb.ref("<hash>"). bb
-  show and bb edit display references by name (bb.resolve), so saving an
+  bb.resolve and bb.follow are resolved when you save (bb add, bb edit),
+  never when the function runs: the stored code holds a hash, written
+  bb.ref("<hash>"), so the function keeps that version. So add helpers
+  before the functions that use them.
+  - bb.resolve("name") is a search, in the language you save in (then
+    your `bb whoami language` languages, then any), for the one current
+    version called name (the end of that name's lineage of edits, never
+    by date). When several functions answer to the name (a fork that
+    kept it, functions of another origin called alike), bb does not
+    guess: saving is refused, with one bb.follow line per candidate to
+    paste (`bb search name` tells them apart).
+  - bb.follow("<hash>") names a function by any of its versions and
+    gives where its lineage is now: that version when it is still
+    current, else the version that came after it. It needs no agreement
+    on names. A lineage that split in two without a declared fork is
+    refused the same way: follow one of its ends.
+  - bb.ref("<hash>") is that version, kept: it stays pinned across edits.
+
+  bb show and bb edit display references by name (bb.resolve), or as
+  bb.follow when the name does not find the function alone, so saving an
   edit brings a function up to date: a function keeps the versions it was
   saved with until someone edits it (its debt, listed by bb search
-  --outdated and noted in drafts as `# bb: out of date`). What you write
-  with bb.ref stays pinned across edits. `bb update app@lang` pays the
-  debt of app and everything it uses at once.
+  --outdated and noted in drafts as `# bb: out of date`). `bb update
+  app@lang` pays the debt of app and everything it uses at once.
 - Checks run the function they test, with what it imports from the pool.
   bb runs only code you have read: functions you saved yourself (bb add,
   bb edit, recorded in your private state) and functions you approved
@@ -68,7 +75,8 @@ Writing functions for the pool:
   the function itself and functions defined inside it without keywords
   (several options go in one dict), and define no keyword-only
   parameters or **kwargs. `bb add` and `bb edit` refuse such code.
-- A function is named by `name@lang` (or its hash). Changing it with
+- A function is named by `name@lang` (or its hash; when several
+  functions answer to a name, commands ask for the hash). Changing it with
   `bb add` or `bb edit` stores a new function with a new hash; functions
   importing the old one keep using it until they are updated:
   `bb edit name@lang --refactor app@lang` saves the change and updates
@@ -85,6 +93,8 @@ Writing functions for the pool:
   functions whose code looks like the one you saved ("NAME looks like
   these other functions"): use one instead, or ignore the note if yours
   is meant to be different. Small functions are never compared.
+  Functions sharing a name are listed together, each with one
+  `Also NAME:` line per other function saying how it relates to it.
 - Versions are followed per name and per language: each name has its
   own lineage (bb log lists the steps), so two names may share identical
   code and each follows its own edits; a rename supersedes the old name.
@@ -93,6 +103,19 @@ Writing functions for the pool:
   language leaves the other languages on their version until someone
   translates it (bb latest, bb search --outdated and bb tree say "not yet
   translated").
+- One name may hold several functions, each right on its own premises.
+  `bb edit name@lang --fork -m why` saves another function on purpose
+  instead of a newer version: the edited one stays current, nothing
+  using it goes out of date, and the fork starts its own lineage (under
+  a new name too, if you give it one: the old name is kept). A fork
+  changes the code or the checks, and its comment says why it leaves.
+  `bb search name` then shows, for each function called name, the others
+  and their relation: forked from it, a fork of it, another end of the
+  same lineage (two edits of one version, nobody declared a fork;
+  `bb search --diverged` lists these), sharing part of its history, or
+  of another origin; with how alike their code is and how many checks
+  they share. Callers are not disturbed: each keeps following the
+  function it uses (its draft shows bb.follow).
 - `bb translate name@lang TARGET FILE` translates through a file: when
   FILE is missing, bb writes the function in its language with a
   `- name -> ` line to fill in for each name (and for each pool function
@@ -122,8 +145,8 @@ Writing functions for the pool:
     whose function takes the implementation as its only argument and
     states what must hold with assert (at least one; it passes when it
     runs without raising, its return value is ignored); checks run when
-    you save and are part of the definition (changing them forks the
-    function). A check does not
+    you save and are part of the definition (changing them gives another
+    function, with another hash). A check does not
     import what it tests, so the same check can test a fork or another
     function with the same contract. Checks are worth it for central
     functions (many callers, see `bb caller`) and tricky logic, less for
@@ -734,7 +757,7 @@ def code_compute_function_hash(normalized_code: str, checks: List[str] = None) -
     Compute a function's hash: its identity in the pool.
 
     The checks attached to a function are part of its definition, so
-    changing them gives a new hash (a fork). Documentation is not: it
+    changing them gives a new hash (another function). Documentation is not: it
     lives in the language mappings.
 
     - Without checks: SHA256 of the normalized code (without docstring),
@@ -3059,7 +3082,7 @@ def lineage_newer_version(func_hash: str, lang: str = None, name: str = None) ->
     called name when given, to the current steps. A caller may use a
     function that was edited since: rewriting the version it uses would
     fork it beside that edit, so refactors and updates build on the
-    current version instead. With several current versions (a fork) there
+    current version instead. With several current versions (its lineage split) there
     is no single one: None, with a warning.
     """
     lang = lang or lineage_preferred_language(func_hash)
@@ -3615,7 +3638,7 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     index = storage_pool_index()
     functions = index['functions']
 
-    # A name diverged when one lineage has several current versions (a fork);
+    # A name diverged when one lineage has several current versions (nobody declared a fork);
     # unrelated functions that happen to share a name are counted apart
     head_counts: Dict[Tuple[str, str, str], Set[str]] = {}
     steps = index['lineage']['steps']
@@ -4915,7 +4938,7 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
     problems: List[str] = []
     spans = []
     if code_uses_bb(tree) and not code_imports_bb(tree):
-        problems.append("  bb.resolve and bb.ref need `import bb` at the top of the file")
+        problems.append("  bb.resolve, bb.follow and bb.ref need `import bb` at the top of the file")
     aliases = {id(node.value): node.targets[0].id for node in tree.body
                if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)}
     for node in ast.walk(tree):
@@ -6283,7 +6306,7 @@ def helper_identifier_name(identifier: str) -> Optional[str]:
 # import the function they test, so one check can run against every fork.
 # They are part of an implementation's definition: object.json lists their
 # hashes under 'checks', and they enter the function hash, so changing the
-# checks forks the function. bb edit writes them.
+# checks gives another function. bb edit writes them.
 
 def helper_pick_language(func_hash: str, lang: str = None) -> Optional[str]:
     """
@@ -6953,7 +6976,7 @@ def helper_ask_yes(question: str) -> bool:
 def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
                  refactor: str = None, at: str = None, file: str = None, fork: bool = False):
     """
-    Edit a function and its checks as one markdown file, then save a fork.
+    Edit a function and its checks as one markdown file, then save a new version.
 
     Opens $EDITOR on a file with an Implementation section and a Checks
     section. Each section holds prose and examples, and exactly one code
@@ -7330,7 +7353,7 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
     When FILE exists, bb saves each section as bb edit would: unchanged
     sections are skipped, a section added under a new `# name` is created,
     a section removed is simply not saved. A function is saved before the
-    sections that use it (bb.resolve), and saving stops at the first
+    sections that use it (bb.resolve, bb.follow), and saving stops at the first
     section that cannot be saved (a stale draft, a failing check), saying
     what was saved and what was not. bb then rewrites FILE: saved sections
     in stored form, the others as they were. One language per scratchpad.
@@ -7575,8 +7598,9 @@ def command_update(identifier: str, comment: str = None, unreviewed: bool = Fals
     as if each were edited and saved unchanged. Current means current in
     NAME's language, for the name each function is used by (another
     language's newer version waits for a translation). Pinned references
-    (written as bb.ref) are kept. A fork (several current versions) is
-    left as it is, with a warning. One comment goes on every new version.
+    (written as bb.ref) are kept. A function whose lineage split (several
+    current versions, no declared fork) is left as it is, with a warning;
+    a declared fork (bb edit --fork) is another function, never moved to. One comment goes on every new version.
 
     Like bb edit, a rewrite is saved only when the checks of the function
     pass with the new versions it uses. One that fails is not saved: it
@@ -8649,7 +8673,7 @@ def _build_parser():
     scratchpad_parser.add_argument('--dangerously-unreviewed', dest='unreviewed', action='store_true',
                                    help='Run checks even on unreviewed functions they import')
 
-    edit_parser = subparsers.add_parser('edit', help='Edit a function and its checks, then save a fork')
+    edit_parser = subparsers.add_parser('edit', help='Edit a function and its checks, then save a new version')
     edit_parser.add_argument('identifier', help='Hash or name, with optional @lang (e.g., compute_pi@eng)')
     edit_parser.add_argument('file', nargs='?', default=None,
                              help='Edit file instead of $EDITOR: written when missing, saved from when present')
@@ -8694,7 +8718,7 @@ def _build_parser():
     search_parser = subparsers.add_parser('search', help='Search functions by words, status and architecture')
     search_parser.add_argument('query', nargs='*', help='Words that must all appear (any language)')
     search_parser.add_argument('--all', dest='all_versions', action='store_true',
-                               help='Include superseded versions (forked by another function)')
+                               help='Include superseded versions (a later version came after them)')
     search_parser.add_argument('--untested', action='store_true', help='Only functions without checks')
     search_parser.add_argument('--unreviewed', action='store_true', help='Only functions you have not approved')
     search_parser.add_argument('--diverged', action='store_true', help='Only lineages with several ends, not declared as forks')

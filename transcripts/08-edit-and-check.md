@@ -8,7 +8,7 @@
 - Complexity: intermediate
 
 ## Overview
-`bb edit` opens a function and its checks together in one markdown file. A check is a function that takes the implementation as its argument, so the same checks keep working when the implementation changes. Saving only happens when every check passes, and the new version records the one it was edited from as its parent. This transcript attaches checks to a pi function, shows a broken edit being refused, saves a rewrite that passes, and forks a check on its own.
+`bb edit` opens a function and its checks together in one markdown file. A check is a function that takes the implementation as its argument, so the same checks keep working when the implementation changes. Saving only happens when every check passes, and the new version records the one it was edited from as its parent. This transcript attaches checks to a pi function, shows a broken edit being refused, saves a rewrite that passes, and edits a check on its own.
 
 ## Prerequisites
 - `bb` installed and in PATH
@@ -140,7 +140,7 @@ def check_pi_n8(compute_pi):
 
 ### Step 3: Save the checks
 The checks are part of a function's definition, so attaching them gives
-`compute_pi` a new hash: a fork whose parent is the version without
+`compute_pi` a new hash: a new version whose parent is the version without
 checks. The five checks are added to the pool too. The documentation
 paragraph is not part of the hash; it is stored in the English mapping.
 
@@ -413,7 +413,7 @@ Hash: f8026db6c727e0efa3d678440e47a867a7bda4069dc07676ff178da4576ac99e
 ```
 
 ### Step 9: The name now points to the rewrite, which carries the same checks
-A version that was forked is never the latest, so `compute_pi@eng`
+A version that was edited is no longer current, so `compute_pi@eng`
 resolves to the rewrite.
 
 ```bash
@@ -439,7 +439,7 @@ PASS check_pi_n8
 Total reviewed: 7 function(s)
 ```
 
-### Step 10: Rewording the documentation is not a fork
+### Step 10: Rewording the documentation is not a new version
 Only the prose changes, so the hash stays the same. bb writes a new
 English mapping, and a `document` lineage step after the previous one,
 so `bb show` uses it.
@@ -461,13 +461,13 @@ def compute_pi(n):
 
 ---
 
-# Chapter 5: Forking a Check on Its Own
+# Chapter 5: Editing a Check on Its Own
 
 A check is a pool function too, so `bb edit` works on it directly. Its
-file has its own `## Implementation` and an empty `## Checks`. The fork
-records the old check as its parent.
+file has its own `## Implementation` and an empty `## Checks`. The new
+version records the old check as its parent.
 
-A check forked alone is attached to nothing: `compute_pi` still lists
+A check edited alone is attached to nothing: `compute_pi` still lists
 the original `check_pi_n8`. To use the new one, paste it into the Checks
 section of `bb edit compute_pi@eng`.
 
@@ -492,7 +492,7 @@ def check_pi_n8(compute_pi):
 
 ## Workflow
 
-### Step 11: Fork the check
+### Step 11: Edit the check
 ```bash
 $ EDITOR="cp n8_tighter.md" bb edit check_pi_n8@eng -m "Tighter bound"
 No checks.
@@ -500,9 +500,9 @@ Parent: 5f8de2e0762a54b00e9c4147e65a2a18ec640bcf9bb8bd42a9dc8ec1c7e7bd48
 Hash: 8e64a9a6a0709e6ddee3809bcf4f5cd45fbcacbde56f5166a74950f69b109865
 ```
 
-### Step 12: The fork knows where it came from
+### Step 12: The new version knows where it came from
 Its lineage step follows the old check's: `bb latest` shows it as the
-parent. A draft of the fork names that step in its `<!-- bb:parent -->`
+parent. A draft of the new version names that step in its `<!-- bb:parent -->`
 line, so a draft made before another save is refused as stale.
 
 ```bash
@@ -515,7 +515,7 @@ $ EDITOR=cat bb edit 8e64a9a6a0709e6ddee3809bcf4f5cd45fbcacbde56f5166a74950f69b1
 
 ---
 
-# Chapter 6: Two Forks of the Same Version
+# Chapter 6: Two Edits of the Same Version
 
 Another agent starts from the checked loop version too, and sums a list
 instead of a generator. Both rewrites now descend from the same parent,
@@ -524,7 +524,7 @@ commands that take a name refuse it and ask for a hash.
 
 ## Workflow
 
-### Step 13: A second fork of the checked version
+### Step 13: A second edit of the checked version
 ```bash
 $ sed 's/sum((-1)/sum([(-1)/; s/range(n))$/range(n)])/' pi_sum.md > pi_list.md
 $ EDITOR="cp pi_list.md" bb edit 314c0555136ff919d5f0f3b72fea5fe9ced8e67e95d74660b465c48cb3273de9@eng -m "Sum a list"
@@ -548,7 +548,7 @@ Error: 2 functions answer to 'compute_pi@eng'. Name one by its hash (bb search c
 ```
 
 ### Step 15: CI runs what nobody reviewed yet
-Nobody read the second fork, so its checks do not run on this machine.
+Nobody read the second rewrite, so its checks do not run on this machine.
 A CI runner is different: it is thrown away after each job, so it may run
 every check. `--dangerously-unreviewed` does that; the job must hold no
 secrets and no write access.
@@ -567,7 +567,7 @@ $ bb validate --checks --dangerously-unreviewed | grep -c "5 checks: 5 passed"
 
 | Command | Purpose |
 |---------|---------|
-| `bb edit (name\|hash)@lang` | Edit a function and its checks in one markdown file, save a fork when all checks pass |
+| `bb edit (name\|hash)@lang` | Edit a function and its checks in one markdown file, save a new version when all checks pass |
 | `bb edit ... -m "comment"` | Give the comment up front instead of being asked |
 | `bb review (name\|hash)@lang` | Read dependencies and checks first, then each function with its checks; run them, then approve |
 | `bb validate --checks [name\|hash]` | Run the checks of reviewed functions, one or the whole pool |
@@ -575,9 +575,9 @@ $ bb validate --checks --dangerously-unreviewed | grep -c "5 checks: 5 passed"
 
 ## Key Insights
 
-1. **Checks take the implementation as an argument**: They never import the function they test, so they keep working across every fork.
+1. **Checks take the implementation as an argument**: They never import the function they test, so they keep working across every version, and on a fork (`bb edit --fork`).
 
-2. **Checks are part of the definition**: A function's hash covers its code and its check hashes. Changing the checks forks the function; changing only the documentation does not.
+2. **Checks are part of the definition**: A function's hash covers its code and its check hashes. Changing the checks gives another function; changing only the documentation does not.
 
 3. **Saving is gated**: The file must parse and every check must pass before anything reaches the pool.
 
@@ -585,8 +585,8 @@ $ bb validate --checks --dangerously-unreviewed | grep -c "5 checks: 5 passed"
 
 5. **Documentation lives in the mapping**: Prose and examples around the `python def` block are stored per language, outside the hash, like docstrings.
 
-6. **A check forked alone applies to nothing** until it is pasted into a function's Checks section.
+6. **A check edited alone applies to nothing** until it is pasted into a function's Checks section.
 
-7. **Names never guess**: a name resolves to the versions nobody forked. When forks diverge, commands that take the name stop and list the hashes.
+7. **Names never guess**: a name resolves to the current versions, those nothing came after. When there are several (here two edits of one version; see also transcript 13 for declared forks), commands that take the name stop and list the hashes.
 
 8. **Nothing runs unread**: checks run only on code you approved with `bb review`, and `bb edit` refuses to run pool imports you have not reviewed. Approvals stay out of the shared directory, so nobody can approve code for you.
