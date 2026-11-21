@@ -100,7 +100,7 @@ def test_diverged_lists_forks_not_unrelated_namesakes(tmp_path):
     other = hash_of(pool.add('validates', 'def validates(f):\n    """Second."""\n    return f(2) == 4\n'))
     diverged = pool.bb('search', '--diverged')
     assert other not in diverged.stdout
-    assert 'unrelated function(s) also called validates' in pool.bb('search', 'validates').stdout
+    assert 'another origin' in pool.bb('search', 'validates').stdout
     # A fork: two saves from the same version
     first = tmp_path / 'first.md'
     second = tmp_path / 'second.md'
@@ -110,4 +110,78 @@ def test_diverged_lists_forks_not_unrelated_namesakes(tmp_path):
     set_code(second, 'def validates(f):\n    """Second."""\n    return f(3) == 6\n')
     assert pool.bb('edit', f'{other}@eng', str(first), '-m', 'a').returncode == 0
     assert pool.bb('edit', f'{other}@eng', str(second), '-m', 'b').returncode == 0
-    assert 'name diverged: 2 current versions' in pool.bb('search', '--diverged').stdout
+    assert 'the same lineage, another end' in pool.bb('search', '--diverged').stdout
+
+
+def fork(pool, tmp_path, identifier, code, comment, name='fork.md'):
+    """bb edit identifier --fork, with the implementation replaced by code."""
+    draft = tmp_path / name
+    pool.bb('edit', identifier, str(draft))
+    set_code(draft, code)
+    return pool.bb('edit', identifier, str(draft), '--fork', '-m', comment)
+
+
+def test_a_fork_leaves_its_origin_current_and_nothing_out_of_date(tmp_path):
+    pool = Pool(tmp_path)
+    origin = hash_of(pool.edit('is_weekend', 'def is_weekend(day):\n    """A day of rest (0 is Monday)."""\n'
+                               '    return day in (5, 6)\n'))
+    user = pool.edit('opening', 'import bb\nis_weekend = bb.resolve("is_weekend")\n\n\ndef opening(day):\n'
+                     '    """Open on working days."""\n    return not is_weekend(day)\n')
+    assert user.returncode == 0, user.stderr
+    forked = fork(pool, tmp_path, 'is_weekend@eng', 'def is_weekend(day):\n    """A day of rest (0 is Monday)."""\n'
+                  '    return day in (4, 5)\n', 'Friday and Saturday, as in Algeria')
+    assert forked.returncode == 0, forked.stderr
+    assert f'Forked from: {origin} (still current)' in forked.stdout
+    other = hash_of(forked)
+    # Both answer to the name; neither is a newer version of the other
+    assert sorted(pool.bb('latest', 'is_weekend@eng', '--hash').stdout.split()) == sorted([origin, other])
+    assert 'nothing outdated' in pool.bb('search', '--outdated').stdout
+    assert 'No matches found' in pool.bb('search', '--diverged').stdout
+    found = json.loads(pool.bb('search', 'is_weekend', '--json').stdout)
+    relatives = {r['hash']: r['relatives'] for r in found if r['name'] == 'is_weekend'}
+    assert [(r['hash'], r['relation'], r['comment']) for r in relatives[other]] == \
+        [(origin, 'fork', 'Friday and Saturday, as in Algeria')]
+    assert [(r['hash'], r['relation']) for r in relatives[origin]] == [(other, 'forked')]
+    shown = pool.bb('search', 'is_weekend').stdout
+    assert f'Also is_weekend: {origin}, this one forked from it (Friday and Saturday, as in Algeria)' in shown
+    assert f'Also is_weekend: {other}, forked from this one (Friday and Saturday, as in Algeria)' in shown
+    # The name is not guessed; a hash picks one, and each goes on along its own lineage
+    refused = pool.bb('show', 'is_weekend@eng')
+    assert refused.returncode == 1 and "2 functions answer to 'is_weekend@eng'" in refused.stderr
+    draft = tmp_path / 'on.md'
+    pool.bb('edit', f'{other}@eng', str(draft))
+    set_code(draft, 'def is_weekend(day):\n    """A day of rest (0 is Monday)."""\n    return 4 <= day <= 5\n')
+    later = pool.bb('edit', f'{other}@eng', str(draft), '-m', 'a range')
+    assert later.returncode == 0 and f'Parent: {other}' in later.stdout
+    assert sorted(pool.bb('latest', 'is_weekend@eng', '--hash').stdout.split()) == sorted([origin, hash_of(later)])
+    assert 'No matches found' in pool.bb('search', '--diverged').stdout
+
+
+def test_a_fork_needs_other_code_and_a_function_to_leave(tmp_path):
+    pool = Pool(tmp_path)
+    assert pool.bb('edit', 'nowhere@eng', str(tmp_path / 'n.md'), '--fork').returncode == 1
+    pool.edit('double', 'def double(n):\n    """Twice n."""\n    return 2 * n\n')
+    same = fork(pool, tmp_path, 'double@eng', 'def double(n):\n    """Two times n."""\n    return 2 * n\n', 'words')
+    assert same.returncode == 1 and 'a fork is another function' in same.stderr
+    assert "Current versions of 'double@eng': 1" in pool.bb('latest', 'double@eng').stdout
+
+
+def test_a_fork_under_a_new_name_keeps_the_old_name(tmp_path):
+    pool = Pool(tmp_path)
+    origin = hash_of(pool.edit('double', 'def double(n):\n    """Twice n."""\n    return 2 * n\n'))
+    forked = fork(pool, tmp_path, 'double@eng', 'def triple(n):\n    """Thrice n."""\n    return 3 * n\n', 'thrice')
+    assert forked.returncode == 0 and 'Renamed' not in forked.stdout
+    assert pool.bb('latest', 'double@eng', '--hash').stdout.split() == [origin]
+    assert pool.bb('latest', 'triple@eng', '--hash').stdout.split() == [hash_of(forked)]
+
+
+def test_two_forks_of_one_function_are_kin(tmp_path):
+    pool = Pool(tmp_path)
+    origin = hash_of(pool.edit('double', 'def double(n):\n    """Twice n."""\n    return 2 * n\n'))
+    one = hash_of(fork(pool, tmp_path, f'{origin}@eng', 'def double(n):\n    """Twice n."""\n    return n + n\n',
+                       'sums', 'one.md'))
+    two = hash_of(fork(pool, tmp_path, f'{origin}@eng', 'def double(n):\n    """Twice n."""\n    return n << 1\n',
+                       'shifts', 'two.md'))
+    found = {r['hash']: r for r in json.loads(pool.bb('search', 'double', '--json').stdout)}
+    assert {r['hash']: r['relation'] for r in found[one]['relatives']} == {origin: 'fork', two: 'kin'}
+    assert not found[one]['diverged']

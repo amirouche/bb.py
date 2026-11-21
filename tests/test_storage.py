@@ -466,7 +466,7 @@ def test_resolve_name_prefers_fork_over_parent(mock_bb_dir):
 
 
 def test_resolve_name_refuses_diverged_forks(mock_bb_dir, capsys):
-    """Two forks of one function leave the name ambiguous: no guessing by time"""
+    """Two edits of one version both answer to the name: no guessing by time"""
     root, one, two = "aaaa" + "0" * 60, "bbbb" + "0" * 60, "cccc" + "0" * 60
     _save_version(root, {"eng": "f"})
     _save_version(one, {"eng": "f"}, parent=root, created='2026-01-02T00:00:00Z')
@@ -474,7 +474,7 @@ def test_resolve_name_refuses_diverged_forks(mock_bb_dir, capsys):
     with pytest.raises(SystemExit):
         bb.helper_resolve_name("f", "eng")
     err = capsys.readouterr().err
-    assert "ambiguous" in err and one in err and two in err
+    assert "2 functions answer to" in err and one in err and two in err
 
 
 def test_resolve_name_waits_for_translation_in_other_languages(mock_bb_dir, capsys):

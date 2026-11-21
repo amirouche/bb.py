@@ -42,9 +42,9 @@ Writing functions for the pool:
   save in (then your `bb whoami language` languages, then any), to its one
   current version (the end of that name's lineage of edits, never by
   date); the stored code holds that hash, so the function keeps
-  that version. A name with several current versions (two functions
-  called alike, or a fork) is refused: name one of them with bb.ref
-  (`bb search name` shows hashes). bb.resolve is never looked up when the
+  that version. A name several functions answer to (forks, or functions
+  of another origin called alike) is not guessed: name the one you mean
+  with bb.ref (`bb search name` tells them apart). bb.resolve is never looked up when the
   function runs. So add helpers before the functions
   that use them. Stored code refers to each one as bb.ref("<hash>"). bb
   show and bb edit display references by name (bb.resolve), so saving an
@@ -2283,7 +2283,7 @@ def command_log(identifier: str = None):
 
     Functions show their names, author and languages. Lineage steps show
     what happened to a name in a language (add, edit, document, rename,
-    refactor, restore, translate), from which step, by whom, and their
+    refactor, restore, translate, fork), from which step, by whom, and their
     comment. Worklogs show their author, languages, attached translations
     and message, in your preferred language when translated.
     """
@@ -2689,7 +2689,7 @@ def lineage_prune() -> int:
         storage_cache_clear()
         index = lineage_index()
         gone = [step_id for step_id, record in index['steps'].items()
-                if step_id not in index['successors']
+                if step_id not in index['successors'] and step_id not in index['forks']
                 and not storage_mapping_path(record['function'], record['lang'], record['mapping']).exists()]
         if not gone:
             break
@@ -2716,7 +2716,13 @@ def lineage_prune() -> int:
 # (the name changed: the old name is superseded), refactor (references
 # rewritten mechanically), restore (an older version's code again),
 # translate (a mapping in another language; 'translates' is the step it
-# translates).
+# translates), fork (another function on purpose: 'from' is where it left,
+# the comment says why).
+#
+# A fork does not come after the step it left: that step stays current,
+# nothing using it is out of date, and the fork starts a lineage of its
+# own. Several truths may hold at once; a fork says so instead of leaving
+# two current versions for someone to settle.
 #
 # The current steps are those no step comes after; the current versions of
 # NAME@LANG are the functions of the current steps of LANG called NAME. So
@@ -2724,7 +2730,7 @@ def lineage_prune() -> int:
 # share one code, and a French name stays on its version until someone
 # translates the English edit.
 
-LINEAGE_RELATIONS = ('add', 'edit', 'document', 'rename', 'refactor', 'restore', 'translate')
+LINEAGE_RELATIONS = ('add', 'edit', 'document', 'rename', 'refactor', 'restore', 'translate', 'fork')
 
 
 def storage_scan_lineage() -> Dict[str, Dict[str, Any]]:
@@ -2795,23 +2801,27 @@ def lineage_index() -> Dict[str, Any]:
 
     Returns:
         Dict with 'steps' ({id: record}), 'successors' ({id: ids of the
-        steps right after it}), 'by_function' ({hash: ids of the steps on
-        it}), 'current' (ids of the steps nothing follows, whose function
-        is in the pool) and 'memo' (for lineage_ancestors). A step whose
-        'from' is not in the pool starts a lineage.
+        steps right after it}), 'forks' ({id: ids of the forks that left
+        from it}), 'by_function' ({hash: ids of the steps on it}),
+        'current' (ids of the steps nothing follows, whose function is in
+        the pool) and 'memo' (for lineage_ancestors). A step whose 'from'
+        is not in the pool starts a lineage, and so does a fork: it does
+        not follow the step it left, which stays current.
     """
     def build():
         steps = storage_scan_lineage()
         present = storage_list_functions()
         successors: Dict[str, List[str]] = {}
+        forks: Dict[str, List[str]] = {}
         by_function: Dict[str, List[str]] = {}
         for step_id, record in sorted(steps.items()):
             if record.get('from') in steps:
-                successors.setdefault(record['from'], []).append(step_id)
+                links = forks if record['relation'] == 'fork' else successors
+                links.setdefault(record['from'], []).append(step_id)
             by_function.setdefault(record['function'], []).append(step_id)
         current = {step_id for step_id, record in steps.items()
                    if step_id not in successors and record['function'] in present}
-        return {'steps': steps, 'successors': successors, 'by_function': by_function,
+        return {'steps': steps, 'successors': successors, 'forks': forks, 'by_function': by_function,
                 'current': current, 'memo': {}}
     return storage_cached('lineage_index', build)
 
@@ -2883,15 +2893,17 @@ def lineage_root_step(step_id: str, translations: bool = False) -> str:
     """
     The first step of step_id's lineage (following 'from').
 
-    With translations, a translation that starts a lineage leads on to
-    the step it translates, so every language of one function's history
-    has one root.
+    A fork is the first step of its own lineage. With translations, a
+    translation that starts a lineage leads on to the step it translates,
+    so every language of one function's history has one root.
     """
     steps = lineage_index()['steps']
     node, seen = step_id, set()
     while node not in seen:
         seen.add(node)
         record = steps[node]
+        if record['relation'] == 'fork':
+            break
         if record.get('from') in steps:
             node = record['from']
         elif translations and record.get('translates') in steps:
@@ -2901,25 +2913,58 @@ def lineage_root_step(step_id: str, translations: bool = False) -> str:
     return node
 
 
-def lineage_ancestors(step_id: str) -> Set[str]:
-    """step_id and every step before it, through 'from' and 'translates'."""
+def lineage_ancestors(step_id: str, forks: bool = True) -> Set[str]:
+    """
+    step_id and every step before it, through 'from' and 'translates'.
+
+    Without forks, a fork is where its history starts: the steps it left
+    are not its past (what came before it is another function's story).
+    """
     index = lineage_index()
     memo = index['memo']
-    if step_id in memo:
-        return memo[step_id]
+    if (step_id, forks) in memo:
+        return memo[(step_id, forks)]
     steps = index['steps']
     found, stack = set(), [step_id]
     while stack:
         node = stack.pop()
         if node in found or node not in steps:
             continue
-        if node in memo and node != step_id:
-            found |= memo[node]
+        if (node, forks) in memo and node != step_id:
+            found |= memo[(node, forks)]
             continue
         found.add(node)
-        stack.extend(link for link in (steps[node].get('from'), steps[node].get('translates')) if link)
-    memo[step_id] = found
+        record = steps[node]
+        links = [record.get('translates')]
+        if forks or record['relation'] != 'fork':
+            links.append(record.get('from'))
+        stack.extend(link for link in links if link)
+    memo[(step_id, forks)] = found
     return found
+
+
+def lineage_relation(step_id: str, other_id: str) -> Tuple[str, Optional[str]]:
+    """
+    How the histories of two steps relate, seen from step_id.
+
+    Returns:
+        (relation, the fork step that tells, or None), relation being
+        'sibling' (one lineage, two ends: both were edited from one
+        version and nobody said they part), 'fork' (step_id's lineage
+        left other_id's on purpose), 'forked' (other_id's left
+        step_id's), 'kin' (they share history some other way, e.g. two
+        forks of one function) or 'namesake' (no common history)
+    """
+    steps = lineage_index()['steps']
+    if lineage_root_step(step_id) == lineage_root_step(other_id):
+        return 'sibling', None
+    for relation, mine, theirs in (('fork', step_id, other_id), ('forked', other_id, step_id)):
+        root = lineage_root_step(mine)
+        if steps[root]['relation'] == 'fork' and steps[root].get('from') in lineage_ancestors(theirs, forks=False):
+            return relation, root
+    if lineage_ancestors(step_id) & lineage_ancestors(other_id):
+        return 'kin', None
+    return 'namesake', None
 
 
 def lineage_waiting(step_id: str) -> List[str]:
@@ -2930,7 +2975,8 @@ def lineage_waiting(step_id: str) -> List[str]:
     language M has a current step G on another function, with S (or a
     step S translates) among G's ancestors: G came after what S stands
     for. E.g. an English edit leaves the French name on the previous
-    version: that French step waits for a translation of the edit.
+    version: that French step waits for a translation of the edit. A fork
+    is not a newer version: nothing waits for it.
 
     Returns:
         Sorted language codes (the M above), [] when S is up to date
@@ -2948,7 +2994,7 @@ def lineage_waiting(step_id: str) -> List[str]:
         other_record = steps[other]
         if other_record['lang'] == record['lang'] or other_record['function'] == record['function']:
             continue
-        if same & lineage_ancestors(other):
+        if same & lineage_ancestors(other, forks=False):
             langs.add(other_record['lang'])
     return sorted(langs)
 
@@ -3184,8 +3230,8 @@ def helper_resolve_name(name: str, lang: str = None) -> Tuple[str, str]:
         sys.exit(1)
 
     if len(heads) > 1:
-        print(f"Error: '{name}{lang_str}' is ambiguous: it has {len(heads)} current versions. "
-              f"Use a hash:", file=sys.stderr)
+        print(f"Error: {len(heads)} functions answer to '{name}{lang_str}'. Name one by its hash "
+              f"(bb search {name} tells them apart):", file=sys.stderr)
         for func_hash in heads:
             print(f"  {helper_describe_function(functions[func_hash], lang)}", file=sys.stderr)
         sys.exit(1)
@@ -3204,8 +3250,9 @@ def command_latest(name: str, lang: str = None, as_json: bool = False, hash_only
 
     A current version is the end of the name's lineage in its language:
     no edit, rename or refactor came after it there. One line per version
-    means the name is unambiguous; several mean forks diverged (or
-    unrelated functions share the name) and commands need a hash. A
+    means one function answers to the name; several mean forks, or
+    functions of another origin sharing it (bb search NAME tells them
+    apart), and commands need a hash. A
     version waiting for the translation of a newer one (another language
     moved on) says so.
 
@@ -3402,6 +3449,47 @@ def search_behind(index: Dict[str, Any]) -> Dict[str, List[str]]:
     return behind
 
 
+SEARCH_RELATIONS = {
+    'sibling': "the same lineage, another end",
+    'fork': "this one forked from it",
+    'forked': "forked from this one",
+    'kin': "shares part of its history",
+    'namesake': "another origin",
+}
+
+
+def search_relatives(index: Dict[str, Any], func_hash: str, lang: str, name: str) -> List[Dict[str, Any]]:
+    """
+    The other current functions called name in lang, and how each relates to func_hash.
+
+    One name may hold several functions at once, each true to its own
+    premises. Nothing here ranks them; it says what is known: their
+    history (see lineage_relation; a fork's comment says why it left),
+    how alike their code is in shape (code_similarity) and how many
+    checks they share (the same check on both: the same claim).
+
+    Returns:
+        [{'hash', 'relation', 'comment', 'similarity', 'shared_checks'}], sorted by hash
+    """
+    functions, steps = index['functions'], index['lineage']['steps']
+    mine = lineage_current_steps(lang, name, func_hash)
+    relatives = {}
+    for other_id in lineage_current_steps(lang, name):
+        other = steps[other_id]['function']
+        if other == func_hash or other in relatives or other not in functions:
+            continue
+        relation, fork_step = lineage_relation(mine[0], other_id)
+        relatives[other] = {
+            'hash': other,
+            'relation': relation,
+            'comment': steps[fork_step].get('comment', '') if fork_step else '',
+            'similarity': round(code_similarity(functions[func_hash]['normalized_code'],
+                                                functions[other]['normalized_code']), 2),
+            'shared_checks': len(set(functions[func_hash]['checks']) & set(functions[other]['checks'])),
+        }
+    return [relatives[h] for h in sorted(relatives)]
+
+
 def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
                     head_counts: Dict[Tuple[str, str, str], Set[str]], match: List[str] = None,
                     prefer: List[str] = None, behind: Dict[str, List[str]] = None) -> Dict[str, Any]:
@@ -3421,6 +3509,7 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
     root = lineage_root_step(on[0]) if on else None
     forks = len(head_counts.get((lang, name, root), ())) if root else 0
     namesakes = sum(len(heads) for (l, n, r), heads in head_counts.items() if (l, n) == (lang, name) and r != root)
+    relatives = search_relatives(index, func_hash, lang, name) if on else []
     return {
         'hash': func_hash,
         'name': name,
@@ -3439,6 +3528,8 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
         'pinned': sorted(set(mapping.get('pinned') or [])),
         'forks': forks,
         'namesakes': namesakes,
+        # The other functions answering to this name here, and how each relates to this one
+        'relatives': relatives,
         'checks': len(function['checks']),
         'normalization': function['normalization'],
         'is_check': func_hash in index['checked_by'],
@@ -3457,9 +3548,17 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
 
     Words must all appear, in any language, in a function's name,
     docstring, documentation, variable names or code. Results show in
-    your preferred language, with their checks, your review status and
-    whether their name has diverged into several current versions. Only
-    current versions (the end of some name's lineage) are listed unless --all.
+    your preferred language, with their checks and your review status.
+    Only current versions (the end of some name's lineage) are listed
+    unless --all.
+
+    One name may hold several functions: different origins, premises or
+    purposes. They are listed together, and each says how the others
+    relate to it, one `Also NAME:` line per other function: a fork of it
+    (with the reason the fork gave), the function it forked from, another
+    end of the same lineage (two edits of one version, nobody said they
+    part), or another origin; then how alike their code is in shape and
+    how many checks they share. bb does not rank them: pick by hash.
 
     With no words and no filter, every current function is listed.
 
@@ -3468,8 +3567,9 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     ```
     --untested    functions without checks (checks themselves excluded)
     --unreviewed  functions you have not approved (see bb review)
-    --diverged    forks: one lineage with several current versions (not
-                  unrelated functions that share a name)
+    --diverged    one lineage with several ends: two edits of one version,
+                  not declared as forks (bb edit --fork), and not
+                  functions of another origin that share the name
     --unused      functions nothing imports and no function uses as a check
     --outdated    functions using versions that are no longer current (their
                   debt: editing one brings it up to date; pins are kept),
@@ -3480,8 +3580,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     --uses X      functions that import X directly
     --similar     functions whose code looks like another current function,
                   or that one code carries under several names
-                  (the comparison behind the note after a save): candidates
-                  for merging into one shared function
+                  (the comparison behind the note after a save): to read
+                  side by side, then share, fork or leave apart
     --json        machine-readable output
     ```
     """
@@ -3556,6 +3656,11 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
         results = [r for r in results if r['similar'] or r['same_code']]
 
     results.sort(key=lambda r: (r['created'], r['hash']), reverse=True)
+    # Functions answering to one name stand together, where the newest of them is
+    first = {}
+    for position, r in enumerate(results):
+        first.setdefault((r['lang'], r['name']) if r['name'] else r['hash'], position)
+    results.sort(key=lambda r: first[(r['lang'], r['name']) if r['name'] else r['hash']])
 
     if as_json:
         print(json.dumps(results, indent=2, ensure_ascii=False))
@@ -3588,8 +3693,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
                   "reviewed" if r['reviewed'] else "not reviewed"]
         if not r['current']:
             status.append("superseded")
-        if r['diverged']:
-            status.append(f"name diverged: {r['forks']} current versions")
+        if r['relatives']:
+            status.append(f"one of {len(r['relatives']) + 1} called {r['name']}")
         if r['outdated']:
             names = ', '.join(r['aliases'].get(dep) or helper_function_label(dep) for dep in r['outdated'])
             status.append(f"uses {len(r['outdated'])} out-of-date version(s): {names}")
@@ -3605,10 +3710,13 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
         if r.get('similar'):
             status.append("looks like " + ', '.join(f"{helper_function_label(other)} {score:.0%}"
                                                     for score, other in r['similar']))
-        if r['current'] and r['namesakes']:
-            status.append(f"{r['namesakes']} unrelated function(s) also called {r['name']}: "
-                          f"bb.resolve(\"{r['name']}\") is ambiguous")
         print(f"Status: {', '.join(status)}")
+        for other in r['relatives']:
+            told = [SEARCH_RELATIONS[other['relation']] + (f" ({other['comment']})" if other['comment'] else ''),
+                    f"code {other['similarity']:.0%} alike"]
+            if other['shared_checks']:
+                told.append(f"{other['shared_checks']} shared check{'' if other['shared_checks'] == 1 else 's'}")
+            print(f"Also {r['name']}: {other['hash']}, {', '.join(told)}")
         if r['match']:
             print(f"Match: {', '.join(r['match'])}")
         if r['description']:
@@ -4650,6 +4758,12 @@ def code_shingles(normalized_code: str, size: int = 3) -> Set[Tuple[str, ...]]:
     return {tuple(tokens[i:i + size]) for i in range(max(1, len(tokens) - size + 1))}
 
 
+def code_similarity(normalized_code: str, other_code: str) -> float:
+    """How alike two codes are in shape, 0 to 1 (Jaccard index of their code_shingles), whatever their size."""
+    mine, theirs = code_shingles(normalized_code), code_shingles(other_code)
+    return len(mine & theirs) / len(mine | theirs) if mine | theirs else 1.0
+
+
 def code_find_similar(func_hash: str, exclude: Set[str] = None,
                       threshold: float = 0.5, min_size: int = 20) -> List[Tuple[float, str]]:
     """
@@ -4700,8 +4814,7 @@ def helper_report_similar(func_hash: str, exclude: Set[str] = None):
     if not similar:
         return
     mine = helper_function_label(func_hash)
-    print(f"Note: {mine} looks like these other functions; "
-          f"consider using or forking one instead:", file=sys.stderr)
+    print(f"Note: {mine} looks like these other functions:", file=sys.stderr)
     for score, other_hash in similar:
         label = helper_function_label(other_hash)
         same = "  (another function with the same name)" if label == mine else ""
@@ -5897,7 +6010,7 @@ def schema_validate_directory() -> tuple:
     for step_id, record in sorted(steps.items()):
         missing = record.get('from') and record['from'] not in steps
         if not storage_mapping_path(record['function'], record['lang'], record['mapping']).exists() and \
-                step_id not in lineage_index()['successors']:
+                step_id not in lineage_index()['successors'] and step_id not in lineage_index()['forks']:
             errors.append(f"[step {step_id[:12]}...] its mapping is not in the pool")
         if missing:
             errors.append(f"[step {step_id[:12]}...] comes after a step not in the pool: {record['from'][:12]}...")
@@ -6696,7 +6809,8 @@ def edit_prepare(text: str, lang: str, unreviewed: bool = False) -> Dict[str, An
 
 
 def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: str,
-                      comment: str, checks: List[str] = None, unchanged: bool = False) -> Tuple[Optional[str], Optional[str]]:
+                      comment: str, checks: List[str] = None, unchanged: bool = False,
+                      fork: bool = False) -> Tuple[Optional[str], Optional[str]]:
     """
     Save one edit-file section to the pool, with its lineage step.
 
@@ -6706,9 +6820,10 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
     section's mapping is saved and a step records it after the section's
     bb:parent step: 'rename' when the name changed, 'document' when only
     the mapping did, 'restore' when the code is an older version's, 'edit'
-    otherwise; 'add' without a parent step (a new name). Code another
-    name already has is fine: two names may share one code, each with its
-    own lineage.
+    otherwise; 'add' without a parent step (a new name). With fork, other
+    code is a 'fork': it leaves the parent step, which stays current, and
+    starts its own lineage. Code another name already has is fine: two
+    names may share one code, each with its own lineage.
 
     Returns:
         (the step now standing for the section, the relation recorded or None)
@@ -6735,7 +6850,9 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
     previous = steps[parent]
     if (previous['function'], previous['mapping']) == (func_hash, mapping_hash):
         return parent, None
-    if prepared['name_mapping'].get('_bb_v_0') != previous['name']:
+    if fork and func_hash != previous['function']:
+        relation = 'fork'
+    elif prepared['name_mapping'].get('_bb_v_0') != previous['name']:
         relation = 'rename'
     elif func_hash == previous['function']:
         relation = 'document'
@@ -6769,7 +6886,7 @@ def helper_ask_yes(question: str) -> bool:
 
 
 def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
-                 refactor: str = None, at: str = None, file: str = None):
+                 refactor: str = None, at: str = None, file: str = None, fork: bool = False):
     """
     Edit a function and its checks as one markdown file, then save a fork.
 
@@ -6815,6 +6932,14 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     from a template; it is saved with no parent. The language is then
     required, as in `bb edit slugify@eng`.
 
+    --fork saves another function on purpose instead of a newer version:
+    other premises, another purpose, under the same name or a new one. The
+    edited function stays current, and nothing that uses it becomes out of
+    date; the fork starts a lineage of its own, and its comment says why
+    it left. Both then answer to the name when it is kept: `bb search
+    NAME` shows how they relate, and commands take a hash. A fork changes
+    the code or the checks (they are part of the definition).
+
     Examples:
 
     ```
@@ -6823,6 +6948,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     bb edit slugify@eng          # a new function
     bb edit slugify@eng slugify.md                # write slugify.md; run again to save it
     bb edit parse_amount@eng --refactor app@eng   # and update app to it
+    bb edit is_weekend@kab --fork -m "Friday and Saturday, as in Algeria"
     ```
     """
     name, _, requested_lang = identifier.partition('@')
@@ -6848,6 +6974,9 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         # the section's parent is the lineage step the edit continues
         original = edit_load_section(hash_value, lang, None if is_hash else name)
         original_checks = []
+    if fork and hash_value is None:
+        print(f"Error: --fork needs an existing function to leave from: '{name}' is a new one", file=sys.stderr)
+        sys.exit(1)
     refactor_root = refactor_at = None
     if refactor:
         # Checked before the editor opens, so a mistake costs no work
@@ -6963,10 +7092,15 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         discard()
         print("No changes.")
         return
+    if fork and prepared['hash'] == hash_value:
+        print("Error: a fork is another function: change the code or the checks. Nothing saved"
+              + (f"; your edit is kept in {path}" if file is None else "") + ".", file=sys.stderr)
+        sys.exit(1)
 
     if comment is None:
         try:
-            comment = input("Comment (press Enter to skip): ").strip()
+            comment = input("Why it leaves (press Enter to skip): " if fork
+                            else "Comment (press Enter to skip): ").strip()
         except EOFError:
             comment = ""
 
@@ -6990,7 +7124,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
             if check_relation:
                 new_checks.append((prep['name_mapping']['_bb_v_0'], prep['hash']))
         saved_step, relation = edit_save_section(section, prepared, lang, comment, checks=check_hashes,
-                                                 unchanged=unchanged(section, prepared))
+                                                 unchanged=unchanged(section, prepared), fork=fork)
 
     discard()
     review_approve_own([prepared['hash']] + check_hashes)
@@ -7022,7 +7156,9 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     if relation == 'rename' and previous_step:
         print(f"Renamed: {previous_step['name']} -> {edit_section_name(section, prepared)} "
               f"(the old name is superseded)")
-    if hash_value and prepared['hash'] != hash_value:
+    if relation == 'fork':
+        print(f"Forked from: {previous_step['function']} (still current)")
+    elif hash_value and prepared['hash'] != hash_value:
         print(f"Parent: {previous_step['function'] if previous_step else hash_value}")
     elif hash_value:
         print("Documentation saved: the code did not change, so the hash stays the same.")
@@ -8445,6 +8581,8 @@ def _build_parser():
     edit_parser.add_argument('--comment', '-m', default=None, help='Comment for the new version (asked when omitted)')
     edit_parser.add_argument('--refactor', metavar='ROOT', default=None,
                              help='Then update ROOT (a function using it, e.g. app@eng) to the new version')
+    edit_parser.add_argument('--fork', action='store_true',
+                             help='Save another function on purpose: the edited one stays current')
     edit_parser.add_argument('--at', metavar='AT', default=None,
                              help='With --refactor: only along the path from AT to ROOT')
     edit_parser.add_argument('--dangerously-unreviewed', dest='unreviewed', action='store_true',
@@ -8484,7 +8622,7 @@ def _build_parser():
                                help='Include superseded versions (forked by another function)')
     search_parser.add_argument('--untested', action='store_true', help='Only functions without checks')
     search_parser.add_argument('--unreviewed', action='store_true', help='Only functions you have not approved')
-    search_parser.add_argument('--diverged', action='store_true', help='Only forks: one lineage with several current versions')
+    search_parser.add_argument('--diverged', action='store_true', help='Only lineages with several ends, not declared as forks')
     search_parser.add_argument('--unused', action='store_true',
                                help='Only functions nothing imports and nothing uses as a check')
     search_parser.add_argument('--uses', metavar='X', default=None, help='Only functions that import X directly')
@@ -8610,7 +8748,7 @@ def main():
         command_scratchpad(args.names, args.file, comment=args.comment, tree=args.tree, unreviewed=args.unreviewed,
                            refactor=args.refactor)
     elif args.command == 'edit':
-        command_edit(args.identifier, comment=args.comment, unreviewed=args.unreviewed,
+        command_edit(args.identifier, comment=args.comment, unreviewed=args.unreviewed, fork=args.fork,
                      refactor=args.refactor, at=args.at, file=args.file)
     elif args.command == 'review':
         command_review(args.identifier, comment=args.comment)
