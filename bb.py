@@ -38,7 +38,8 @@ Writing functions for the pool:
       parse_amount = bb.ref("<hash>")            # or an exact version, kept
 
   These lines go at module level, above the def, with the other imports:
-  bb refuses `import bb` inside a function body.
+  bb refuses `import bb`, bb.resolve and bb.follow inside a function body
+  (the name bound above the def is what bb shows the reference by).
 
   bb.resolve and bb.follow are resolved when you save (bb add, bb edit),
   never when the function runs: the stored code holds a hash, written
@@ -4922,6 +4923,12 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
     the name helper when the function has several. A lineage with several
     ends is refused: follow one of them.
 
+    Both go above the def, bound to a name (NAME = bb.resolve("NAME")):
+    that binding is what bb keeps as the function's alias, and what a
+    draft shows by name again. Inside the function body they are refused:
+    there the reference would be stored as a bare hash, and the next
+    draft could only show it as one.
+
     Returns:
         (source with every bb.resolve and bb.follow turned into bb.ref,
         {name: hash} resolved; a followed function goes by its alias, or
@@ -4941,10 +4948,17 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
         problems.append("  bb.resolve, bb.follow and bb.ref need `import bb` at the top of the file")
     aliases = {id(node.value): node.targets[0].id for node in tree.body
                if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)}
+    inside = {id(node) for top in tree.body if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef))
+              for node in ast.walk(top)}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
             problems.append(f"  line {node.lineno}: {BB_POOL_IMPORT_HINT}")
         followed = code_follow_hash(node)
+        if id(node) in inside and (followed or code_latest_name(node)):
+            written = ast.unparse(node)
+            problems.append(f"  line {node.lineno}: {written} is inside the function: bind it above the def "
+                            f"(NAME = {written}) and use NAME")
+            continue
         if followed:
             alias = aliases.get(id(node))
             ends = lineage_ends(followed, lang, alias) if code_detect_schema(followed) is not None else None
@@ -5163,6 +5177,11 @@ def code_show_pool_names(source_code: str, lang: str, pinned: List[str] = ()) ->
     functions with no current version left. A `# bb:` comment line says
     when a reference is out of date; comments are not stored, so it goes
     when saving.
+
+    A bb.ref written inside the function body has no alias, so it stays
+    a hash there (functions saved before bb.resolve was refused in a body
+    may hold one). The draft then gets `import bb`, without which it
+    could not be saved, and a note above the def saying how to follow it.
     """
     try:
         tree = ast.parse(source_code)
@@ -5205,9 +5224,17 @@ def code_show_pool_names(source_code: str, lang: str, pinned: List[str] = ()) ->
               and all(code_pool_import_hash(a.name) and a.asname for a in node.names)):
             replacements.append((node.lineno, node.end_lineno, '\n'.join(
                 as_text(code_pool_import_hash(a.name), a.asname) for a in node.names)))
+    bindings = len(replacements)
+    definition = next((node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))), None)
+    if definition and any(code_ref_hash(node) for node in ast.walk(definition)):
+        above = min([definition.lineno] + [d.lineno for d in definition.decorator_list])
+        replacements.append((above, above - 1,
+                             '# bb: a reference inside the function stays on its version: to follow it, '
+                             'bind it here (NAME = bb.follow("<hash>")) and use NAME'))
     if replacements and not code_imports_bb(tree):
         first = min(start for start, _, _ in replacements)
-        replacements.append((first, first - 1, 'import bb'))
+        # With no binding, the import stands alone above the note: a blank line sets it apart
+        replacements.append((first, first - 1, 'import bb' if bindings else 'import bb\n'))
     lines = source_code.splitlines(keepends=True)
     for start, end, text in sorted(replacements, key=lambda r: (r[0], r[1]), reverse=True):
         lines[start - 1:end] = [text + '\n']
