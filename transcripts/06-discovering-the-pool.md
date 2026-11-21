@@ -299,7 +299,7 @@ def split_words(sentence):
 
 ```bash
 $ (bb add split_words_eng.py@eng 2>&1) | grep -v "^Hash\|^Mapping"
-Note: split_words looks like these other functions; consider using or forking one instead:
+Note: split_words looks like these other functions:
   55% like tokenize ($TOK_HASH)
 ```
 
@@ -324,7 +324,7 @@ Note: split_words looks like these other functions; consider using or forking on
 
 2. **`bb search` is content-aware**: It searches names, docstrings, documentation, variable names and code, in every language, and shows results in yours. Multiple search terms narrow results (AND logic). Only current versions are listed unless `--all`.
 
-3. **`bb latest` follows lineage**: it lists the current versions of a name, those nobody forked. Several of them means the name diverged and commands need a hash.
+3. **`bb latest` follows lineage**: it lists the current versions of a name. Several of them means several functions answer to it (forks, or functions of another origin): `bb search NAME` tells them apart, and commands need a hash.
 
 4. **`bb caller` provides actionable output**: The output is formatted as ready-to-run `bb show` commands, making it easy to inspect each caller.
 

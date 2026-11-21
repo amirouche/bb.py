@@ -229,7 +229,7 @@ def test_migrate_keeps_current_versions_forks_restores_and_debt(tmp_path):
     assert sorted(heads(pool, 'twice@eng')) == sorted([fork_one, fork_two])
     assert heads(pool, 'label@eng') == [label]
     assert {name: sorted(heads(pool, f'{name}@eng')) for name in before} == before  # as the old bb said
-    assert 'name diverged: 2 current versions' in pool.bb('search', '--diverged').stdout
+    assert 'the same lineage, another end' in pool.bb('search', '--diverged').stdout
     assert 'The label.' in pool.bb('show', 'label@eng').stdout  # the documented mapping is current
     outdated = pool.bb('search', '--outdated').stdout
     assert 'Name: app (eng)' in outdated and 'bb update app@eng' in outdated

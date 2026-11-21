@@ -218,7 +218,11 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
    translates?} in pool/lineage/, id = hash of the record. Steps are per
    (language, name): a name's current version is the end of its own
    lineage. Relations: add, edit, document, rename (supersedes the old
-   name), refactor, restore (an older version's code again), translate.
+   name), refactor, restore (an older version's code again), translate,
+   fork (`bb edit --fork`: another function on purpose; the step it left
+   stays current, the fork starts its own lineage, its comment says why).
+   One name may hold several functions: `bb search NAME` says how they
+   relate (fork, same lineage, another origin, code alike, shared checks).
    Two names may share one code; an edit in one language leaves the others
    on their version, waiting for a translation ("not yet translated").
    One caller using two names of one code is refused. Drafts' bb:parent

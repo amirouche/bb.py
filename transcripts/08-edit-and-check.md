@@ -544,7 +544,7 @@ $ bb latest compute_pi eng | grep "^Hash:" | sort
 Hash: ec30704cedd60db0786a85051224ad26d51fd16a4095a90fcecb3dfed33cda93
 Hash: f8026db6c727e0efa3d678440e47a867a7bda4069dc07676ff178da4576ac99e
 $ (bb show compute_pi@eng 2>&1 || true) | head -1
-Error: 'compute_pi@eng' is ambiguous: it has 2 current versions. Use a hash:
+Error: 2 functions answer to 'compute_pi@eng'. Name one by its hash (bb search compute_pi tells them apart):
 ```
 
 ### Step 15: CI runs what nobody reviewed yet
