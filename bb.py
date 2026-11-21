@@ -27,13 +27,15 @@ Writing functions for the pool:
   you like, a module docstring. Anything else at module level (classes,
   constants, variables, code) is refused: put data in functions.
 - Use another pool function through `import bb`: bb.resolve("name")
-  names it (bb.latest("name") is the same), bb.ref("<hash>") names an
-  exact version (`from bb.pool import` is gone):
+  names it (bb.latest("name") is the same), bb.follow("<hash>") names
+  the lineage of a version, bb.ref("<hash>") names an exact version
+  (`from bb.pool import` is gone):
 
       import bb
 
       parse_amount = bb.resolve("parse_amount")  # by name
-      parse_amount = bb.ref("<hash>")            # or an exact version
+      parse_amount = bb.follow("<hash>")         # or wherever that version's lineage is now
+      parse_amount = bb.ref("<hash>")            # or an exact version, kept
 
   These lines go at module level, above the def, with the other imports:
   bb refuses `import bb` and bb.resolve inside a function body.
@@ -43,8 +45,10 @@ Writing functions for the pool:
   current version (the end of that name's lineage of edits, never by
   date); the stored code holds that hash, so the function keeps
   that version. A name several functions answer to (forks, or functions
-  of another origin called alike) is not guessed: name the one you mean
-  with bb.ref (`bb search name` tells them apart). bb.resolve is never looked up when the
+  of another origin called alike) is not guessed: follow the one you mean
+  with bb.follow("<hash>") (`bb search name` tells them apart; bb show
+  and bb edit then write the reference that way, so it keeps following
+  its own lineage). bb.resolve is never looked up when the
   function runs. So add helpers before the functions
   that use them. Stored code refers to each one as bb.ref("<hash>"). bb
   show and bb edit display references by name (bb.resolve), so saving an
@@ -279,14 +283,19 @@ def code_replace_spans(source_code: str, spans: List[Tuple[ast.AST, str]]) -> st
     return ''.join(lines)
 
 
-def code_ref_hash(node: ast.AST) -> Optional[str]:
-    """The hash in a bb.ref("<hash>") call, or None when node is not one."""
-    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'ref'
+def code_ref_hash(node: ast.AST, call: str = 'ref') -> Optional[str]:
+    """The hash in a bb.ref("<hash>") call (or bb.<call>), or None when node is not one."""
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == call
             and isinstance(node.func.value, ast.Name) and node.func.value.id == 'bb'
             and len(node.args) == 1 and not node.keywords and isinstance(node.args[0], ast.Constant)
             and isinstance(node.args[0].value, str) and _HASH_RE.match(node.args[0].value)):
         return node.args[0].value
     return None
+
+
+def code_follow_hash(node: ast.AST) -> Optional[str]:
+    """The hash in a bb.follow("<hash>") call, or None when node is not one."""
+    return code_ref_hash(node, 'follow')
 
 
 def code_make_ref(func_hash: str) -> ast.Call:
@@ -585,10 +594,11 @@ def code_collect_pool_refs(tree: ast.Module) -> Tuple[ast.Module, Dict[str, str]
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == 'bb':
-            if node.attr in BB_NAME_CALLS:
+            if node.attr in BB_NAME_CALLS + ('follow',):
                 raise ValueError(f"{ast.unparse(node)}: bb.{node.attr} is resolved when saving (bb add, bb edit)")
             if node.attr != 'ref':
-                raise ValueError(f"bb.{node.attr}: bb provides bb.resolve(\"NAME\") and bb.ref(\"<hash>\")")
+                raise ValueError(f"bb.{node.attr}: bb provides bb.resolve(\"NAME\"), bb.follow(\"<hash>\") "
+                                 f"and bb.ref(\"<hash>\")")
         elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == 'ref'
               and isinstance(node.func.value, ast.Name) and node.func.value.id == 'bb' and code_ref_hash(node) is None):
             raise ValueError(f"{ast.unparse(node)}: bb.ref takes one pool function's hash, as a string "
@@ -3022,6 +3032,25 @@ def lineage_preferred_language(func_hash: str) -> Optional[str]:
     return None
 
 
+def lineage_ends(func_hash: str, lang: str, alias: str = None) -> List[str]:
+    """
+    Where func_hash's lineage is now: the functions a caller following it gets.
+
+    Followed in lang, under the name the caller knows it by there (alias
+    when it is one of its names, see lineage_name_for); in every language
+    when func_hash has no lineage in lang. Forks are not followed: they
+    left. [func_hash] when it is still current; several functions when
+    its lineage has several ends; [] when no current version is left.
+    """
+    steps = lineage_index()['steps']
+    if lineage_steps_on(func_hash, lang):
+        reached = lineage_follow(func_hash, lang, lineage_name_for(func_hash, lang, alias))
+    else:
+        reached = lineage_follow(func_hash)
+    ends = sorted({steps[s]['function'] for s in reached})
+    return [func_hash] if func_hash in ends else ends
+
+
 def lineage_newer_version(func_hash: str, lang: str = None, name: str = None) -> Optional[str]:
     """
     The one up-to-date version of func_hash, when it is not func_hash.
@@ -3393,11 +3422,7 @@ def search_outdated_refs(index: Dict[str, Any], func_hash: str) -> List[str]:
             # Every mapping of the language: two names of one code may use dep by two names
             mappings = function['all_mappings'].get(lang) or [function['mappings'].get(lang, {})]
             for alias in {m.get('alias_mapping', {}).get(dep) for m in mappings}:
-                if lineage_steps_on(dep, lang):
-                    heads = {steps[s]['function']
-                             for s in lineage_follow(dep, lang, lineage_name_for(dep, lang, alias))}
-                else:
-                    heads = {steps[s]['function'] for s in lineage_follow(dep)}
+                heads = lineage_ends(dep, lang, alias)
                 if heads and dep not in heads:
                     outdated.append(dep)
                     break
@@ -4861,14 +4886,23 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
     whoami language) in order, then any language. It is resolved by
     lineage to the name's single current version and becomes
     bb.ref("<hash>"): stored code always holds a hash, so a function keeps
-    the version it was saved with. Never resolved by time: a name with
-    several current versions (two unrelated functions, or a fork) or none
-    is refused, and so are `from bb.pool import ...` (gone), bb.resolve or
+    the version it was saved with. Never resolved by time: a name several
+    functions answer to (forks, functions of another origin) or none is
+    refused, and so are `from bb.pool import ...` (gone), bb.resolve or
     bb.ref without `import bb`, and two names of one code in one function
     (they would be one alias).
 
+    bb.follow("<hash>") names a lineage by any version of it, and becomes
+    the bb.ref of where that lineage is now (lineage_ends): the reference
+    that needs no agreement on names. A name is a search; a hash knows
+    which function it means. `helper = bb.follow(...)` is followed under
+    the name helper when the function has several. A lineage with several
+    ends is refused: follow one of them.
+
     Returns:
-        (source with every bb.resolve turned into bb.ref, {name: hash} resolved)
+        (source with every bb.resolve and bb.follow turned into bb.ref,
+        {name: hash} resolved; a followed function goes by its alias, or
+        its short hash without one)
 
     Raises:
         ValueError: naming each reference that does not resolve to one version
@@ -4882,9 +4916,29 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
     spans = []
     if code_uses_bb(tree) and not code_imports_bb(tree):
         problems.append("  bb.resolve and bb.ref need `import bb` at the top of the file")
+    aliases = {id(node.value): node.targets[0].id for node in tree.body
+               if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
             problems.append(f"  line {node.lineno}: {BB_POOL_IMPORT_HINT}")
+        followed = code_follow_hash(node)
+        if followed:
+            alias = aliases.get(id(node))
+            ends = lineage_ends(followed, lang, alias) if code_detect_schema(followed) is not None else None
+            if ends is None:
+                problems.append(f"  line {node.lineno}: bb.follow: no function {followed[:12]}... in the pool")
+            elif len(ends) > 1:
+                functions = storage_scan_functions()
+                problems.append(f"  line {node.lineno}: the lineage of {followed[:12]}... has {len(ends)} ends; "
+                                f"follow one, or stay with bb.ref(\"{followed}\"):")
+                problems += [f"    bb.follow(\"{h}\")  # {helper_describe_function(functions[h], lang).split("  ", 1)[1]}"
+                             for h in ends if h in functions]
+            else:
+                # No current version left: the one named is the one kept
+                end = ends[0] if ends else followed
+                resolved[alias or followed[:12]] = end
+                spans.append((node, f"bb.ref({end!r})"))
+            continue
         name = code_latest_name(node)
         if name is None:
             continue
@@ -4897,8 +4951,9 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
                             f"(nor in your other languages)")
         else:
             problems.append(f"  line {node.lineno}: '{name}' has {len(heads)} current versions; "
-                            f"name one with bb.ref(\"<hash>\"):")
-            problems += [f"    {helper_describe_function(functions[h], lang)}" for h in heads]
+                            f"follow one (bb search {name} tells them apart):")
+            problems += [f"    {name} = bb.follow(\"{h}\")  # {helper_describe_function(functions[h], lang).split("  ", 1)[1]}"
+                         for h in heads]
     by_hash: Dict[str, List[str]] = {}
     for name, func_hash in sorted(resolved.items()):
         by_hash.setdefault(func_hash, []).append(name)
@@ -4908,7 +4963,7 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
                              f"{func_hash[:12]}...): use one name, or give them different code")
     if problems:
         raise ValueError(f"{where}: pool functions must be named by bb.resolve(\"NAME\") with one current "
-                         f"version, or by bb.ref(\"<hash>\"):\n" + '\n'.join(problems))
+                         f"version, by bb.follow(\"<hash>\") or by bb.ref(\"<hash>\"):\n" + '\n'.join(problems))
     return code_replace_spans(source_code, spans), resolved
 
 
@@ -5077,10 +5132,14 @@ def code_show_pool_names(source_code: str, lang: str, pinned: List[str] = ()) ->
     and a function nobody edits keeps the versions it was saved with.
     NAME is the function's name in lang (the alias, when it is one of its
     names there), or in another language when it has none in lang.
-    Kept as `bb.ref("<hash>")`: hashes the author pinned on purpose
-    (pinned, from the mapping) and functions whose name does not pick one
-    current version. A `# bb:` comment line says when a reference is out
-    of date; comments are not stored, so it goes when saving.
+    When the name does not find that function alone (several functions
+    answer to it, or it was renamed), the reference is shown as
+    `alias = bb.follow("<hash>")`: saving follows the lineage of the
+    version in use, whatever else is called so. Kept as `bb.ref("<hash>")`:
+    hashes the author pinned on purpose (pinned, from the mapping) and
+    functions with no current version left. A `# bb:` comment line says
+    when a reference is out of date; comments are not stored, so it goes
+    when saving.
     """
     try:
         tree = ast.parse(source_code)
@@ -5101,12 +5160,18 @@ def code_show_pool_names(source_code: str, lang: str, pinned: List[str] = ()) ->
             note = (f"# bb: pinned; the current {name} is {heads[0][:12]}...\n"
                     if len(heads) == 1 and heads[0] != func_hash else "")
             return f"{note}{alias} = bb.ref({func_hash!r})"
-        if len(heads) == 1:
-            note = (f"# bb: out of date: uses {func_hash[:12]}..., saving picks {heads[0][:12]}...\n"
-                    if heads[0] != func_hash else "")
+        ends = lineage_ends(func_hash, lang, alias)
+        if not ends:
+            return f"# bb: no current version is called {name}\n{alias} = bb.ref({func_hash!r})"
+        if len(ends) > 1:
+            return (f"# bb: the lineage of {func_hash[:12]}... has {len(ends)} ends: follow one of them\n"
+                    f"{alias} = bb.follow({func_hash!r})")
+        note = (f"# bb: out of date: uses {func_hash[:12]}..., saving picks {ends[0][:12]}...\n"
+                if ends[0] != func_hash else "")
+        if heads == ends:
             return f"{note}{alias} = bb.resolve({name!r})"
-        why = f"{name} has {len(heads)} current versions" if heads else f"no current version is called {name}"
-        return f"# bb: {why}\n{alias} = bb.ref({func_hash!r})"
+        why = f"one of {len(heads)} called {name}" if len(heads) > 1 else f"{name} does not name it alone"
+        return f"{note}# bb: {why}: its lineage is followed\n{alias} = bb.follow({func_hash!r})"
 
     replacements = []
     for node in tree.body:
@@ -7180,6 +7245,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
 
 
 SCRATCHPAD_REF = re.compile(r"""bb\.(?:resolve|latest)\(\s*['"]([A-Za-z_]\w*)['"]""")
+SCRATCHPAD_FOLLOW = re.compile(r"""bb\.follow\(\s*['"]([0-9a-f]{64})['"]""")
 
 
 def scratchpad_split(text: str) -> List[Tuple[str, str]]:
@@ -7365,7 +7431,16 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
             titles = [n for n in titles if n not in duplicates]
 
         # A function is saved before the sections that use it
-        uses = {name: {ref for ref in SCRATCHPAD_REF.findall(text) if ref in titles and ref != name}
+        scan = storage_scan_functions()
+
+        def used(text):
+            """The sections a section's text names, by name or by a followed hash."""
+            names = set(SCRATCHPAD_REF.findall(text))
+            for followed in SCRATCHPAD_FOLLOW.findall(text):
+                names |= set(scan.get(followed, {}).get('names', {}).values())
+            return names
+
+        uses = {name: {ref for ref in used(text) if ref in titles and ref != name}
                 for name, text in sections}
         order, placed = [], set()
         while len(order) < len(titles):
