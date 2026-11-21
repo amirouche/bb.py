@@ -90,3 +90,42 @@ def test_a_caller_follows_its_function_through_a_rename(tmp_path):
     assert renamed.returncode == 0 and 'Renamed' in renamed.stdout
     shown = pool.bb('show', 'opening@eng').stdout
     assert f"is_weekend = bb.follow('{old}')" in shown and f'saving picks {hash_of(renamed)[:12]}' in shown
+
+
+def test_a_reference_inside_the_function_body_is_refused(tmp_path):
+    pool = Pool(tmp_path)
+    weekend = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    for written in ('bb.resolve("is_weekend")', f'bb.follow("{weekend}")'):
+        refused = pool.add('opening', 'import bb\n\n\ndef opening(day):\n    """Open on working days."""\n'
+                           f'    is_weekend = {written}\n    return not is_weekend(day)\n')
+        assert refused.returncode == 1, refused.stdout
+        assert 'is inside the function: bind it above the def' in refused.stderr
+    inline = pool.add('opening', 'import bb\n\n\ndef opening(day):\n    """Open on working days."""\n'
+                      '    return not bb.resolve("is_weekend")(day)\n')
+    assert inline.returncode == 1 and 'is inside the function' in inline.stderr
+    assert pool.bb('latest', 'opening@eng').returncode == 1  # nothing saved
+
+
+def test_a_hash_inside_the_body_gets_a_draft_that_saves(tmp_path):
+    """bb.ref in a body has no alias: the draft keeps the hash, with `import bb` and a note."""
+    pool = Pool(tmp_path)
+    weekend = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    saved = pool.add('opening', 'import bb\n\n\ndef opening(day):\n    """Open on working days."""\n'
+                     f'    is_weekend = bb.ref("{weekend}")\n    return not is_weekend(day)\n')
+    assert saved.returncode == 0, saved.stderr
+    shown = pool.bb('show', 'opening@eng').stdout
+    assert shown.startswith('import bb\n\n# bb: a reference inside the function stays on its version')
+    assert f"is_weekend = bb.ref('{weekend}')" in shown
+    # The draft bb writes can be saved as it is
+    draft = tmp_path / 'opening.md'
+    pool.bb('edit', 'opening@eng', str(draft))
+    draft.write_text(draft.read_text().replace('Open on working days', 'Open when people work'))
+    again = pool.bb('edit', 'opening@eng', str(draft), '-m', 'words')
+    assert again.returncode == 0, again.stderr
+    # Bound above the def, it follows by name again
+    draft.write_text(draft.read_text().replace(f"    is_weekend = bb.ref('{weekend}')\n", '')
+                     .replace('def opening', f"is_weekend = bb.follow('{weekend}')\n\n\ndef opening"))
+    moved = pool.bb('edit', 'opening@eng', str(draft), '-m', 'follow')
+    assert moved.returncode == 0, moved.stderr
+    shown = pool.bb('show', 'opening@eng').stdout
+    assert "is_weekend = bb.resolve('is_weekend')" in shown and '# bb:' not in shown
