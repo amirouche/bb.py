@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [
-    {name = "Amirouche Boubekki"}
+    {name = "Amirouche Amazigh BOUBEKKI"}
 ]
 keywords = ["ast", "code-sharing", "multilingual", "content-addressed", "function-pool"]
 classifiers = [
