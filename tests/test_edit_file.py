@@ -228,3 +228,36 @@ def test_a_fork_edited_back_to_its_origins_code_restores_nothing(tmp_path):
     # Its own lineage never held that code: an edit, not a restore
     assert back.returncode == 0 and 'Restored' not in back.stdout and f'Parent: {other}' in back.stdout
     assert hash_of(back) == origin
+
+
+def test_a_fork_that_renames_a_check_leaves_the_origin_its_name(tmp_path):
+    pool = Pool(tmp_path)
+    draft = tmp_path / 'weekend.md'
+    pool.bb('edit', 'is_weekend@eng', str(draft))
+    set_code(draft, 'def is_weekend(day):\n    """A day of rest (0 is Monday)."""\n    return day in (5, 6)\n')
+    draft.write_text(draft.read_text() + '\n### saturday\n\n```python def\ndef saturday(f):\n'
+                     '    """Saturday rests."""\n    assert f(5)\n```\n')
+    assert pool.bb('edit', 'is_weekend@eng', str(draft), '-m', 'with a check').returncode == 0
+    check = pool.bb('latest', 'saturday@eng', '--hash').stdout.split()
+    # The fork renames the check and keeps its code: one code, two names, each with its lineage
+    renamed = tmp_path / 'renamed.md'
+    pool.bb('edit', 'is_weekend@eng', str(renamed))
+    renamed.write_text(renamed.read_text().replace('(5, 6)', '(4, 5)').replace('saturday', 'samedi'))
+    forked = pool.bb('edit', 'is_weekend@eng', str(renamed), '--fork', '-m', 'Friday and Saturday')
+    assert forked.returncode == 0, forked.stderr
+    assert pool.bb('latest', 'saturday@eng', '--hash').stdout.split() == check
+    assert pool.bb('latest', 'samedi@eng', '--hash').stdout.split() == check
+    assert 'Fork: samedi@eng' in pool.bb('log').stdout
+    assert 'is valid' in pool.bb('validate').stdout
+    # A check that keeps its code and its name cannot be two functions: it remains the origin's
+    reworded = tmp_path / 'reworded.md'
+    origin = pool.bb('latest', 'is_weekend@eng', '--hash').stdout.split()
+    origin.remove(hash_of(forked))
+    pool.bb('edit', f'{origin[0]}@eng', str(reworded))
+    reworded.write_text(reworded.read_text().replace('(5, 6)', '(5,)').replace('Saturday rests.', 'Rest on day 5.'))
+    again = pool.bb('edit', f'{origin[0]}@eng', str(reworded), '--fork', '-m', 'Saturday only')
+    assert again.returncode == 0, again.stderr
+    assert "check 'saturday' keeps its code and its name: it remains the origin's" in again.stderr
+    assert pool.bb('latest', 'saturday@eng', '--hash').stdout.split() == check
+    assert 'Saturday rests.' in pool.bb('show', 'saturday@eng').stdout
+    assert 'is valid' in pool.bb('validate').stdout

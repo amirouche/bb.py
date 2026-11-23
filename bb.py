@@ -6999,9 +6999,10 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
     section's mapping is saved and a step records it after the section's
     bb:parent step: 'rename' when the name changed, 'document' when only
     the mapping did, 'restore' when the code is an older version's (of its
-    own lineage: what a fork left is not its past), 'edit' otherwise; 'add' without a parent step (a new name). With fork, other
-    code is a 'fork': it leaves the parent step, which stays current, and
-    starts its own lineage. Code another name already has is fine: two
+    own lineage: what a fork left is not its past), 'edit' otherwise; 'add' without a parent step (a new name). With fork, any
+    change is a 'fork': it leaves the parent step, which stays current
+    under its name, and starts its own lineage (a check a fork renames
+    keeps its code, and the origin's check keeps its name). Code another name already has is fine: two
     names may share one code, each with its own lineage. picked ({pool
     function used: step}, see lineage_picked_step) says where a --pick
     moved a reference; when nothing else changed the step is a 'follow'.
@@ -7045,7 +7046,8 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
     if (previous['function'], previous['mapping']) == (func_hash, mapping_hash) and (
             follows is None or follows == (previous.get('follows') or {})):
         return parent, None
-    if fork and func_hash != previous['function']:
+    if fork:
+        # Whatever changed, the name included: the step left stays current, under its name
         relation = 'fork'
     elif prepared['name_mapping'].get('_bb_v_0') != previous['name']:
         relation = 'rename'
@@ -7135,7 +7137,9 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     it left. Both then answer to the name when it is kept: `bb search
     NAME` shows how they relate, and commands take a hash. A fork changes
     the code or the checks (they are part of the definition); a check it
-    changes is forked too, so the origin keeps its own.
+    changes is forked too, so the origin keeps its own: its code, and its
+    name when the fork renames it. A check that keeps both its code and
+    its name remains the origin's, as it was (a note says so).
 
     --pick NAME=HASH says which function a name means when several answer
     to bb.resolve("NAME") (the hash or its first characters, as bb show
@@ -7342,13 +7346,23 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
 
     previous_step = lineage_index()['steps'].get(section['parent'] or '')
 
+    # A fork leaves the origin's checks as they are: a check it changes is a fork too. One
+    # that keeps both its code and its name cannot be two functions: it remains the origin's
+    remains = set()
+    for check, prep in plan['checks'] if fork else []:
+        left = lineage_index()['steps'].get(check.get('parent') or '')
+        if (left and not unchanged(check, prep) and left['lang'] == lang
+                and (left['function'], left['name']) == (prep['hash'], prep['name_mapping'].get('_bb_v_0'))):
+            remains.add(id(check))
+            print(f"Note: check '{left['name']}' keeps its code and its name: it remains the origin's, as it "
+                  f"was (to fork it, rename it or change its code).", file=sys.stderr)
+
     # Save checks first, so the implementation never lists a missing check
     with contextlib.redirect_stdout(io.StringIO()):
         new_checks = []
         for check, prep in plan['checks']:
-            # A fork leaves the origin's checks as they are: a check it changes is a fork too
             _, check_relation = edit_save_section(check, prep, lang, comment,
-                                                  unchanged=unchanged(check, prep),
+                                                  unchanged=unchanged(check, prep) or id(check) in remains,
                                                   fork=fork, picked=moves[id(check)])
             if check_relation:
                 new_checks.append((prep['name_mapping']['_bb_v_0'], prep['hash']))
