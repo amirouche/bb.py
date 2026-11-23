@@ -1,12 +1,7 @@
-"""Storage v2: lineage per language and name, shared code, renames, translations, bb.resolve, migration."""
+"""Storage v2: lineage per language and name, shared code, renames, translations, bb.resolve."""
 import json
-import subprocess
-from pathlib import Path
 
-import pytest
-
-from tests.test_edit_file import set_code
-from tests.test_import_by_name import BB, Pool, hash_of
+from tests.test_import_by_name import Pool, hash_of
 from tests.test_translate_file import fill
 
 PAGE = 'def {name}():\n    """A page, for now."""\n    return "todo"\n'
@@ -141,128 +136,6 @@ def test_resolve_falls_back_through_your_languages(tmp_path):
     # bb.latest is the same as bb.resolve
     user.write_text(user.read_text().replace('bb.resolve', 'bb.latest'))
     assert f'Import: helper -> {kabyle}' in pool.bb('add', f'{user}@fra').stdout
-
-
-# ============================================================================
-# Migration from the old layout
-# ============================================================================
-
-def old_bb(tmp_path):
-    """The bb before storage v2, from git history (the parent of the commit that introduced it)."""
-    old = subprocess.run(['git', 'log', '--format=%H', '-1', '--grep', '^Storage v2:', '--', 'bb.py'],
-                         capture_output=True, text=True, cwd=BB.parent).stdout.strip()
-    source = subprocess.run(['git', 'show', f'{old}~1:bb.py'], capture_output=True, text=True, cwd=BB.parent)
-    if not old or source.returncode != 0:
-        pytest.skip("the old bb is not in this checkout's git history")
-    path = tmp_path / 'old' / 'bb.py'
-    path.parent.mkdir()
-    path.write_text(source.stdout)
-    return path
-
-
-class OldPool(Pool):
-    """A pool written by the old bb, read by this one after bb migrate."""
-
-    def __init__(self, tmp_path):
-        super().__init__(tmp_path)
-        self.old = old_bb(tmp_path)
-
-    def old_bb(self, *args, editor=None):
-        env = {**self.env, 'EDITOR': editor} if editor else self.env
-        return subprocess.run(['python3', str(self.old), *args], capture_output=True, text=True, env=env,
-                              stdin=subprocess.DEVNULL)
-
-    def old_edit(self, name, code, *args):
-        draft = self.tmp / f'{name}.old.md'
-        if draft.exists():
-            draft.unlink()
-        self.old_bb('edit', f'{name}@eng', str(draft))
-        set_code(draft, code)
-        return self.old_bb('edit', f'{name}@eng', str(draft), '-m', 'change', *args)
-
-
-QUX = 'def qux(n):\n    """Q."""\n    return n + {}\n'
-APP = 'import bb\nqux = bb.latest("qux")\n\n\ndef app(n):\n    """App."""\n    return qux(n)\n'
-
-
-def test_migrate_keeps_current_versions_forks_restores_and_debt(tmp_path):
-    pool = OldPool(tmp_path)
-    v1 = hash_of(pool.old_edit('qux', QUX.format(1)))
-    app = hash_of(pool.old_edit('app', APP))
-    v2 = hash_of(pool.old_edit('qux', QUX.format(2)))
-    back = pool.old_edit('qux', QUX.format(1))  # a restore record
-    assert f'Restored: {v1}' in back.stdout, back.stdout + back.stderr
-    v3 = hash_of(pool.old_edit('qux', QUX.format(3)))
-    # A fork of another function: two current versions
-    twice = hash_of(pool.old_edit('twice', 'def twice(n):\n    """T."""\n    return 2 * n\n'))
-    one, two = tmp_path / 'one.md', tmp_path / 'two.md'
-    pool.old_bb('edit', f'{twice}@eng', str(one))
-    pool.old_bb('edit', f'{twice}@eng', str(two))
-    set_code(one, 'def twice(n):\n    """T."""\n    return n + n\n')
-    set_code(two, 'def twice(n):\n    """T."""\n    return n * 2\n')
-    fork_one = hash_of(pool.old_bb('edit', f'{twice}@eng', str(one), '-m', 'a'))
-    fork_two = hash_of(pool.old_bb('edit', f'{twice}@eng', str(two), '-m', 'b'))
-    # A documentation change
-    label = hash_of(pool.old_edit('label', 'def label(n):\n    """L."""\n    return str(n)\n'))
-    doc = tmp_path / 'doc.md'
-    pool.old_bb('edit', 'label@eng', str(doc))
-    doc.write_text(doc.read_text().replace('"""L."""', '"""The label."""'))
-    assert pool.old_bb('edit', 'label@eng', str(doc), '-m', 'doc').returncode == 0
-    assert (tmp_path / 'bb' / 'restore').is_dir()
-    before = {name: sorted(pool.old_bb('latest', f'{name}@eng').stdout.split('Hash: ')[1:])
-              for name in ('qux', 'app', 'twice', 'label')}
-    before = {name: [h.split()[0] for h in found] for name, found in before.items()}
-
-    # The old layout is refused until migrated
-    refused = pool.bb('search')
-    assert refused.returncode == 1 and 'bb migrate' in refused.stderr
-
-    migrated = pool.bb('migrate')
-    assert migrated.returncode == 0, migrated.stderr
-    assert '1 restore records' in migrated.stdout
-    assert not (tmp_path / 'bb' / 'restore').exists()
-    assert not list((tmp_path / 'bb' / 'pool').glob('[0-9a-f][0-9a-f]'))
-    assert 'Already migrated' in pool.bb('migrate').stdout
-
-    assert heads(pool, 'qux@eng') == [v3]
-    assert heads(pool, 'app@eng') == [app]
-    assert sorted(heads(pool, 'twice@eng')) == sorted([fork_one, fork_two])
-    assert heads(pool, 'label@eng') == [label]
-    assert {name: sorted(heads(pool, f'{name}@eng')) for name in before} == before  # as the old bb said
-    assert 'the same lineage, another end' in pool.bb('search', '--diverged').stdout
-    assert 'The label.' in pool.bb('show', 'label@eng').stdout  # the documented mapping is current
-    outdated = pool.bb('search', '--outdated').stdout
-    assert 'Name: app (eng)' in outdated and 'bb update app@eng' in outdated
-    log = pool.bb('log').stdout
-    assert f'Restore: qux@eng {v1}' in log and f'From: qux@eng {v2}' in log
-    assert '✓ BB directory is valid' in pool.bb('validate').stdout
-    # Editing goes on from the migrated lineage
-    assert pool.edit('qux', QUX.format(4)).returncode == 0
-    assert len(heads(pool, 'qux@eng')) == 1
-
-
-def test_an_old_draft_naming_a_function_hash_still_saves(tmp_path):
-    pool = OldPool(tmp_path)
-    pool.old_edit('qux', QUX.format(1))
-    draft = tmp_path / 'qux.md'
-    pool.old_bb('edit', 'qux@eng', str(draft))  # marker: the function hash
-    assert pool.bb('migrate').returncode == 0
-    set_code(draft, QUX.format(5))
-    saved = pool.bb('edit', 'qux@eng', str(draft), '-m', 'after migrating')
-    assert saved.returncode == 0, saved.stderr
-    assert heads(pool, 'qux@eng') == [hash_of(saved)]
-
-
-def test_every_command_but_migrate_refuses_an_old_pool(tmp_path):
-    pool = Pool(tmp_path)
-    old_object = tmp_path / 'bb' / 'pool' / 'ab' / ('c' * 62) / 'object.json'
-    old_object.parent.mkdir(parents=True)
-    old_object.write_text(json.dumps({'schema_version': 1, 'hash': 'ab' + 'c' * 62, 'normalized_code': '',
-                                      'metadata': {}}))
-    for args in (['search'], ['latest', 'x@eng'], ['add', 'x.py@eng'], ['log']):
-        refused = pool.bb(*args)
-        assert refused.returncode == 1, args
-        assert 'This pool uses the old layout: run `bb migrate`' in refused.stderr
 
 
 def test_outdated_names_each_dependency_by_the_callers_own_name(tmp_path):

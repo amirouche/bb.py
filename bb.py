@@ -237,8 +237,7 @@ the per-language name mappings, and pool/lineage/ the lineage steps that
 say which version of each name comes after which. Each language mapping
 preserves the original variable names, docstring, and BB import aliases,
 allowing the same function to be displayed in any language that has been
-added or translated. A pool written by an older bb (pool/XX/..., restore/)
-is converted by `bb migrate`; track $BB_DIRECTORY with git first.
+added or translated.
 
 Worklogs live in $BB_DIRECTORY/worklog/, unfinished edits in
 $BB_DIRECTORY/edit/, signed reviews in $BB_DIRECTORY/review/ and the
@@ -975,25 +974,6 @@ def storage_mapping_path(func_hash: str, lang: str, mapping_hash: str) -> Path:
 def storage_step_path(step_id: str) -> Path:
     """Where one lineage step lives."""
     return storage_get_lineage_directory() / step_id[:2] / f'{step_id[2:]}.json'
-
-
-OLD_LAYOUT_MESSAGE = ("This pool uses the old layout: run `bb migrate` "
-                      "(track the directory with git first to keep a copy).")
-
-
-def storage_pool_is_old_layout() -> bool:
-    """
-    Whether $BB_DIRECTORY holds a pool in the layout before storage v2.
-
-    That layout kept functions in pool/XX/<rest>/ (two hex digits right
-    under pool/) and restore records in $BB_DIRECTORY/restore/.
-    """
-    pool_dir = storage_get_pool_directory()
-    if pool_dir.is_dir() and any(child.is_dir() and re.fullmatch(r'[0-9a-f]{2}', child.name)
-                                 for child in pool_dir.iterdir()):
-        return True
-    restore_dir = storage_get_bb_directory() / 'restore'
-    return restore_dir.is_dir() and any(restore_dir.glob('*.json'))
 
 
 # Scans of the pool are cached for the length of a command, keyed by pool
@@ -2326,8 +2306,7 @@ def command_log(identifier: str = None):
 
     Functions show their names, author and languages. Lineage steps show
     what happened to a name in a language (add, edit, document, rename,
-    refactor, restore, translate, fork; follow is bb migrate saying what
-    an older step follows), from which step, by whom, and their comment. Worklogs show their author, languages, attached translations
+    refactor, restore, translate, fork), from which step, by whom, and their comment. Worklogs show their author, languages, attached translations
     and message, in your preferred language when translated.
     """
     entries = []
@@ -2768,9 +2747,7 @@ def lineage_prune() -> int:
 # in two lineages (a fork that went back to an older version's code), and
 # a caller follows one of them. What a caller follows is then the ends
 # reached from that step (lineage_ends). Steps recorded before 'follows'
-# existed have none and are followed by hash, as they were; `bb migrate`
-# appends a 'follow' step after each current one (same function, same
-# mapping) saying what it follows.
+# existed have none and are followed by hash, as they were.
 #
 # A fork does not come after the step it left: that step stays current,
 # nothing using it is out of date, and the fork starts a lineage of its
@@ -2783,7 +2760,7 @@ def lineage_prune() -> int:
 # share one code, and a French name stays on its version until someone
 # translates the English edit.
 
-LINEAGE_RELATIONS = ('add', 'edit', 'document', 'rename', 'refactor', 'restore', 'translate', 'fork', 'follow')
+LINEAGE_RELATIONS = ('add', 'edit', 'document', 'rename', 'refactor', 'restore', 'translate', 'fork')
 
 
 def storage_scan_lineage() -> Dict[str, Dict[str, Any]]:
@@ -3137,21 +3114,6 @@ def lineage_step_follows(step_id: Optional[str]) -> Dict[str, str]:
     return lineage_index()['steps'].get(step_id or '', {}).get('follows') or {}
 
 
-def lineage_skip_follow(step_id: Optional[str]) -> Optional[str]:
-    """
-    The step standing for step_id once `bb migrate` said what it follows.
-
-    A 'follow' step changes nothing a draft holds (same function, same
-    mapping): a draft made from the step before it continues from it.
-    """
-    index = lineage_index()
-    while True:
-        after = index['successors'].get(step_id or '', [])
-        if len(after) != 1 or index['steps'][after[0]]['relation'] != 'follow':
-            return step_id
-        step_id = after[0]
-
-
 def lineage_followed_step(dep: str, lang: str, alias: Optional[str], earlier: Dict[str, str]) -> Optional[str]:
     """
     The step of dep a function saved in lang, using dep as alias, follows from now on.
@@ -3207,47 +3169,6 @@ def lineage_follows_build(func_hash: str, lang: str, mapping_hash: str, before: 
         step_id = lineage_followed_step(dep, lang, aliases.get(dep), earlier)
         if step_id:
             follows[dep] = step_id
-    return follows
-
-
-def lineage_follows_guess(step_id: str) -> Dict[str, str]:
-    """
-    What a step recorded before 'follows' existed followed, for bb migrate.
-
-    For each pool function its code uses (pins aside): that function's
-    step in the step's language under the name it is used by (in any
-    language when it has none there). When it has several, nothing was
-    recorded to choose: the latest one recorded before step_id is taken,
-    the one that was there to be used. This is the only place a date
-    decides, once, for what was saved before. Dates are to the second:
-    of the steps dated like step_id, one in a fork's lineage is not
-    taken (a fork that holds the code again came after an edit of what
-    it left, so what was there to be used was the other).
-    """
-    steps = lineage_index()['steps']
-    record = steps[step_id]
-    func_hash, lang = record['function'], record['lang']
-    if code_detect_schema(func_hash) is None:
-        return {}
-    data = mapping_load_json(func_hash, lang, record['mapping']) or {}
-    aliases, pins = data.get('alias_mapping', {}), set(data.get('pinned') or [])
-    follows = {}
-    for dep in code_extract_dependencies(object_load(func_hash)['normalized_code']):
-        if dep in pins:
-            continue
-        if lineage_steps_on(dep, lang):
-            candidates = lineage_steps_on(dep, lang, lineage_name_for(dep, lang, aliases.get(dep)))
-        else:
-            candidates = lineage_steps_on(dep)
-        when = lineage_created(step_id)
-        before = [s for s in candidates if s != step_id and (
-            lineage_created(s) < when
-            or (lineage_created(s) == when and steps[lineage_root_step(s)]['relation'] != 'fork'))]
-        tied = [s for s in candidates if s != step_id and lineage_created(s) == when]
-        if before or tied:
-            follows[dep] = max(before or tied, key=lambda s: (lineage_created(s), s))
-        elif candidates:
-            follows[dep] = min(candidates, key=lambda s: (lineage_created(s), s))
     return follows
 
 
@@ -4674,343 +4595,6 @@ def command_rm(identifier: str, force: bool = False):
         print(f"Removed function: {hash_value}")
         if languages:
             print(f"Deleted {len(languages)} language mapping(s): {', '.join(languages)}")
-
-
-def migrate_read_old_pool() -> Tuple[Dict[str, Dict[str, Any]], Dict[Tuple[str, str], Dict[str, Dict[str, Any]]],
-                                     Dict[str, Dict[str, Any]], Dict[str, Path]]:
-    """
-    Read a pool in the layout before storage v2.
-
-    That layout kept pool/XX/<rest>/object.json, the mappings in
-    pool/XX/<rest>/<lang>/ZZ/<rest>/mapping.json (with a 'parent' link,
-    hash@lang@mapping, to the translation they were made from) and restore
-    records in $BB_DIRECTORY/restore/<id>.json.
-
-    Returns:
-        (objects {hash: object.json data}, mappings {(hash, lang): {mapping hash: data}},
-         restores {id: record}, object paths {hash: path})
-    """
-    pool_dir = storage_get_pool_directory()
-    objects: Dict[str, Dict[str, Any]] = {}
-    paths: Dict[str, Path] = {}
-    mappings: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
-    for prefix_dir in sorted(pool_dir.iterdir()):
-        if not (prefix_dir.is_dir() and re.fullmatch(r'[0-9a-f]{2}', prefix_dir.name)):
-            continue
-        for func_dir in sorted(prefix_dir.iterdir()):
-            object_json = func_dir / 'object.json'
-            if not object_json.exists():
-                continue
-            try:
-                with open(object_json, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-            except (IOError, json.JSONDecodeError):
-                continue
-            func_hash = prefix_dir.name + func_dir.name
-            objects[func_hash] = data
-            paths[func_hash] = object_json
-            for lang_dir in sorted(func_dir.iterdir()):
-                if not lang_dir.is_dir():
-                    continue
-                for mapping_json in sorted(lang_dir.glob('*/*/mapping.json')):
-                    try:
-                        with open(mapping_json, 'r', encoding='utf-8') as f:
-                            mapping = json.load(f)
-                    except (IOError, json.JSONDecodeError):
-                        continue
-                    mapping_hash = mapping_json.parent.parent.name + mapping_json.parent.name
-                    mappings.setdefault((func_hash, lang_dir.name), {})[mapping_hash] = mapping
-    restores: Dict[str, Dict[str, Any]] = {}
-    for path in sorted((storage_get_bb_directory() / 'restore').glob('*.json')):
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                restores[path.stem] = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            continue
-    return objects, mappings, restores, paths
-
-
-def migrate_plan(objects: Dict[str, Dict[str, Any]], mappings: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]],
-                 restores: Dict[str, Dict[str, Any]], save_mapping: Callable, save_step: Callable) -> Dict[str, int]:
-    """
-    Turn the old pool's lineage into lineage steps, deterministically.
-
-    Old versions (functions, and restore records standing for the version
-    they restore) are taken parents first, by creation time. For each
-    version, in each language: its first mapping continues the step of
-    the nearest older version that has the language (an edit, or a rename
-    when the name differs, a refactor when only references changed), or
-    starts a lineage (an add, or a translation when the mapping was made
-    from another language's); a mapping made from another of the same
-    function and language is a 'document' step after it. A restore record
-    is a 'restore' step from the superseded version's step to the restored
-    version's mapping, in each language both have.
-
-    Args:
-        save_mapping: (func_hash, lang, old mapping data) -> new mapping hash
-        save_step: (previous, func_hash, lang, mapping_hash, relation, comment,
-                    translates, metadata) -> step id
-
-    Returns:
-        Counts: functions, mappings, steps, restores
-    """
-    def created_of(node):
-        if node in objects:
-            return objects[node].get('metadata', {}).get('created', '')
-        return restores[node].get('created', '')
-
-    def previous(node):
-        parent = (objects[node].get('metadata', {}).get('parent') if node in objects
-                  else restores[node].get('supersedes'))
-        return parent if parent in objects or parent in restores else None
-
-    # Parents first, then by creation time
-    order: List[str] = []
-    placed: Set[str] = set()
-    for node in sorted(list(objects) + [r for r in restores if r not in objects],
-                       key=lambda n: (created_of(n), n)):
-        chain = []
-        while node is not None and node not in placed and node not in chain:
-            chain.append(node)
-            node = previous(node)
-        for item in reversed(chain):
-            placed.add(item)
-            order.append(item)
-
-    new_mapping: Dict[Tuple[str, str, str], str] = {}   # (hash, lang, old mapping) -> new mapping
-    step_of: Dict[Tuple[str, str, str], str] = {}       # (hash, lang, old mapping) -> step
-    final: Dict[Tuple[str, str], List[Tuple[str, str, str]]] = {}  # (node, lang) -> [(step, name, old mapping)]
-    counts = {'functions': len(objects), 'mappings': 0, 'steps': 0, 'restores': 0}
-
-    def name_of(data):
-        return data.get('name_mapping', {}).get('_bb_v_0', '')
-
-    def nearest(node, lang):
-        """The final steps in lang of the nearest version before node that has some."""
-        seen = set()
-        node = previous(node)
-        while node is not None and node not in seen:
-            seen.add(node)
-            if final.get((node, lang)):
-                return final[(node, lang)]
-            node = previous(node)
-        return []
-
-    def pick(candidates, name, old_mapping=None):
-        for step_id, step_name, mapping_hash in candidates:
-            if old_mapping and mapping_hash == old_mapping:
-                return step_id, step_name
-        for step_id, step_name, _ in candidates:
-            if step_name == name:
-                return step_id, step_name
-        return (candidates[0][0], candidates[0][1]) if candidates else (None, None)
-
-    def parent_link(data):
-        parts = (data.get('parent') or '').split('@')
-        return tuple(parts) if len(parts) == 3 else None
-
-    def metadata_of(node):
-        if node in objects:
-            meta = objects[node].get('metadata', {})
-        else:
-            meta = restores[node]
-        return {'created': meta.get('created', ''), 'name': meta.get('name', ''), 'email': meta.get('email', '')}
-
-    def migrate_function(func_hash):
-        langs = sorted(lang for (h, lang) in mappings if h == func_hash)
-        # Languages a translation was made from go first
-        def depends(lang):
-            return any((link := parent_link(d)) and link[0] == func_hash and link[1] != lang
-                       for d in mappings[(func_hash, lang)].values())
-        langs.sort(key=lambda lang: (depends(lang), lang))
-        for lang in langs:
-            own = mappings[(func_hash, lang)]
-            doc_parent = {}
-            for m, data in own.items():
-                link = parent_link(data)
-                if link and link[0] == func_hash and link[1] == lang and link[2] in own and link[2] != m:
-                    doc_parent[m] = link[2]
-            # Mappings in chain order: a mapping after the one it was made from
-            ordered, done = [], set()
-            for m in sorted(own):
-                chain = []
-                while m is not None and m not in done and m not in chain:
-                    chain.append(m)
-                    m = doc_parent.get(m)
-                for item in reversed(chain):
-                    done.add(item)
-                    ordered.append(item)
-            for m in ordered:
-                data = own[m]
-                new_hash = save_mapping(func_hash, lang, data)
-                new_mapping[(func_hash, lang, m)] = new_hash
-                counts['mappings'] += 1
-                name = name_of(data)
-                link = parent_link(data)
-                translates = None
-                if m in doc_parent:
-                    from_step = step_of[(func_hash, lang, doc_parent[m])]
-                    parent_name = name_of(own[doc_parent[m]])
-                    relation = 'rename' if parent_name != name else 'document'
-                else:
-                    candidates = nearest(func_hash, lang)
-                    old_mapping = link[2] if link and link[1] == lang else None
-                    from_step, from_name = pick(candidates, name, old_mapping)
-                    if link and link[1] != lang:
-                        translates = step_of.get(link)
-                    if from_step is None:
-                        relation = 'translate' if translates else 'add'
-                    elif from_name != name:
-                        relation = 'rename'
-                    elif translates:
-                        relation = 'translate'
-                    else:
-                        relation = 'edit'
-                        source = mappings.get((link[0], lang), {}).get(link[2]) if link else None
-                        if source and source.get('name_mapping') == data.get('name_mapping') and \
-                                source.get('docstring') == data.get('docstring') and \
-                                sorted(source.get('alias_mapping', {}).values()) == \
-                                sorted(data.get('alias_mapping', {}).values()):
-                            relation = 'refactor'
-                step_of[(func_hash, lang, m)] = save_step(from_step, func_hash, lang, new_hash, relation,
-                                                          data.get('comment', ''), translates, metadata_of(func_hash))
-                counts['steps'] += 1
-            leaves = [m for m in ordered if m not in doc_parent.values()]
-            final[(func_hash, lang)] = [(step_of[(func_hash, lang, m)], name_of(own[m]), m) for m in leaves]
-
-    def migrate_restore(record_id):
-        record = restores[record_id]
-        restored = record.get('restores')
-        langs = sorted({lang for (h, lang) in mappings if h == restored})
-        if restored not in objects:
-            for lang in sorted({lang for (_, lang) in final}):
-                final[(record_id, lang)] = nearest(record_id, lang)
-            return
-        counts['restores'] += 1
-        for lang in langs:
-            candidates = nearest(record_id, lang)
-            if not candidates:
-                continue
-            leaves = [(n, m) for _, n, m in final.get((restored, lang), [])] or \
-                [(name_of(d), m) for m, d in sorted(mappings[(restored, lang)].items())]
-            from_step, from_name = candidates[0][0], candidates[0][1]
-            name, m = next(((n, m) for n, m in leaves if n == from_name), leaves[0])
-            step_id = save_step(from_step, restored, lang, new_mapping.get((restored, lang, m)) or
-                                save_mapping(restored, lang, mappings[(restored, lang)][m]),
-                                'restore', record.get('comment', ''), None, metadata_of(record_id))
-            counts['steps'] += 1
-            final[(record_id, lang)] = [(step_id, name, m)]
-
-    for node in order:
-        if node in objects:
-            migrate_function(node)
-        else:
-            migrate_restore(node)
-    return counts
-
-
-def migrate_follows() -> int:
-    """
-    Say what current steps follow, where they were recorded before 'follows' existed.
-
-    Each current step without 'follows' whose function uses pool
-    functions gets a 'follow' step after it (same function, same
-    mapping) carrying them, see lineage_follows_guess. Steps are
-    append-only and named by their content, so nothing is rewritten and
-    no id changes. Running it again adds nothing.
-
-    Returns:
-        How many steps were added
-    """
-    storage_cache_clear()
-    steps = lineage_index()['steps']
-    todo = []
-    for step_id in lineage_current_steps():
-        record = steps[step_id]
-        if record.get('follows'):
-            continue
-        follows = lineage_follows_guess(step_id)
-        if follows:
-            todo.append((step_id, record, follows))
-    for step_id, record, follows in todo:
-        lineage_save(step_id, record['function'], record['lang'], record['mapping'], 'follow',
-                     "bb migrate: what it follows", follows=follows)
-    return len(todo)
-
-
-def command_migrate():
-    """
-    Convert a pool from the layout before storage v2 to the current one.
-
-    Functions move to pool/functions/, their mappings to pool/mappings/
-    (without their 'parent' link: the lineage says it now), and the
-    lineage of the pool becomes lineage steps in pool/lineage/, per
-    language and per name: edits, renames, translations, documentation
-    changes and restores (the old $BB_DIRECTORY/restore/ records). Current
-    versions stay what they were. Function hashes do not change.
-
-    The old files stay until the new ones are written, then pool/XX/ and
-    restore/ are removed. Track $BB_DIRECTORY with git before migrating:
-    `git checkout` then brings the old layout back. Running it on a pool
-    already migrated says so and changes nothing.
-
-    It also records what functions follow, in pools saved before lineage
-    steps said so (their 'follows': the step of each pool function they
-    use that the reference stands on, so one code in two lineages is
-    followed along the right one). Nothing stored is rewritten: each
-    current function using others gets one 'follow' step after its own,
-    same function, same mapping. Where a used function had several steps
-    to choose from, the latest recorded before its user is taken.
-    """
-    import shutil
-
-    if not storage_pool_is_old_layout():
-        followed = migrate_follows()
-        if followed:
-            print(f"Recorded what {followed} lineage step(s) follow (their 'follows'); nothing else changed.")
-        else:
-            print("Already migrated: this pool uses the current layout.")
-        return
-
-    storage_cache_clear()
-    objects, mappings, restores, paths = migrate_read_old_pool()
-
-    for func_hash in sorted(objects):
-        target = storage_object_path(func_hash)
-        if not target.exists():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(paths[func_hash], target)
-    storage_cache_clear()
-
-    def save_mapping(func_hash, lang, data):
-        with contextlib.redirect_stdout(io.StringIO()):
-            return mapping_save(func_hash, lang, data.get('docstring', ''), data.get('name_mapping', {}),
-                                data.get('alias_mapping', {}), data.get('comment', ''), data.get('markdown', ''),
-                                pinned=data.get('pinned'))
-
-    def save_step(previous, func_hash, lang, mapping_hash, relation, comment, translates, metadata):
-        # What each follows is said once every step is there (migrate_follows)
-        return lineage_save(previous, func_hash, lang, mapping_hash, relation, comment, translates, metadata,
-                            follows={})
-
-    counts = migrate_plan(objects, mappings, restores, save_mapping, save_step)
-
-    # Everything is written: the old layout can go
-    pool_dir = storage_get_pool_directory()
-    for prefix_dir in sorted(pool_dir.iterdir()):
-        if prefix_dir.is_dir() and re.fullmatch(r'[0-9a-f]{2}', prefix_dir.name):
-            shutil.rmtree(prefix_dir)
-    restore_dir = storage_get_bb_directory() / 'restore'
-    if restore_dir.is_dir():
-        shutil.rmtree(restore_dir)
-    storage_cache_clear()
-
-    print(f"Migrated {counts['functions']} functions, {counts['mappings']} mappings and "
-          f"{counts['restores']} restore records into {counts['steps']} lineage steps.")
-    print("Removed the old layout (pool/XX/ and restore/); git keeps it if you tracked the directory.")
-    followed = migrate_follows()
-    if followed:
-        print(f"Recorded what {followed} lineage step(s) follow.")
 
 
 def code_add(file_path_with_lang: str, comment: str = "", picks: Dict[str, str] = None, ask: bool = True):
@@ -6495,9 +6079,6 @@ def schema_validate_directory() -> tuple:
     if not pool_dir.exists():
         errors.append(f"Pool directory does not exist: {pool_dir}")
         return False, errors, stats
-    if storage_pool_is_old_layout():
-        errors.append(OLD_LAYOUT_MESSAGE)
-        return False, errors, stats
 
     all_hashes = storage_list_functions()
     valid = set()
@@ -7216,7 +6797,7 @@ def edit_marker_step(marker: Optional[str], lang: str, name: str = None) -> Opti
     it. Anything else is kept as is, so the draft is refused as stale.
     """
     if marker is None or marker in lineage_index()['steps']:
-        return lineage_skip_follow(marker)
+        return marker
     if code_detect_schema(marker) is not None:
         return lineage_step_for(marker, lang, name) or marker
     return marker
@@ -7288,7 +6869,7 @@ def edit_prepare(text: str, lang: str, unreviewed: bool = False, picks: Dict[str
         # A name several functions answer to stays with the one the section's step follows
         section['source'], names = code_resolve_pool_names(
             section['source'], lang, where=where, picks=picks, ask=ask,
-            earlier=lineage_step_references(lineage_skip_follow(section.get('parent'))))
+            earlier=lineage_step_references(section.get('parent')))
         resolved.update(names)
     prepared_implementation = code_prepare_source(implementation['source'], lang, where="Implementation")
     for check in parsed['checks']:
@@ -7367,7 +6948,7 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
                                 prepared['alias_mapping'], comment, section['markdown'],
                                 pinned=prepared.get('pinned'))
     steps = lineage_index()['steps']
-    parent = lineage_skip_follow(section.get('parent')) if section.get('parent') in steps else None
+    parent = section.get('parent') if section.get('parent') in steps else None
     if parent and steps[parent]['lang'] != lang:
         parent = None  # loaded in another language: this language's lineage starts here
     if parent is None:
@@ -8939,7 +8520,6 @@ def command_skills():
         'scratchpad': command_scratchpad,
         'update': command_update,
         'compile': command_compile,
-        'migrate': command_migrate,
     }
 
     # Map worklog subcommand names to handler functions
@@ -9283,20 +8863,12 @@ def _build_parser():
     # Skills command
     skills_parser = subparsers.add_parser('skills', help='Generate skills reference for AI agents')
 
-    # Migrate command
-    subparsers.add_parser('migrate', help='Convert a pool from the old layout, record what functions follow (track it with git first)')
-
     return parser
 
 
 def main():
     parser = _build_parser()
     args = parser.parse_args()
-
-    # Commands that read or write the pool need its current layout
-    if args.command not in (None, 'init', 'whoami', 'skills', 'migrate', 'trust') and storage_pool_is_old_layout():
-        print(f"Error: {OLD_LAYOUT_MESSAGE}", file=sys.stderr)
-        sys.exit(1)
 
     if args.command == 'init':
         command_init()
@@ -9417,8 +8989,6 @@ def main():
         command_compile(args.identifier, debug_mode=args.debug, output_path=args.output)
     elif args.command == 'skills':
         command_skills()
-    elif args.command == 'migrate':
-        command_migrate()
     else:
         parser.print_help()
 
