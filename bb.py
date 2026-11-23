@@ -55,6 +55,10 @@ Writing functions for the pool:
     lists a `--pick name=HASH` per candidate (the first characters of
     the hash are enough; a fork says what it left and why). `bb add`,
     `bb edit` and `bb scratchpad` take --pick; bb scratchpad never asks.
+    To choose before saving, `bb scratchpad FILE --show` (or `bb edit
+    NAME FILE --show`) saves nothing and prints the draft with, above
+    each bb.resolve, the function it would be saved on and the --pick
+    for every other one; add --pick to read a choice back.
   - The choice is made once. The function's lineage step records which
     function each reference follows, so later saves ask nothing: the
     code keeps saying bb.resolve("name") and goes on along that
@@ -4836,13 +4840,15 @@ def code_imports_bb(tree: ast.Module) -> bool:
                for node in tree.body)
 
 
-def resolve_describe_candidates(name: str, lang: str, candidates: List[str], followed: str = None) -> List[str]:
+def resolve_describe_candidates(name: str, lang: str, candidates: List[str], followed: str = None,
+                                mark: str = "followed") -> List[str]:
     """
     One line per function answering to name, to choose between them.
 
     Each says where it comes from: a fork says what it left and why (its
     comment), another says its date, author, languages and comment. The
-    one followed is marked; the others give the --pick that follows them.
+    one followed is marked (with mark); the others give the --pick that
+    follows them.
 
     Each is one line whatever the pool holds (helper_one_line): they go
     into drafts as `# bb:` comments, where a comment or an author's name
@@ -4862,8 +4868,8 @@ def resolve_describe_candidates(name: str, lang: str, candidates: List[str], fol
             told = helper_describe_function(functions[func_hash], lang).split('  ', 1)[1]
         else:
             told = ""
-        mark = "followed" if func_hash == followed else f"--pick {name}={func_hash[:12]}"
-        lines.append(f"{func_hash[:12]}...  {mark}" + (f": {helper_one_line(told)}" if told else ""))
+        said = mark if func_hash == followed else f"--pick {name}={func_hash[:12]}"
+        lines.append(f"{func_hash[:12]}...  {said}" + (f": {helper_one_line(told)}" if told else ""))
     return lines
 
 
@@ -4930,6 +4936,109 @@ def helper_refuse_unused_picks(picks: Optional[Dict[str, str]], searched: Set[st
         sys.exit(1)
 
 
+def resolve_choose(name: str, alias: Optional[str], lang: str,
+                   earlier: Dict[str, Tuple[str, Optional[str]]], picks: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Which function bb.resolve(name), bound to alias, means in lang, as far as it can be told without asking.
+
+    The order is code_resolve_pool_names's: a pick, the function the
+    reference already follows (earlier, see lineage_step_references), the
+    only one answering.
+
+    Returns:
+        Dict with 'chosen' (the function, or None), 'how' ('pick',
+        'followed' or 'only' when chosen; else why not: 'bad pick' (the
+        pick names none or several of them), 'none' (nobody is called
+        so), 'several' (someone has to say)), 'heads' (every function
+        answering to name), 'candidates' (those to choose from: the ends
+        of the lineage followed when it has several) and 'followed'
+    """
+    steps = lineage_index()['steps']
+    heads, _, _ = helper_resolve_heads(name, lang)
+    choice = {'chosen': None, 'how': 'several', 'heads': heads, 'candidates': heads, 'followed': None}
+    if alias in earlier:
+        dep, step = earlier[alias]
+        ends = sorted({steps[s]['function'] for s in lineage_end_steps(dep, lang, alias, step)
+                       if steps[s]['name'] == name})
+        if len(ends) == 1:
+            choice['followed'] = ends[0]
+        elif ends:
+            choice['candidates'] = ends  # the lineage it follows has several ends
+    if name in picks:
+        matching = [h for h in heads if h.startswith(picks[name])]
+        choice.update({'chosen': matching[0], 'how': 'pick'} if len(matching) == 1
+                      else {'how': 'bad pick', 'matching': len(matching)})
+    elif choice['followed']:
+        choice.update(chosen=choice['followed'], how='followed')
+    elif len(choice['candidates']) == 1:
+        choice.update(chosen=choice['candidates'][0], how='only')
+    elif not choice['candidates']:
+        choice['how'] = 'none'
+    return choice
+
+
+def code_annotate_pool_names(source_code: str, lang: str, earlier: Dict[str, Tuple[str, Optional[str]]] = None,
+                             picks: Dict[str, str] = None, pending: Set[str] = ()) -> Tuple[str, Dict[str, str]]:
+    """
+    Say, above each `NAME = bb.resolve("NAME")` of a draft, what saving it would do (--show).
+
+    Nothing is resolved or saved: each binding gets `# bb:` comment lines
+    (those already above it are replaced; comments are not stored) naming
+    the function it would be saved on and why (--pick, the one its
+    lineage step follows, the only one called so), with the others
+    answering to the name and their --pick; or, when saving would be
+    refused, why, with a --pick per candidate. pending names are
+    functions the same file creates (a scratchpad saves them first).
+
+    Returns:
+        (the annotated source, {name searched: 'ok', 'pending', or why
+        saving is refused: 'several', 'none', 'bad pick'})
+    """
+    try:
+        tree = ast.parse(source_code)
+    except SyntaxError:
+        return source_code, {}
+    earlier, picks = earlier or {}, picks or {}
+    lines = source_code.splitlines()
+    searched: Dict[str, str] = {}
+    edits = []
+    for node in tree.body:
+        name = code_latest_name(node.value) if isinstance(node, ast.Assign) else None
+        if name is None or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        choice = resolve_choose(name, node.targets[0].id, lang, earlier, picks)
+        if choice['chosen']:
+            how = {'pick': '--pick', 'followed': 'the one it follows', 'only': 'the only one'}[choice['how']]
+            notes = [f"{name}: saved on {choice['chosen'][:12]}... ({how})"]
+            if len(choice['heads']) > 1:
+                notes += [f"  {line}" for line in resolve_describe_candidates(name, lang, choice['heads'],
+                                                                           choice['chosen'], mark="this one")]
+            searched[name] = 'ok'
+        elif choice['how'] == 'none' and name in pending:
+            notes = [f"{name}: a function of this file, saved first"]
+            searched[name] = 'pending'
+        elif choice['how'] == 'none':
+            notes = [f"no function called {name} in {lang} (nor in your other languages): saving is refused"]
+            searched[name] = 'none'
+        elif choice['how'] == 'bad pick':
+            notes = [f"--pick {name}={picks[name]} names {'several' if choice['matching'] else 'none'} of the "
+                     f"functions called {name}: saving is refused"]
+            notes += [f"  {line}" for line in resolve_describe_candidates(name, lang, choice['heads'],
+                                                                       choice['followed'])]
+            searched[name] = 'bad pick'
+        else:
+            notes = [f"{len(choice['candidates'])} functions answer to {name}: saving needs a --pick"]
+            notes += [f"  {line}" for line in resolve_describe_candidates(name, lang, choice['candidates'])]
+            searched[name] = 'several'
+        start = node.lineno - 1
+        while start > 0 and lines[start - 1].lstrip().startswith('# bb:'):
+            start -= 1
+        edits.append((start, node.lineno - 1, [f"# bb: {note}" for note in notes]))
+    for start, end, notes in sorted(edits, reverse=True):
+        lines[start:end] = notes
+    return '\n'.join(lines) + ('\n' if source_code.endswith('\n') else ''), searched
+
+
 def code_resolve_pool_names(source_code: str, lang: str, where: str = "source",
                             earlier: Dict[str, Tuple[str, Optional[str]]] = None,
                             picks: Dict[str, str] = None, ask: bool = True) -> Tuple[str, Dict[str, str]]:
@@ -4982,7 +5091,6 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source",
         return source_code, {}  # code_prepare_source reports it
     earlier = earlier or {}
     picks = picks if picks is not None else {}
-    steps = lineage_index()['steps']
     resolved: Dict[str, str] = {}
     problems: List[str] = []
     spans = []
@@ -5003,33 +5111,18 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source",
             problems.append(f"  line {node.lineno}: {written} is inside the function: bind it above the def "
                             f"(NAME = {written}) and use NAME")
             continue
-        heads, _, _ = helper_resolve_heads(name, lang)
-        candidates, chosen, followed = heads, None, None
-        if aliases.get(id(node)) in earlier:
-            dep, step = earlier[aliases[id(node)]]
-            ends = sorted({steps[s]['function'] for s in lineage_end_steps(dep, lang, aliases[id(node)], step)
-                           if steps[s]['name'] == name})
-            if len(ends) == 1:
-                followed = ends[0]
-            elif ends:
-                candidates = ends  # the lineage it follows has several ends
-        if name in picks:
-            matching = [h for h in heads if h.startswith(picks[name])]
-            if len(matching) != 1:
-                problems.append(f"  line {node.lineno}: --pick {name}={picks[name]} names "
-                                f"{'none' if not matching else 'several'} of the functions called '{name}':")
-                problems += [f"    {line}" for line in resolve_describe_candidates(name, lang, heads, followed)]
-                continue
-            chosen = matching[0]
-        elif followed:
-            chosen = followed
-        elif len(candidates) == 1:
-            chosen = candidates[0]
-        elif not candidates:
+        choice = resolve_choose(name, aliases.get(id(node)), lang, earlier, picks)
+        heads, candidates, chosen, followed = (choice[key] for key in ('heads', 'candidates', 'chosen', 'followed'))
+        if choice['how'] == 'bad pick':
+            problems.append(f"  line {node.lineno}: --pick {name}={picks[name]} names "
+                            f"{'several' if choice['matching'] else 'none'} of the functions called '{name}':")
+            problems += [f"    {line}" for line in resolve_describe_candidates(name, lang, heads, followed)]
+            continue
+        if choice['how'] == 'none':
             problems.append(f"  line {node.lineno}: no function called '{name}' in {lang} "
                             f"(nor in your other languages)")
             continue
-        else:
+        if chosen is None:
             described = resolve_describe_candidates(name, lang, candidates)
             answer = helper_ask_choice(f"{where}, line {node.lineno}: {len(candidates)} functions answer to "
                                        f"'{name}' (bb search {name} tells them apart):", described) if ask and helper_at_terminal() else None
@@ -7091,6 +7184,27 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
     return lineage_save(parent, func_hash, lang, mapping_hash, relation, comment, follows=follows), relation
 
 
+def helper_report_show(report: Dict[str, Any], what: str, stale: Dict[str, str] = None):
+    """
+    The summary of a --show, on standard error (the draft itself went to standard output).
+
+    report is command_edit's ({'searched', 'stale'}); stale ({section:
+    why}) is given by bb scratchpad, whose sections may each be stale.
+    """
+    print("Nothing saved (--show).", file=sys.stderr)
+    stale = stale if stale is not None else ({what: report['stale']} if report.get('stale') else {})
+    for where, why in stale.items():
+        print(f"Stale: {why}. Saving is refused: write a new draft and make the change there.", file=sys.stderr)
+    told = {'several': "several functions answer: add --pick {name}=HASH, from the # bb: lines above it",
+            'none': "no function is called so",
+            'bad pick': "its --pick names none, or several, of the functions called so"}
+    refused = {name: why for name, why in sorted(report['searched'].items()) if why in told}
+    for name, why in refused.items():
+        print(f"Not ready: {name}: {told[why].format(name=name)}.", file=sys.stderr)
+    if not refused and not stale:
+        print(f"Every name in {what} means one function: saving it as shown asks nothing.", file=sys.stderr)
+
+
 def helper_run_editor(path: str):
     """
     Open path in the user's editor ($EDITOR, then $VISUAL, then vi).
@@ -7115,7 +7229,8 @@ def helper_ask_yes(question: str) -> bool:
 
 def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
                  refactor: str = None, at: str = None, file: str = None, fork: bool = False,
-                 picks: Dict[str, str] = None, ask: bool = True, picks_shared: bool = False):
+                 picks: Dict[str, str] = None, ask: bool = True, picks_shared: bool = False,
+                 show: bool = False, pending: Set[str] = ()):
     """
     Edit a function and its checks as one markdown file, then save a new version.
 
@@ -7194,6 +7309,18 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     reference stays on the function it follows. A --pick for a name the
     function does not search for (a typo) is refused too: nothing is saved.
 
+    --show saves nothing and runs nothing: it prints what a save would
+    read, to prepare one. Without FILE (or before it exists) that is the
+    draft bb edit would write, as bb show with the checks. With FILE, it
+    is FILE with `# bb:` lines above each NAME = bb.resolve("NAME")
+    saying which function the reference would be saved on and why (a
+    --pick, the one it follows, the only one called so), with the others
+    answering to the name and the --pick for each; and, where saving
+    would be refused, why. --pick is taken into account, so a choice can
+    be read back before it is saved. The draft goes to standard output; a
+    summary (what still needs a --pick, a stale draft) goes to standard
+    error. The exit status is 0 whenever FILE could be read.
+
     Examples:
 
     ```
@@ -7203,7 +7330,12 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     bb edit slugify@eng slugify.md                # write slugify.md; run again to save it
     bb edit parse_amount@eng --refactor app@eng   # and update app to it
     bb edit is_weekend@kab --fork -m "Friday and Saturday, as in Algeria"
+    bb edit opening@eng opening.md --show         # what saving opening.md would do
     ```
+
+    Returns:
+        With show, {'searched': {name: 'ok', 'pending' or why saving is
+        refused}, 'stale': why the draft is stale or None}; else None
     """
     name, _, requested_lang = identifier.partition('@')
     is_hash = len(name) == 64 and all(c in '0123456789abcdef' for c in name.lower())
@@ -7254,6 +7386,43 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         original_checks.append(edit_load_section(check_hash, lang))
 
     text = markdown_render_edit(original['title'], original, original_checks)
+
+    def stale(edited):
+        """Why the draft edited cannot be saved over the current version (it was drafted from another step), or None."""
+        drafted_from = edit_marker_step(markdown_parse_edit(edited)['implementation']['parent'], lang,
+                                        original['title'])
+        if drafted_from == original['parent']:
+            return None
+        what = (f"the current version of {name} is {edit_describe_step(original['parent'])}" if hash_value
+                else f"{name} has no version")
+        since = (f"{file} was drafted from {edit_describe_step(drafted_from)}" if drafted_from
+                 else f"{file} has no bb:parent marker")
+        return f"{since}, but {what}"
+
+    if show:
+        if file is None or not os.path.exists(file):
+            print(text, end='')
+            report = {'searched': {}, 'stale': None}
+        else:
+            try:
+                with open(file, 'r', encoding='utf-8') as f:
+                    edited = f.read()
+                parsed = markdown_parse_edit(edited)
+                report = {'searched': {}, 'stale': stale(edited)}
+            except ValueError as e:
+                print(f"Error: {file}: {e}", file=sys.stderr)
+                sys.exit(1)
+            for shown in [parsed['implementation']] + parsed['checks']:
+                shown['source'], searched = code_annotate_pool_names(
+                    shown['source'], lang, lineage_step_references(shown.get('parent')), picks, pending)
+                report['searched'].update(searched)
+            heading = next((line[2:].strip() for line in edited.split('\n') if line.startswith('# ')), original['title'])
+            print(markdown_render_edit(heading, parsed['implementation'], parsed['checks']), end='')
+        if not picks_shared:
+            helper_refuse_unused_picks(picks, set(report['searched']), file or identifier)
+            helper_report_show(report, file or identifier)
+        return report
+
     if file is not None:
         if not os.path.exists(file):
             # First call: write the edit file, save nothing
@@ -7281,14 +7450,9 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
             with open(path, 'r', encoding='utf-8') as f:
                 edited = f.read()
             # A stale file is refused before anything runs
-            drafted_from = edit_marker_step(markdown_parse_edit(edited)['implementation']['parent'], lang,
-                                            original['title'])
-            if drafted_from != original['parent']:
-                what = (f"the current version of {name} is {edit_describe_step(original['parent'])}" if hash_value
-                        else f"{name} has no version")
-                since = (f"{file} was drafted from {edit_describe_step(drafted_from)}" if drafted_from
-                         else f"{file} has no bb:parent marker")
-                print(f"Error: {since}, but {what}. Nothing saved: write a new draft with "
+            why = stale(edited)
+            if why:
+                print(f"Error: {why}. Nothing saved: write a new draft with "
                       f"bb edit {identifier} NEW_FILE and make your change there.", file=sys.stderr)
                 sys.exit(1)
             plan = edit_prepare(edited, lang, unreviewed, picks, ask)
@@ -7554,7 +7718,8 @@ def scratchpad_compact_report(report: str) -> str:
 
 
 def command_scratchpad(identifiers: List[str], file: str, comment: str = None, tree: str = None,
-                       unreviewed: bool = False, refactor: str = None, picks: Dict[str, str] = None):
+                       unreviewed: bool = False, refactor: str = None, picks: Dict[str, str] = None,
+                       show: bool = False):
     """
     Edit several functions in one markdown file, then save every one that changed.
 
@@ -7575,7 +7740,21 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
     what was saved and what was not. bb then rewrites FILE: saved sections
     in stored form, the others as they were. One language per scratchpad.
 
+    --show saves nothing, writes nothing and runs nothing: it prints the
+    scratchpad as a save would read it, to prepare one. Before FILE
+    exists, that is what bb would write into it. Once it exists, it is
+    FILE with `# bb:` lines above each NAME = bb.resolve("NAME") saying
+    which function the reference would be saved on and why, the others
+    answering to the name with the --pick for each, and where saving
+    would be refused, why (see bb edit --show). --pick is taken into
+    account: read the candidates, choose, show again with the picks,
+    then save with them. The scratchpad goes to standard output, a
+    summary (names that still need a --pick, stale sections) to standard
+    error; the exit status is 0 whenever FILE could be read.
+
     ```
+    bb scratchpad pages.md --show                         # what saving pages.md would do
+    bb scratchpad pages.md --show --pick money=3c26fcb1   # and with that choice
     bb scratchpad login_page@eng register_page@eng pages.md   # writes pages.md
     bb scratchpad login_page@eng register_page@eng pages.md -m "sign-up pages"   # saves it
     bb scratchpad --tree checkout_page@eng checkout.md   # a page and all it uses
@@ -7588,6 +7767,9 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
     if any('@' not in n for n in names) or len(langs) > 1:
         print("Error: name every function with one language, e.g. bb scratchpad a@eng b@eng FILE "
               "(one language per scratchpad)", file=sys.stderr)
+        sys.exit(1)
+    if show and (comment is not None or refactor):
+        print("Error: --show saves nothing: it goes without --comment and --refactor", file=sys.stderr)
         sys.exit(1)
     if not names and not os.path.exists(file):
         print("Error: name the functions to write into the scratchpad", file=sys.stderr)
@@ -7617,6 +7799,10 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
                 with contextlib.redirect_stdout(io.StringIO()):
                     command_edit(identifier, file=str(draft))
                 parts.append(draft.read_text(encoding='utf-8').rstrip('\n') + '\n')
+            if show:
+                print('\n'.join(parts), end='')
+                print(f"Nothing saved, nothing written (--show): without it, this goes into {file}.", file=sys.stderr)
+                return
             with open(file, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(parts))
             print(f"Wrote {file} with {len(parts)} function(s): {', '.join(n.split('@')[0] for n in names)}. "
@@ -7685,6 +7871,26 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
             placed.add(ready[0])
 
         helper_refuse_unused_picks(picks, {ref for _, text in sections for ref in SCRATCHPAD_REF.findall(text)}, file)
+        if show:
+            # Section by section, as bb edit --show; a name another section creates will be there when it is needed
+            in_pool = {n for n in titles if helper_resolve_heads(n, lang)[0]}
+            parts, report, stale = [], {'searched': {}}, {}
+            for name, text in sections:
+                draft = work / f"{name}.md"
+                draft.write_text(text, encoding='utf-8')
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    shown = command_edit(f"{name}@{lang}", file=str(draft), picks=picks, picks_shared=True,
+                                         show=True, pending=set(titles) - in_pool)
+                parts.append(output.getvalue().rstrip('\n') + '\n')
+                for searched, why in shown['searched'].items():
+                    if report['searched'].get(searched, 'ok') in ('ok', 'pending'):
+                        report['searched'][searched] = why
+                if shown['stale']:
+                    stale[name] = shown['stale'].replace(str(draft), f"{file} (section {name})")
+            print('\n'.join(parts), end='')
+            helper_report_show(report, file, stale)
+            return
         if comment is None:
             try:
                 comment = input("Comment (press Enter to skip): ").strip()
@@ -8940,6 +9146,8 @@ def _build_parser():
                                    help='After saving, bring ROOT (e.g. app@eng) and everything it uses up to date')
     scratchpad_parser.add_argument('--pick', metavar='NAME=HASH', action='append', default=[],
                                    help='When several functions answer to NAME, the one meant (hash or its first characters); repeatable')
+    scratchpad_parser.add_argument('--show', action='store_true',
+                                   help='Save nothing: print the scratchpad as a save would read it, each name with the function it means and the --pick for the others')
     scratchpad_parser.add_argument('--dangerously-unreviewed', dest='unreviewed', action='store_true',
                                    help='Run checks even on unreviewed functions they import')
 
@@ -8956,6 +9164,8 @@ def _build_parser():
                              help='Never ask which function a name means, even at a terminal: refuse and list the --pick for each')
     edit_parser.add_argument('--pick', metavar='NAME=HASH', action='append', default=[],
                              help='When several functions answer to NAME, the one meant (hash or its first characters); repeatable')
+    edit_parser.add_argument('--show', action='store_true',
+                             help='Save nothing: print the draft as a save would read it, each name with the function it means and the --pick for the others')
     edit_parser.add_argument('--at', metavar='AT', default=None,
                              help='With --refactor: only along the path from AT to ROOT')
     edit_parser.add_argument('--dangerously-unreviewed', dest='unreviewed', action='store_true',
@@ -9113,11 +9323,11 @@ def main():
         command_run(args.identifier, func_args=args.func_args)
     elif args.command == 'scratchpad':
         command_scratchpad(args.names, args.file, comment=args.comment, tree=args.tree, unreviewed=args.unreviewed,
-                           refactor=args.refactor, picks=helper_parse_picks(args.pick))
+                           refactor=args.refactor, picks=helper_parse_picks(args.pick), show=args.show)
     elif args.command == 'edit':
         command_edit(args.identifier, comment=args.comment, unreviewed=args.unreviewed, fork=args.fork,
                      refactor=args.refactor, at=args.at, file=args.file, picks=helper_parse_picks(args.pick),
-                     ask=not args.no_ask)
+                     ask=not args.no_ask, show=args.show)
     elif args.command == 'review':
         command_review(args.identifier, comment=args.comment)
     elif args.command == 'reviews':

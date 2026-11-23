@@ -529,3 +529,61 @@ def test_a_pick_for_a_name_nothing_searches_for_is_refused(tmp_path):
     used = pool.bb('scratchpad', 'is_weekend@eng', 'opening@eng', str(pad), '-m', 'words', '--pick',
                    f'is_weekend={weekend[:12]}')
     assert used.returncode == 0 and 'saved opening' in used.stdout, used.stdout + used.stderr
+
+
+def test_show_says_what_saving_a_draft_would_do_and_saves_nothing(tmp_path):
+    pool = Pool(tmp_path)
+    one = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    opening = hash_of(pool.add('opening', BY_NAME.format(name='opening')))
+    two = hash_of(fork(pool, tmp_path, 'is_weekend@eng', WEEKEND.format(days='(4, 5)'), 'Friday and Saturday'))
+    pad = tmp_path / 'pad.md'
+    # Before the file exists: what would be written, and nothing is
+    first = pool.bb('scratchpad', 'opening@eng', str(pad), '--show')
+    assert first.returncode == 0 and first.stdout.startswith('# opening') and not pad.exists()
+    assert pool.bb('scratchpad', 'opening@eng', str(pad)).returncode == 0
+    assert pad.read_text() == first.stdout
+    # A reference the function has keeps to what it follows; a new one to a shared name needs a pick;
+    # a name another section creates is found there; a name nobody has is refused
+    pad.write_text(pad.read_text() + '\n# closing\n\n## Implementation\n\n```python def\nimport bb\n'
+                   'is_weekend = bb.resolve("is_weekend")\nlate = bb.resolve("late")\ngone = bb.resolve("gone")\n\n\n'
+                   'def closing(day):\n    """Closed on days of rest."""\n    return is_weekend(day) or late(day) or gone(day)\n```\n'
+                   '\n# late\n\n## Implementation\n\n```python def\ndef late(day):\n    """Too late."""\n    return day > 6\n```\n')
+    shown = pool.bb('scratchpad', 'opening@eng', str(pad), '--show')
+    assert shown.returncode == 0, shown.stderr
+    kept, new = shown.stdout.split('# closing')
+    assert f'# bb: is_weekend: saved on {one[:12]}... (the one it follows)' in kept
+    assert f'# bb:   {two[:12]}...  --pick is_weekend={two[:12]}: a fork of {one[:12]}... (Friday and Saturday)' in kept
+    assert '# bb: 2 functions answer to is_weekend: saving needs a --pick' in new
+    assert all(f'--pick is_weekend={h[:12]}' in new for h in (one, two))
+    assert '# bb: late: a function of this file, saved first' in new
+    assert '# bb: no function called gone in eng' in new
+    assert 'Nothing saved (--show)' in shown.stderr and 'Not ready: is_weekend' in shown.stderr
+    assert 'Not ready: gone' in shown.stderr and 'late' not in shown.stderr
+    # What it prints is a scratchpad: shown again, its own notes are replaced, not piled up
+    pad.write_text(shown.stdout.replace('gone = bb.resolve("gone")\n', '').replace(' or gone(day)', ''))
+    picked = pool.bb('scratchpad', 'opening@eng', str(pad), '--show', '--pick', f'is_weekend={two[:12]}')
+    assert picked.returncode == 0 and picked.stdout.count('saving needs a --pick') == 0
+    assert picked.stdout.count(f'# bb: is_weekend: saved on {two[:12]}... (--pick)') == 2
+    assert f'{two[:12]}...  this one' in picked.stdout and 'saving it as shown asks nothing' in picked.stderr
+    # Nothing was saved by any of it; a typo in a pick is refused as at save
+    assert pool.bb('latest', 'closing@eng').returncode == 1 and pool.bb('latest', 'late@eng').returncode == 1
+    assert pool.bb('latest', 'opening@eng', '--hash').stdout.split() == [opening]
+    assert pool.bb('scratchpad', 'opening@eng', str(pad), '--show', '--pick', f'weekend={two[:12]}').returncode == 1
+    # And the save it prepared goes through: closing on the fork, opening where it was
+    saved = pool.bb('scratchpad', 'opening@eng', str(pad), '-m', 'closing', '--pick', f'is_weekend={two[:12]}')
+    assert saved.returncode == 0, saved.stdout + saved.stderr
+    assert two in pool.bb('show', 'closing@eng').stdout or f'follows {two[:12]}' in pool.bb('show', 'closing@eng').stdout
+
+
+def test_show_on_one_draft_tells_a_stale_one(tmp_path):
+    pool = Pool(tmp_path)
+    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    draft = tmp_path / 'weekend.md'
+    whole = pool.bb('edit', 'is_weekend@eng', '--show')
+    assert whole.returncode == 0 and 'def is_weekend(day):' in whole.stdout and '## Checks' in whole.stdout
+    pool.bb('edit', 'is_weekend@eng', str(draft))
+    assert draft.read_text() == whole.stdout
+    edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)'))
+    shown = pool.bb('edit', 'is_weekend@eng', str(draft), '--show')
+    assert shown.returncode == 0 and 'Stale:' in shown.stderr and 'was drafted from' in shown.stderr
+    assert pool.bb('latest', 'is_weekend@eng', '--hash').stdout.split() != [old]
