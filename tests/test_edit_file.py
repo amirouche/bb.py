@@ -214,3 +214,17 @@ def test_a_fork_that_changes_a_check_leaves_the_origin_its_check(tmp_path):
     assert later.returncode == 0, later.stderr
     assert len(pool.bb('latest', 'saturday@eng', '--hash').stdout.split()) == 2
     assert 'No matches found' in pool.bb('search', '--diverged').stdout
+
+
+def test_a_fork_edited_back_to_its_origins_code_restores_nothing(tmp_path):
+    pool = Pool(tmp_path)
+    code = 'def is_weekend(day):\n    """A day of rest (0 is Monday)."""\n    return day in {days}\n'
+    origin = hash_of(pool.edit('is_weekend', code.format(days='(5, 6)')))
+    other = hash_of(fork(pool, tmp_path, 'is_weekend@eng', code.format(days='(4, 5)'), 'Friday and Saturday'))
+    draft = tmp_path / 'back.md'
+    pool.bb('edit', f'{other}@eng', str(draft))
+    set_code(draft, code.format(days='(5, 6)'))
+    back = pool.bb('edit', f'{other}@eng', str(draft), '-m', 'the same days after all')
+    # Its own lineage never held that code: an edit, not a restore
+    assert back.returncode == 0 and 'Restored' not in back.stdout and f'Parent: {other}' in back.stdout
+    assert hash_of(back) == origin

@@ -3279,7 +3279,7 @@ def lineage_continue(old_hash: str, new_hash: str, comment: str, hash_map: Dict[
         data = mapping_load_json(old_hash, lang, mapping_hash)
         if not data:
             continue
-        was = new_hash in {steps[s]['function'] for s in lineage_ancestors(step_id)}
+        was = new_hash in {steps[s]['function'] for s in lineage_ancestors(step_id, forks=False)}
         moves.append((step_id, lang, data, was))
     for step_id, lang, data, was in moves:
         with contextlib.redirect_stdout(io.StringIO()):
@@ -7147,8 +7147,8 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
     existing function is never rewritten. When something changed, the
     section's mapping is saved and a step records it after the section's
     bb:parent step: 'rename' when the name changed, 'document' when only
-    the mapping did, 'restore' when the code is an older version's, 'edit'
-    otherwise; 'add' without a parent step (a new name). With fork, other
+    the mapping did, 'restore' when the code is an older version's (of its
+    own lineage: what a fork left is not its past), 'edit' otherwise; 'add' without a parent step (a new name). With fork, other
     code is a 'fork': it leaves the parent step, which stays current, and
     starts its own lineage. Code another name already has is fine: two
     names may share one code, each with its own lineage.
@@ -7184,7 +7184,7 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
         relation = 'rename'
     elif func_hash == previous['function']:
         relation = 'document'
-    elif func_hash in {steps[s]['function'] for s in lineage_ancestors(parent)}:
+    elif func_hash in {steps[s]['function'] for s in lineage_ancestors(parent, forks=False)}:
         relation = 'restore'
     else:
         relation = 'edit'
