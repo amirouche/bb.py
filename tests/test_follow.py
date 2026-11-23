@@ -302,3 +302,26 @@ def test_a_pin_under_one_of_two_names_says_which(tmp_path):
     assert hash_of(pool.add('closing', OPENING.format(ref=f'bb.ref("{old}")', name='closing'))) == both
     assert f'bb show {both}  # pinned as closing@eng' in pool.bb('caller', old).stdout
     assert f'Pinned: is_weekend {old}, still current, as closing@eng' in pool.bb('search', '--pinned').stdout
+
+
+def test_a_pick_moves_a_caller_to_a_fork_holding_the_code_it_already_uses(tmp_path):
+    pool = Pool(tmp_path)
+    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    opening = hash_of(pool.add('opening', BY_NAME.format(name='opening')))
+    new = hash_of(edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)')))
+    fork(pool, tmp_path, f'{new}@eng', WEEKEND.format(days='(5, 6)'), 'as it was')
+    assert outdated(pool) == ['opening']
+    # The fork holds the code opening uses: picking it changes no code, only the lineage followed
+    draft = tmp_path / 'move.md'
+    pool.bb('edit', 'opening@eng', str(draft))
+    moved = pool.bb('edit', 'opening@eng', str(draft), '-m', 'as it was', '--pick', f'is_weekend={old[:12]}')
+    assert moved.returncode == 0, moved.stderr
+    assert 'No changes.' not in moved.stdout and f'Follows: is_weekend {old}' in moved.stdout
+    assert pool.bb('latest', 'opening@eng', '--hash').stdout.split() == [opening]
+    assert outdated(pool) == []
+    assert 'Follow: opening@eng' in pool.bb('log').stdout
+    assert 'is valid' in pool.bb('validate').stdout
+    # And stays there: the next save keeps to the fork, and picking it again changes nothing
+    assert 'No changes.' in pool.bb('edit', 'opening@eng', str(draft), '--pick', f'is_weekend={old[:12]}').stdout
+    again = reword(pool, tmp_path)
+    assert again.returncode == 0 and pool.run(hash_of(again), 5) == 'False' and outdated(pool) == []

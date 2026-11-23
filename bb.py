@@ -2306,7 +2306,8 @@ def command_log(identifier: str = None):
 
     Functions show their names, author and languages. Lineage steps show
     what happened to a name in a language (add, edit, document, rename,
-    refactor, restore, translate, fork), from which step, by whom, and their comment. Worklogs show their author, languages, attached translations
+    refactor, restore, translate, fork; follow is a --pick moving a
+    reference to another lineage of the same code), from which step, by whom, and their comment. Worklogs show their author, languages, attached translations
     and message, in your preferred language when translated.
     """
     entries = []
@@ -2390,7 +2391,10 @@ def helper_previous_version(func_hash: str, lang: str = None, name: str = None) 
     steps = lineage_index()['steps']
     for step_id in lineage_current_steps(lang, name, func_hash):
         previous = steps.get(steps[step_id].get('from') or '')
-        if previous and previous['function'] != func_hash:
+        while previous and previous['function'] == func_hash:
+            # Steps that left the code as it was: documentation, a rename, a follow
+            previous = steps.get(previous.get('from') or '')
+        if previous:
             return previous['function']
     return None
 
@@ -2747,7 +2751,9 @@ def lineage_prune() -> int:
 # in two lineages (a fork that went back to an older version's code), and
 # a caller follows one of them. What a caller follows is then the ends
 # reached from that step (lineage_ends). Steps recorded before 'follows'
-# existed have none and are followed by hash, as they were.
+# existed have none and are followed by hash, as they were. A 'follow' step
+# changes only that: same function, same mapping, and a reference moved
+# (by --pick) to another lineage holding the code it already used.
 #
 # A fork does not come after the step it left: that step stays current,
 # nothing using it is out of date, and the fork starts a lineage of its
@@ -2760,7 +2766,7 @@ def lineage_prune() -> int:
 # share one code, and a French name stays on its version until someone
 # translates the English edit.
 
-LINEAGE_RELATIONS = ('add', 'edit', 'document', 'rename', 'refactor', 'restore', 'translate', 'fork')
+LINEAGE_RELATIONS = ('add', 'edit', 'document', 'rename', 'refactor', 'restore', 'translate', 'fork', 'follow')
 
 
 def storage_scan_lineage() -> Dict[str, Dict[str, Any]]:
@@ -3147,6 +3153,25 @@ def lineage_followed_step(dep: str, lang: str, alias: Optional[str], earlier: Di
     if current:
         return min(current, key=lambda s: (steps[lineage_root_step(s)]['relation'] == 'fork', s))
     return None
+
+
+def lineage_picked_step(dep: str, lang: str, alias: Optional[str], earlier: Dict[str, str]) -> Optional[str]:
+    """
+    The step a --pick of dep moves a reference to, None when it stays where it stands.
+
+    A pick names a function by hash, and one code may sit in two lineages:
+    a reference standing on a step of dep that something came after (and
+    whose lineage does not come back to dep) asked for dep as it is
+    current now, so it moves to a current step on dep under the name it is
+    used by. earlier is what the step before followed.
+    """
+    steps = lineage_index()['steps']
+    usual = lineage_followed_step(dep, lang, alias, earlier)
+    current = (lineage_current_steps(lang, lineage_name_for(dep, lang, alias), dep) if lineage_steps_on(dep, lang)
+               else lineage_current_steps(function=dep))
+    if usual is None or not current or any(s in current for s in lineage_reach([usual])):
+        return None
+    return min(current, key=lambda s: (steps[lineage_root_step(s)]['relation'] == 'fork', s))
 
 
 def lineage_follows_build(func_hash: str, lang: str, mapping_hash: str, before: Optional[str]) -> Dict[str, str]:
@@ -6921,7 +6946,7 @@ def edit_prepare(text: str, lang: str, unreviewed: bool = False, picks: Dict[str
 
 def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: str,
                       comment: str, checks: List[str] = None, unchanged: bool = False,
-                      fork: bool = False) -> Tuple[Optional[str], Optional[str]]:
+                      fork: bool = False, picked: Dict[str, str] = None) -> Tuple[Optional[str], Optional[str]]:
     """
     Save one edit-file section to the pool, with its lineage step.
 
@@ -6934,20 +6959,31 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
     own lineage: what a fork left is not its past), 'edit' otherwise; 'add' without a parent step (a new name). With fork, other
     code is a 'fork': it leaves the parent step, which stays current, and
     starts its own lineage. Code another name already has is fine: two
-    names may share one code, each with its own lineage.
+    names may share one code, each with its own lineage. picked ({pool
+    function used: step}, see lineage_picked_step) says where a --pick
+    moved a reference; when nothing else changed the step is a 'follow'.
 
     Returns:
         (the step now standing for the section, the relation recorded or None)
     """
     func_hash = prepared['hash']
     object_save(func_hash, prepared['normalized_code'], code_create_metadata(), checks=checks)
+    steps = lineage_index()['steps']
     if unchanged:
-        return section.get('parent'), None
+        # Nothing the section holds changed; a pick may still have moved what it follows
+        previous = steps.get(section.get('parent') or '')
+        if not picked or previous is None or previous['lang'] != lang:
+            return section.get('parent'), None
+        follows = lineage_follows_build(func_hash, lang, previous['mapping'], section['parent'])
+        follows.update({dep: step_id for dep, step_id in picked.items() if dep in follows})
+        if follows == (previous.get('follows') or {}):
+            return section['parent'], None
+        return lineage_save(section['parent'], func_hash, lang, previous['mapping'], 'follow', comment,
+                            follows=follows), 'follow'
 
     mapping_hash = mapping_save(func_hash, lang, prepared['docstring'], prepared['name_mapping'],
                                 prepared['alias_mapping'], comment, section['markdown'],
                                 pinned=prepared.get('pinned'))
-    steps = lineage_index()['steps']
     parent = section.get('parent') if section.get('parent') in steps else None
     if parent and steps[parent]['lang'] != lang:
         parent = None  # loaded in another language: this language's lineage starts here
@@ -6959,7 +6995,12 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
         step_id = lineage_save_new(func_hash, lang, mapping_hash, comment)
         return step_id, lineage_index()['steps'][step_id]['relation']
     previous = steps[parent]
-    if (previous['function'], previous['mapping']) == (func_hash, mapping_hash):
+    follows = None
+    if picked:
+        follows = lineage_follows_build(func_hash, lang, mapping_hash, parent)
+        follows.update({dep: step_id for dep, step_id in picked.items() if dep in follows})
+    if (previous['function'], previous['mapping']) == (func_hash, mapping_hash) and (
+            follows is None or follows == (previous.get('follows') or {})):
         return parent, None
     if fork and func_hash != previous['function']:
         relation = 'fork'
@@ -6971,7 +7012,7 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
         relation = 'restore'
     else:
         relation = 'edit'
-    return lineage_save(parent, func_hash, lang, mapping_hash, relation, comment), relation
+    return lineage_save(parent, func_hash, lang, mapping_hash, relation, comment, follows=follows), relation
 
 
 def helper_run_editor(path: str):
@@ -7213,8 +7254,21 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         return edit_fingerprint(prep['hash'], prep['docstring'], prep['name_mapping'],
                                 prep['alias_mapping'], sec['markdown'], prep.get('pinned')) in original_prints
 
+    def picked_steps(sec, prep):
+        """Where --pick moves the references of a section: {pool function used: the step followed from now on}."""
+        earlier = lineage_step_follows(sec.get('parent'))
+        moved = {}
+        for dep, alias in prep['alias_mapping'].items():
+            if alias in (picks or {}) and dep.startswith(picks[alias]) and dep not in (prep.get('pinned') or []):
+                step_id = lineage_picked_step(dep, lang, alias, earlier)
+                if step_id:
+                    moved[dep] = step_id
+        return moved
+
+    moves = {id(s): picked_steps(s, p) for s, p in [(section, prepared)] + plan['checks']}
+
     if (prepared['hash'] == hash_value and unchanged(section, prepared)
-            and all(unchanged(s, p) for s, p in plan['checks'])):
+            and all(unchanged(s, p) for s, p in plan['checks']) and not any(moves.values())):
         discard()
         print("No changes.")
         return
@@ -7247,12 +7301,14 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         new_checks = []
         for check, prep in plan['checks']:
             # A fork leaves the origin's checks as they are: a check it changes is a fork too
-            _, check_relation = edit_save_section(check, prep, lang, comment, unchanged=unchanged(check, prep),
-                                                  fork=fork)
+            _, check_relation = edit_save_section(check, prep, lang, comment,
+                                                  unchanged=unchanged(check, prep),
+                                                  fork=fork, picked=moves[id(check)])
             if check_relation:
                 new_checks.append((prep['name_mapping']['_bb_v_0'], prep['hash']))
         saved_step, relation = edit_save_section(section, prepared, lang, comment, checks=check_hashes,
-                                                 unchanged=unchanged(section, prepared), fork=fork)
+                                                 unchanged=unchanged(section, prepared),
+                                                 fork=fork, picked=moves[id(section)])
 
     discard()
     review_approve_own([prepared['hash']] + check_hashes)
@@ -7288,6 +7344,9 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         print(f"Forked from: {previous_step['function']} (still current)")
     elif hash_value and prepared['hash'] != hash_value:
         print(f"Parent: {previous_step['function'] if previous_step else hash_value}")
+    elif relation == 'follow':
+        for dep in sorted(moves[id(section)]):
+            print(f"Follows: {prepared['alias_mapping'][dep]} {dep} (the same code, in another lineage)")
     elif hash_value:
         print("Documentation saved: the code did not change, so the hash stays the same.")
     print(f"Hash: {prepared['hash']}")
