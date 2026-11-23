@@ -129,3 +129,13 @@ def test_a_hash_inside_the_body_gets_a_draft_that_saves(tmp_path):
     assert moved.returncode == 0, moved.stderr
     shown = pool.bb('show', 'opening@eng').stdout
     assert "is_weekend = bb.resolve('is_weekend')" in shown and '# bb:' not in shown
+
+
+def test_a_follow_that_names_no_hash_says_what_it_takes(tmp_path):
+    pool = Pool(tmp_path)
+    origin = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    for written in ('is_weekend', origin[:12], origin.upper()):
+        refused = pool.add('opening', OPENING.format(ref=f'bb.follow("{written}")', name='opening'))
+        assert refused.returncode == 1
+        assert "bb.follow takes one pool function's hash" in refused.stderr
+        assert 'outside its function' not in refused.stderr

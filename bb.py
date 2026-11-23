@@ -4954,6 +4954,11 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
         if isinstance(node, ast.ImportFrom) and node.module == 'bb.pool':
             problems.append(f"  line {node.lineno}: {BB_POOL_IMPORT_HINT}")
         followed = code_follow_hash(node)
+        if (followed is None and isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'follow' and isinstance(node.func.value, ast.Name) and node.func.value.id == 'bb'):
+            problems.append(f"  line {node.lineno}: {ast.unparse(node)}: bb.follow takes one pool function's hash, "
+                            f"whole, as a string (64 lowercase hex characters; by name: bb.resolve(\"NAME\"))")
+            continue
         if id(node) in inside and (followed or code_latest_name(node)):
             written = ast.unparse(node)
             problems.append(f"  line {node.lineno}: {written} is inside the function: bind it above the def "
