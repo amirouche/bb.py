@@ -261,6 +261,7 @@ command in $BB_OTS).
 """
 import ast
 import argparse
+import base64
 import builtins
 import contextlib
 import copy
@@ -1228,12 +1229,21 @@ def object_save(hash_value: str, normalized_code: str, metadata: Dict[str, any],
     if checks:
         data['checks'] = sorted(set(checks))
 
-    with open(object_json, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    # Signed when it says you are its author: an object recorded for someone else is not
+    yours = storage_read_config()['user'].get('email') or ''
+    storage_write_authored(object_json, data, OBJECT_SIGNATURE_NAMESPACE,
+                           sign=bool(yours) and (metadata or {}).get('email') == yours)
     storage_cache_clear()
 
     print(f"Hash: {hash_value}")
     return True
+
+
+def object_signature_status(hash_value: str) -> Tuple[str, str]:
+    """Whether a function's object.json is signed, and by whom (see signature_status)."""
+    data = object_load(hash_value)
+    return signature_status(storage_object_path(hash_value), OBJECT_SIGNATURE_NAMESPACE,
+                            data.get('public_key'), (data.get('metadata') or {}).get('email') or '')
 
 
 def object_normalization(hash_value: str) -> int:
@@ -1278,11 +1288,31 @@ def mapping_save(func_hash: str, lang: str, docstring: str,
         mapping_json.parent.mkdir(parents=True, exist_ok=True)
         with open(mapping_json, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        identity = helper_signing_identity()
+        if identity:
+            signature_sign(mapping_json, MAPPING_SIGNATURE_NAMESPACE, identity[0])
         storage_cache_clear()
 
     print(f"Mapping hash: {mapping_hash}")
 
     return mapping_hash
+
+
+def mapping_signature_status(func_hash: str, lang: str, mapping_hash: str) -> Tuple[str, str]:
+    """
+    Whether a mapping is signed, and by which key (see signature_status).
+
+    A mapping names no author; one whose content is not what its hash
+    names is invalid, signed or not.
+    """
+    path = storage_mapping_path(func_hash, lang, mapping_hash)
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return 'invalid', ''
+    if hash_compute(json.dumps(data, sort_keys=True, ensure_ascii=False)) != mapping_hash:
+        return 'invalid', ''
+    return signature_status(path, MAPPING_SIGNATURE_NAMESPACE, named=False)
 
 
 def code_save(hash_value: str, lang: str, normalized_code: str, docstring: str,
@@ -1750,9 +1780,13 @@ def helper_key_id(public_key: str) -> str:
     return hash_compute(' '.join(public_key.split()[:2]))
 
 
-def helper_signing_identity() -> Optional[Tuple[str, str, str]]:
+def helper_signing_identity(warn: bool = True) -> Optional[Tuple[str, str, str]]:
     """
     Your signing identity from config: (private key path, public key, email).
+
+    Args:
+        warn: Say so (once) when the key has no .pub file; False when only
+            asking whether a signature is yours
 
     Returns:
         None when no signing key is configured or its .pub file is missing
@@ -1763,10 +1797,197 @@ def helper_signing_identity() -> Optional[Tuple[str, str, str]]:
         return None
     pub_path = Path(key_path + '.pub')
     if not pub_path.exists():
-        print(f"Warning: signing key {key_path} has no {pub_path.name}; review not signed.", file=sys.stderr)
+        if warn:
+            signature_warn(f"signing key {key_path} has no {pub_path.name}; nothing is signed.")
         return None
     public_key = ' '.join(pub_path.read_text(encoding='utf-8').split()[:2])
     return key_path, public_key, user.get('email') or ''
+
+
+# What you save is signed when you have a signing key (bb whoami signing-key):
+# FILE.sig next to FILE, made by ssh-keygen in a namespace of its own for each
+# kind of record, so that a signature never passes for one of another kind.
+#
+# A record with an author names the key it is signed with ('public_key'): a
+# lineage step (the key is part of its id), a function's object.json, a
+# worklog.json, a review. Without a valid signature by that key, of that
+# author's email, it is invalid, not merely unsigned. A mapping and a worklog
+# message have no author: they are content-addressed, the same bytes whoever
+# writes them. Their signature says which key wrote the file first, the key
+# being read from the signature itself; what vouches for them by name is the
+# signed step, or worklog, that names their hash.
+
+OBJECT_SIGNATURE_NAMESPACE = 'bb-object'
+MAPPING_SIGNATURE_NAMESPACE = 'bb-mapping'
+WORKLOG_SIGNATURE_NAMESPACE = 'bb-worklog'
+MESSAGE_SIGNATURE_NAMESPACE = 'bb-worklog-message'
+
+_SIGNATURE_WARNED: Set[str] = set()
+
+
+def signature_warn(message: str):
+    """Print a warning about signing to stderr, once per command."""
+    if message not in _SIGNATURE_WARNED:
+        _SIGNATURE_WARNED.add(message)
+        print(f"Warning: {message}", file=sys.stderr)
+
+
+def signature_path(path: Path) -> Path:
+    """Where the signature of a file lives: next to it, FILE.sig."""
+    return Path(str(path) + '.sig')
+
+
+def signature_author() -> Optional[Tuple[str, str, str]]:
+    """
+    Your signing identity when it can sign as an author: a key and an email.
+
+    Returns:
+        (private key path, public key, email), or None (with a warning when
+        only the email is missing)
+    """
+    identity = helper_signing_identity()
+    if identity and not identity[2]:
+        signature_warn("set your email (bb whoami email ...) to sign what you save; nothing is signed.")
+        return None
+    return identity
+
+
+def signature_sign(path: Path, namespace: str, key_path: str) -> bool:
+    """
+    Sign a file: writes FILE.sig.
+
+    Returns:
+        False, with a warning, when it could not be signed (a save never
+        fails because signing did)
+    """
+    signature = signature_path(path)
+    if signature.exists():
+        signature.unlink()
+    try:
+        result = subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', key_path, '-n', namespace, str(path)],
+                                capture_output=True, text=True)
+    except FileNotFoundError:
+        result = None
+    if result is None or result.returncode != 0:
+        if signature.exists():
+            signature.unlink()
+        detail = "ssh-keygen not found" if result is None else result.stderr.strip()
+        signature_warn(f"could not sign what you save ({detail}); it is saved unsigned.")
+        return False
+    return True
+
+
+def signature_read_key(signature: Path) -> Optional[str]:
+    """
+    The public key an SSH signature was made with, as 'type base64'.
+
+    A signature holds its key (PROTOCOL.sshsig: "SSHSIG", a version, then
+    the public key). Returns None when the file is not such a signature.
+    """
+    try:
+        lines = signature.read_text(encoding='ascii').split()
+        if lines[:3] != ['-----BEGIN', 'SSH', 'SIGNATURE-----'] or lines[-3:] != ['-----END', 'SSH', 'SIGNATURE-----']:
+            return None
+        blob = base64.b64decode(''.join(lines[3:-3]), validate=True)
+        if blob[:6] != b'SSHSIG':
+            return None
+        (length,) = struct.unpack('>I', blob[10:14])
+        key = blob[14:14 + length]
+        (type_length,) = struct.unpack('>I', key[:4])
+        key_type = key[4:4 + type_length].decode('ascii')
+        if len(key) != length or not key_type or len(key_type) != type_length:
+            return None
+        return f"{key_type} {base64.b64encode(key).decode('ascii')}"
+    except (OSError, ValueError, struct.error):
+        return None
+
+
+def signature_verify(path: Path, namespace: str, public_key: str) -> bool:
+    """True when FILE.sig is a signature of the file, in namespace, by public_key."""
+    try:
+        with tempfile.TemporaryDirectory() as tmp, open(path, 'rb') as data:
+            named = Path(tmp) / 'allowed_signers'
+            named.write_text(f"signer {public_key}\n", encoding='utf-8')
+            result = subprocess.run(['ssh-keygen', '-Y', 'verify', '-f', str(named), '-I', 'signer',
+                                     '-n', namespace, '-s', str(signature_path(path))],
+                                    stdin=data, capture_output=True)
+    except (OSError, ValueError):
+        return False
+    return result.returncode == 0
+
+
+def signature_status(path: Path, namespace: str, public_key: Optional[str] = None, email: str = '',
+                     named: bool = True) -> Tuple[str, str]:
+    """
+    Whether a file is signed, and by whom.
+
+    Args:
+        public_key, email: The key the record names and its author's email
+        named: False for a record that names no key (a mapping, a worklog
+            message): the key is then the one its signature holds
+
+    Returns:
+        (status, email of the signer): 'unsigned' (it names no key; for a
+        record that cannot, it has no signature), 'trusted' (signed by
+        that key, which is yours or in your private list, under the
+        author's email when there is one), 'untrusted' (signed by that
+        key, which you do not trust) or 'invalid' (the signature is
+        missing or is not of this content by that key)
+    """
+    signature = signature_path(path)
+    if named:
+        if public_key is None:
+            return 'unsigned', ''
+        if not isinstance(public_key, str) or len(public_key.split()) != 2 or not email or not signature.exists():
+            return 'invalid', ''
+    else:
+        if not signature.exists():
+            return 'unsigned', ''
+        public_key = signature_read_key(signature)
+        if public_key is None:
+            return 'invalid', ''
+    if not signature_verify(path, namespace, public_key):
+        return 'invalid', ''
+    peers = trust_parse(trust_private_path())
+    yours = helper_signing_identity(warn=False)
+    if yours:
+        peers.append((yours[2], yours[1]))
+    if named:
+        return ('trusted' if (email, public_key) in peers else 'untrusted'), email
+    emails = sorted((e for e, k in peers if k == public_key), reverse=True)
+    return ('trusted', emails[0]) if emails else ('untrusted', '')
+
+
+def signature_describe(status: str, who: str = '') -> Optional[str]:
+    """One phrase on a signature, for display; None when there is none."""
+    return {'unsigned': None,
+            'trusted': "trusted" + (f" ({who})" if who else ""),
+            'untrusted': "untrusted (not a peer you trust: bb trust)",
+            'invalid': "INVALID (altered, or not signed by the key it names)"}[status]
+
+
+def storage_write_authored(path: Path, data: Dict[str, Any], namespace: str, sign: bool = True):
+    """
+    Write a record that has an author, and sign it when you have a key and an email.
+
+    A signed record names its key ('public_key'); when signing fails it is
+    written without one, unsigned.
+    """
+    identity = signature_author() if sign else None
+    if identity:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(dict(data, public_key=identity[1]), f, indent=2, ensure_ascii=False)
+        if signature_sign(path, namespace, identity[0]):
+            return
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def storage_unlink(path: Path):
+    """Remove a record with what stands next to it: its signature and their proofs."""
+    for extra in (anchor_proof_path(signature_path(path)), signature_path(path), anchor_proof_path(path), path):
+        if extra.exists():
+            extra.unlink()
 
 
 def review_compute_id(record: Dict[str, Any]) -> str:
@@ -2371,7 +2592,7 @@ def review_run_checks(func_hash: str, reviewed: set) -> bool:
 #
 # The 'created' of a record is what its author says. `bb anchor` has
 # OpenTimestamps attest it: each JSON file of the pool, the worklogs and the
-# reviews (and each signature of a lineage step or review) gets a proof next to it, FILE.ots,
+# reviews, and each signature next to one, gets a proof next to it, FILE.ots,
 # that these bytes existed when a given Bitcoin block was mined. Proofs are
 # plain OpenTimestamps files: `ots verify FILE.ots` checks one without bb.
 #
@@ -2394,35 +2615,24 @@ def anchor_proof_path(path: Path) -> Path:
     return Path(str(path) + '.ots')
 
 
-def anchor_unlink(path: Path):
-    """Remove a file and its proof, if it has one."""
-    path.unlink()
-    proof = anchor_proof_path(path)
-    if proof.exists():
-        proof.unlink()
-
-
 def anchor_list_files(func_hash: str = None) -> List[Path]:
     """
     The files bb anchor covers: every JSON file of the pool, the worklogs
-    and the reviews, and the signatures of lineage steps and reviews.
+    and the reviews, and the signature next to each one that has one.
 
     Args:
         func_hash: Only this function's object, mappings, lineage steps and reviews
     """
     if func_hash:
-        files = [storage_object_path(func_hash)]
-        files += storage_mapping_directory(func_hash).rglob('*.json')
-        for step_id in lineage_index()['by_function'].get(func_hash, []):
-            files += [storage_step_path(step_id), lineage_signature_path(step_id)]
         review_dir = storage_get_review_directory() / func_hash[:2] / func_hash[2:]
-        files += [*review_dir.rglob('*.json'), *review_dir.rglob('*.json.sig')]
+        files = [storage_object_path(func_hash), *storage_mapping_directory(func_hash).rglob('*.json'),
+                 *review_dir.rglob('*.json')]
+        files += [storage_step_path(step_id) for step_id in lineage_index()['by_function'].get(func_hash, [])]
     else:
         files = [*storage_get_pool_directory().rglob('*.json'),
-                 *storage_get_lineage_directory().rglob('*.json.sig'),
                  *storage_get_worklog_directory().rglob('*.json'),
-                 *storage_get_review_directory().rglob('*.json'),
-                 *storage_get_review_directory().rglob('*.json.sig')]
+                 *storage_get_review_directory().rglob('*.json')]
+    files += [signature_path(path) for path in files]
     return sorted(path for path in files if path.is_file())
 
 
@@ -2528,6 +2738,12 @@ def anchor_log_lines(path: Path) -> List[str]:
     """The 'Anchored:' line of a record in bb log: none when the file has no proof."""
     described = anchor_describe(path)
     return [f"Anchored: {described}"] if described else []
+
+
+def signature_log_lines(status: str) -> List[str]:
+    """The 'Signed:' line of a record in bb log: none when it is unsigned."""
+    described = signature_describe(status)
+    return [f"Signed: {described}"] if described else []
 
 
 def anchor_run(arguments: List[str]) -> subprocess.CompletedProcess:
@@ -2668,10 +2884,10 @@ def command_log(identifier: str = None):
     Functions show their names, author and languages. Lineage steps show
     what happened to a name in a language (add, edit, document, rename,
     refactor, restore, translate, fork; follow is a --pick moving a
-    reference to another lineage of the same code), from which step, by whom, and their comment. A step
-    saved with a signing key (bb whoami signing-key) has a Signed: line:
+    reference to another lineage of the same code), from which step, by whom, and their comment. A function,
+    a step or a worklog saved with a signing key (bb whoami signing-key) has a Signed: line:
     trusted when its author is a peer you trust, untrusted otherwise,
-    INVALID when the step or its signature was tampered with. Worklogs show their author, languages, attached translations
+    INVALID when the record or its signature was tampered with. Worklogs show their author, languages, attached translations
     and message, in your preferred language when translated.
     """
     entries = []
@@ -2698,7 +2914,8 @@ def command_log(identifier: str = None):
             lines.append(f"Names: {', '.join(f'{name}@{lang}' for lang, name in sorted(function['names'].items()))}")
         lines += [f"Date: {metadata.get('created', 'unknown')}",
                   *anchor_log_lines(storage_object_path(func_hash)),
-                  f"Author: {helper_format_author(metadata)}"]
+                  f"Author: {helper_format_author(metadata)}",
+                  *signature_log_lines(object_signature_status(func_hash)[0])]
         langs = storage_list_languages(func_hash)
         lines.append(f"Languages: {', '.join(langs) if langs else 'none'}")
         entries.append((metadata.get('created', ''), func_hash, lines))
@@ -2717,10 +2934,7 @@ def command_log(identifier: str = None):
         lines += [f"Date: {metadata.get('created', 'unknown')}",
                   *anchor_log_lines(storage_step_path(step_id)),
                   f"Author: {helper_format_author(metadata)}"]
-        signed = lineage_signature_status(step_id)
-        if signed != 'unsigned':
-            lines.append("Signed: " + {'trusted': "trusted", 'untrusted': "untrusted (not a peer you trust: bb trust)",
-                                       'invalid': "INVALID (altered, or not signed by the key it names)"}[signed])
+        lines += signature_log_lines(lineage_signature_status(step_id))
         if record.get('comment'):
             lines += ['', f"    {record['comment']}"]
         entries.append((metadata.get('created', ''), step_id, lines))
@@ -2736,6 +2950,7 @@ def command_log(identifier: str = None):
                  f"Date: {metadata.get('created', 'unknown')}",
                  *anchor_log_lines(storage_get_worklog_directory() / worklog['uuid'] / 'worklog.json'),
                  f"Author: {helper_format_author(metadata)}",
+                 *signature_log_lines(worklog_signature_status(worklog)[0]),
                  f"Languages: {', '.join(sorted(worklog['messages']))}"]
         lines += [f"Attached: {reference}" for reference in worklog['references']]
         lines.append('')
@@ -2821,11 +3036,45 @@ def worklog_save_message(worklog_id: str, lang: str, message: str) -> str:
         The translation hash
     """
     message_hash = worklog_compute_message_hash(lang, message)
-    message_dir = storage_get_worklog_directory() / worklog_id / lang / message_hash[:2] / message_hash[2:]
-    message_dir.mkdir(parents=True, exist_ok=True)
-    with open(message_dir / 'message.json', 'w', encoding='utf-8') as f:
-        json.dump({'language': lang, 'message': message}, f, indent=2, ensure_ascii=False)
+    path = worklog_message_path(worklog_id, lang, message_hash)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump({'language': lang, 'message': message}, f, indent=2, ensure_ascii=False)
+        identity = helper_signing_identity()
+        if identity:
+            signature_sign(path, MESSAGE_SIGNATURE_NAMESPACE, identity[0])
     return message_hash
+
+
+def worklog_message_path(worklog_id: str, lang: str, message_hash: str) -> Path:
+    """Where one translation of a worklog message lives."""
+    return storage_get_worklog_directory() / worklog_id / lang / message_hash[:2] / message_hash[2:] / 'message.json'
+
+
+def worklog_signature_status(worklog: Dict[str, Any]) -> Tuple[str, str]:
+    """Whether a worklog (as worklog_load returns it) is signed, and by whom (see signature_status)."""
+    return signature_status(storage_get_worklog_directory() / worklog['uuid'] / 'worklog.json',
+                            WORKLOG_SIGNATURE_NAMESPACE, worklog.get('public_key'),
+                            (worklog.get('metadata') or {}).get('email') or '')
+
+
+def worklog_message_signature_status(worklog_id: str, lang: str, message_hash: str) -> Tuple[str, str]:
+    """
+    Whether a worklog message is signed, and by which key (see signature_status).
+
+    A message names no author; one whose content is not what its hash
+    names is invalid, signed or not.
+    """
+    path = worklog_message_path(worklog_id, lang, message_hash)
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+        actual = worklog_compute_message_hash(data['language'], data['message'])
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return 'invalid', ''
+    if actual != message_hash or data['language'] != lang:
+        return 'invalid', ''
+    return signature_status(path, MESSAGE_SIGNATURE_NAMESPACE, named=False)
 
 
 def worklog_save(lang: str, message: str, references: List[str]) -> Tuple[str, str]:
@@ -2844,15 +3093,16 @@ def worklog_save(lang: str, message: str, references: List[str]) -> Tuple[str, s
     worklog_dir = storage_get_worklog_directory() / worklog_id
     worklog_dir.mkdir(parents=True)
 
+    # The worklog names its original message, so that signing one covers the other
     data = {
-        'schema_version': 1,
+        'schema_version': 2,
         'uuid': worklog_id,
         'language': lang,
+        'message': worklog_compute_message_hash(lang, message),
         'references': references,
         'metadata': code_create_metadata(),
     }
-    with open(worklog_dir / 'worklog.json', 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    storage_write_authored(worklog_dir / 'worklog.json', data, WORKLOG_SIGNATURE_NAMESPACE)
 
     return worklog_id, worklog_save_message(worklog_id, lang, message)
 
@@ -3050,6 +3300,9 @@ def command_worklog_list():
 def command_worklog_show(identifier: str):
     """
     Show one worklog: identifier is a uuid (or unique prefix), with optional @lang.
+
+    Anchored: and Signed: lines say so of the worklog, Message signed: of
+    the message shown (a translation may be signed by someone else).
     """
     part, _, lang = identifier.partition('@')
     worklog = worklog_load(worklog_resolve(part))
@@ -3061,6 +3314,15 @@ def command_worklog_show(identifier: str):
     print(f"Worklog: {worklog['uuid']}@{shown_lang}")
     for reference in worklog['references']:
         print(f"Attached: {reference}")
+    for line in anchor_log_lines(storage_get_worklog_directory() / worklog['uuid'] / 'worklog.json'):
+        print(line)
+    for line in signature_log_lines(worklog_signature_status(worklog)[0]):
+        print(line)
+    # The message shown has its own signature: a translation may be someone else's
+    message_hash = next(h for h, text in worklog['messages'][shown_lang] if text == message)
+    described = signature_describe(*worklog_message_signature_status(worklog['uuid'], shown_lang, message_hash))
+    if described:
+        print(f"Message signed: {described}")
     print()
     print(message)
 
@@ -3091,9 +3353,7 @@ def lineage_prune() -> int:
         if not gone:
             break
         for step_id in gone:
-            if lineage_signature_path(step_id).exists():
-                anchor_unlink(lineage_signature_path(step_id))
-            anchor_unlink(storage_step_path(step_id))
+            storage_unlink(storage_step_path(step_id))
             removed += 1
     storage_cache_clear()
     return removed
@@ -3202,11 +3462,7 @@ def lineage_save(previous: Optional[str], func_hash: str, lang: str, mapping_has
     if follows:
         record['follows'] = dict(sorted(follows.items()))
     # Your own step, saved now, is signed when you have a signing key: a step given its metadata is not
-    identity = helper_signing_identity() if metadata is None else None
-    if identity and not identity[2]:
-        print("Warning: set your email (bb whoami email ...) to sign what you save; step not signed.",
-              file=sys.stderr)
-        identity = None
+    identity = signature_author() if metadata is None else None
     if identity:
         signed = dict(record, public_key=identity[1])
         step_id = lineage_step_id(signed)
@@ -3234,25 +3490,16 @@ def lineage_write(step_id: str, record: Dict[str, Any], key_path: str = None) ->
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(record, f, indent=2, ensure_ascii=False)
-    if key_path:
-        try:
-            result = subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', key_path,
-                                     '-n', LINEAGE_SIGNATURE_NAMESPACE, str(path)],
-                                    capture_output=True, text=True)
-        except FileNotFoundError:
-            result = None
-        if result is None or result.returncode != 0:
-            path.unlink()
-            detail = "ssh-keygen not found" if result is None else result.stderr.strip()
-            print(f"Warning: could not sign the lineage step ({detail}); it is saved unsigned.", file=sys.stderr)
-            return False
+    if key_path and not signature_sign(path, LINEAGE_SIGNATURE_NAMESPACE, key_path):
+        path.unlink()
+        return False
     storage_cache_clear()
     return True
 
 
 def lineage_signature_path(step_id: str) -> Path:
     """Where the signature of a signed step lives: next to it, FILE.sig."""
-    return Path(str(storage_step_path(step_id)) + '.sig')
+    return signature_path(storage_step_path(step_id))
 
 
 def lineage_signature_status(step_id: str) -> str:
@@ -3270,28 +3517,8 @@ def lineage_signature_status(step_id: str) -> str:
     if lineage_step_id(record) != step_id:
         # Not the step its id names: altered, whatever it now says about a key
         return 'invalid'
-    public_key = record.get('public_key')
-    if public_key is None:
-        return 'unsigned'
-    email = (record.get('metadata') or {}).get('email') or ''
-    signature = lineage_signature_path(step_id)
-    if not isinstance(public_key, str) or len(public_key.split()) != 2 or not email or not signature.exists():
-        return 'invalid'
-    try:
-        with tempfile.TemporaryDirectory() as tmp, open(storage_step_path(step_id), 'rb') as data:
-            named = Path(tmp) / 'allowed_signers'
-            named.write_text(f"{email} {public_key}\n", encoding='utf-8')
-            result = subprocess.run(['ssh-keygen', '-Y', 'verify', '-f', str(named), '-I', email,
-                                     '-n', LINEAGE_SIGNATURE_NAMESPACE, '-s', str(signature)],
-                                    stdin=data, capture_output=True)
-    except (OSError, ValueError):
-        return 'invalid'
-    if result.returncode != 0:
-        return 'invalid'
-    if (email, public_key) in trust_parse(trust_private_path()):
-        return 'trusted'
-    yours = helper_signing_identity()
-    return 'trusted' if yours and (yours[2], yours[1]) == (email, public_key) else 'untrusted'
+    return signature_status(storage_step_path(step_id), LINEAGE_SIGNATURE_NAMESPACE, record.get('public_key'),
+                            (record.get('metadata') or {}).get('email') or '')[0]
 
 
 def lineage_index() -> Dict[str, Any]:
@@ -5040,7 +5267,7 @@ def command_rm(identifier: str, force: bool = False):
             print(f"Error: Language mapping not found: {hash_value}@{lang}", file=sys.stderr)
             sys.exit(1)
         for mapping_hash in mappings:
-            anchor_unlink(storage_mapping_path(hash_value, lang, mapping_hash))
+            storage_unlink(storage_mapping_path(hash_value, lang, mapping_hash))
         lang_dir = storage_mapping_directory(hash_value) / lang
         if lang_dir.is_dir() and not any(lang_dir.iterdir()):
             lang_dir.rmdir()
@@ -6506,11 +6733,32 @@ def code_load(hash_value: str, lang: str, mapping_hash: str = None) -> Tuple[str
     return normalized_code, name_mapping, alias_mapping, docstring
 
 
+def helper_record_note(label: str, path: Path, signed: Tuple[str, str]) -> Optional[str]:
+    """
+    A '# bb:' comment line saying whether a record is anchored and signed.
+
+    Returns:
+        None when it is neither
+    """
+    parts = []
+    anchored = anchor_describe(path)
+    if anchored:
+        parts.append(f"anchored: {anchored}")
+    described = signature_describe(*signed)
+    if described:
+        parts.append(f"signed: {described}")
+    return f"# bb: {label} {'; '.join(parts)}" if parts else None
+
+
 def code_show(identifier: str):
     """
     Show a function from the pool.
 
     Accepts a hash or function name (with optional @lang suffix).
+
+    Above the code, '# bb:' comment lines say what is anchored (bb anchor)
+    and signed among the function, the mapping shown and the lineage step
+    that made it current; nothing is said of a record that is neither.
 
     - identifier: List available languages
     - identifier@lang: Show single mapping, or menu if multiple exist
@@ -6581,12 +6829,25 @@ def code_show(identifier: str):
     try:
         normalized_code = code_replace_docstring(normalized_code, docstring)
         pinned = mapping_load_json(hash_value, lang, selected_hash).get('pinned') or []
-        follows = lineage_step_follows(lineage_step_for(hash_value, lang, name_mapping.get('_bb_v_0'), selected_hash))
+        step = lineage_step_for(hash_value, lang, name_mapping.get('_bb_v_0'), selected_hash)
+        follows = lineage_step_follows(step)
         original_code = code_pretty(code_show_pool_names(code_denormalize(normalized_code, name_mapping, alias_mapping),
                                                          lang, pinned, follows))
     except Exception as e:
         print(f"Error: Failed to denormalize code: {e}", file=sys.stderr)
         sys.exit(1)
+
+    # What vouches for what is shown: comments, so the output is still the function's source
+    notes = [helper_record_note(f"function {hash_value[:12]}...", storage_object_path(hash_value),
+                                object_signature_status(hash_value)),
+             helper_record_note(f"mapping {selected_hash[:12]}...", storage_mapping_path(hash_value, lang, selected_hash),
+                                mapping_signature_status(hash_value, lang, selected_hash))]
+    if step:
+        notes.append(helper_record_note(f"step {step[:12]}...", storage_step_path(step),
+                                        (lineage_signature_status(step), '')))
+    for note in notes:
+        if note:
+            print(note)
 
     # Print the code
     print(original_code)

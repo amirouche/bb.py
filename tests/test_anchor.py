@@ -166,6 +166,10 @@ def test_anchor_upgrade_completes_and_keeps_one_proof_per_file(mock_bb_dir, tmp_
     assert "Complete: 3 (Bitcoin block 870000)" in capsys.readouterr().out
     bb.command_log()
     assert capsys.readouterr().out.count("Anchored: Bitcoin block 870000") == 2  # the function and its step
+    bb.code_show('one@eng')
+    notes = [line for line in capsys.readouterr().out.splitlines() if line.startswith('# bb:')]
+    assert [note.split()[2] for note in notes] == ['function', 'mapping', 'step']
+    assert all(note.endswith("anchored: Bitcoin block 870000") for note in notes)
 
 
 def test_anchor_verify_relays_the_client(mock_bb_dir, tmp_path, stand_in, capsys, monkeypatch):

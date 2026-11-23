@@ -2,7 +2,7 @@
 
 ## Metadata
 - ID: 14
-- Feature: bb anchor, bb anchor --status/--upgrade/--verify, Anchored: in bb log
+- Feature: bb anchor, bb anchor --status/--upgrade/--verify, Anchored: in bb log, anchored: in bb show
 - Date: 2026-11-23
 - Status: draft
 - Complexity: intermediate
@@ -143,6 +143,17 @@ $ bb log greet | grep '^Anchored' | sort -u
 Anchored: Bitcoin block 870000
 ```
 
+`bb show` says it too, in `# bb:` comment lines above the code: of the
+function, of the mapping shown and of the step that made it current (the
+leading `# ` is cut here).
+
+```bash
+$ bb show greet@eng | head -3 | sed -E 's/[0-9a-f]{12}\.\.\./<id>/; s/^# //'
+bb: function <id> anchored: Bitcoin block 870000
+bb: mapping <id> anchored: Bitcoin block 870000
+bb: step <id> anchored: Bitcoin block 870000
+```
+
 ### Step 6: Verify
 bb reads the block's height from the proof; whether that block really
 commits to it is for the client to check against Bitcoin (the real
@@ -183,6 +194,7 @@ exit status 1
 | `bb anchor --upgrade` | Complete the pending proofs once a block holds them |
 | `bb anchor --verify [X]` | Have the client check each complete proof against Bitcoin |
 | `bb log` | `Anchored:` under the date of each anchored record |
+| `bb show X@lang` | `# bb:` lines above the code: what is anchored (and signed) |
 
 ## Key Insights
 

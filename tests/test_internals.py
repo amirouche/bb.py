@@ -1503,9 +1503,12 @@ def test_lineage_step_is_saved_unsigned_when_signing_fails(mock_bb_dir, monkeypa
     """A save never fails because of signing"""
     alice_key = _become(monkeypatch, tmp_path, 'alice')
     alice_key.write_text('not a key', encoding='utf-8')
+    bb._SIGNATURE_WARNED.clear()
     func = _pool_add("def one():\n    return 1\n")
     step = _only_step(func)
-    assert "could not sign the lineage step" in capsys.readouterr().err
+    assert capsys.readouterr().err.count("could not sign what you save") == 1  # said once, not per record
+    assert 'public_key' not in bb.object_load(func) and bb.object_signature_status(func) == ('unsigned', '')
+    assert not list(bb.storage_get_pool_directory().rglob('*.sig'))
     assert bb.lineage_signature_status(step) == 'unsigned'
     assert [p.name for p in bb.storage_get_lineage_directory().rglob('*') if p.is_file()] == [step[2:] + '.json']
 
@@ -1532,6 +1535,125 @@ def test_log_says_who_signed(mock_bb_dir, monkeypatch, tmp_path, capsys):
     assert "Signed: trusted" in capsys.readouterr().out
     bb.command_log('two')
     assert "Signed: trusted" in capsys.readouterr().out  # his own key
+
+
+@needs_ssh_keygen
+def test_object_and_mapping_are_signed(mock_bb_dir, monkeypatch, tmp_path):
+    """What you add is signed: the object names your key, the mapping's signature holds it"""
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    func = _pool_add("def one():\n    return 1\n")
+    mapping = bb.lineage_index()['steps'][_only_step(func)]['mapping']
+    assert bb.object_load(func)['public_key'] == bb.helper_signing_identity()[1]
+    assert 'public_key' not in bb.mapping_load_json(func, 'eng', mapping)  # content-addressed: the same for all
+    assert bb.object_signature_status(func) == ('trusted', 'alice@example.org')
+    assert bb.mapping_signature_status(func, 'eng', mapping) == ('trusted', 'alice@example.org')
+    assert bb.signature_read_key(bb.signature_path(bb.storage_mapping_path(func, 'eng', mapping))) == \
+        bb.helper_signing_identity()[1]
+
+    _become(monkeypatch, tmp_path, 'bob')
+    assert bb.object_signature_status(func) == ('untrusted', 'alice@example.org')
+    assert bb.mapping_signature_status(func, 'eng', mapping) == ('untrusted', '')
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    assert bb.object_signature_status(func)[0] == 'trusted'
+    assert bb.mapping_signature_status(func, 'eng', mapping) == ('trusted', 'alice@example.org')
+
+    # Bob saving the same code and names writes nothing: the files, and who signed them, stay
+    _pool_add("def one():\n    return 1\n")
+    assert bb.object_signature_status(func) == ('trusted', 'alice@example.org')
+    assert len(bb.lineage_index()['by_function'][func]) == 2  # his own step, signed by him
+
+
+@needs_ssh_keygen
+def test_object_and_mapping_tampering_is_invalid(mock_bb_dir, monkeypatch, tmp_path):
+    _become(monkeypatch, tmp_path, 'alice')
+    func = _pool_add("def one():\n    return 1\n")
+    mapping = bb.lineage_index()['steps'][_only_step(func)]['mapping']
+    object_path, mapping_path = bb.storage_object_path(func), bb.storage_mapping_path(func, 'eng', mapping)
+
+    # Signatures are for one kind of record: the mapping's does not sign the object
+    object_signature = bb.signature_path(object_path).read_bytes()
+    bb.signature_path(object_path).write_bytes(bb.signature_path(mapping_path).read_bytes())
+    assert bb.object_signature_status(func)[0] == 'invalid'
+    bb.signature_path(object_path).write_bytes(object_signature)
+    assert bb.object_signature_status(func)[0] == 'trusted'
+
+    object_path.write_text(object_path.read_text(encoding='utf-8').replace('alice', 'mallory', 1), encoding='utf-8')
+    assert bb.object_signature_status(func)[0] == 'invalid'
+    bb.signature_path(object_path).unlink()
+    assert bb.object_signature_status(func)[0] == 'invalid'  # it names a key: not merely unsigned
+
+    mapping_path.write_text(mapping_path.read_text(encoding='utf-8').replace('one', 'won'), encoding='utf-8')
+    assert bb.mapping_signature_status(func, 'eng', mapping)[0] == 'invalid'
+    bb.signature_path(mapping_path).unlink()
+    assert bb.mapping_signature_status(func, 'eng', mapping)[0] == 'invalid'  # not what its hash names
+
+
+def test_signature_read_key_refuses_what_is_not_a_signature(tmp_path):
+    path = tmp_path / 'x.sig'
+    for text in ['', 'garbage', '-----BEGIN SSH SIGNATURE-----\nAAAA\n-----END SSH SIGNATURE-----\n',
+                 '-----BEGIN SSH SIGNATURE-----\n!!!\n-----END SSH SIGNATURE-----\n']:
+        path.write_text(text, encoding='utf-8')
+        assert bb.signature_read_key(path) is None
+    assert bb.signature_read_key(tmp_path / 'missing.sig') is None
+
+
+@needs_ssh_keygen
+def test_worklog_and_its_messages_are_signed(mock_bb_dir, monkeypatch, tmp_path, capsys):
+    """A worklog names its original message and its key; a translation is signed by whoever wrote it"""
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    worklog_id, original = bb.worklog_save('eng', 'Explored', [])
+    worklog = bb.worklog_load(worklog_id)
+    assert worklog['message'] == original and worklog['public_key'] == bb.helper_signing_identity()[1]
+    assert bb.worklog_signature_status(worklog) == ('trusted', 'alice@example.org')
+    assert bb.worklog_message_signature_status(worklog_id, 'eng', original) == ('trusted', 'alice@example.org')
+
+    _become(monkeypatch, tmp_path, 'bob')
+    french = bb.worklog_save_message(worklog_id, 'fra', 'Exploré')
+    assert bb.worklog_signature_status(worklog)[0] == 'untrusted'
+    assert bb.worklog_message_signature_status(worklog_id, 'eng', original) == ('untrusted', '')
+    assert bb.worklog_message_signature_status(worklog_id, 'fra', french) == ('trusted', 'bob@example.org')
+    bb.command_worklog_show(f"{worklog_id}@fra")
+    out = capsys.readouterr().out
+    assert "Signed: untrusted" in out and "Message signed: trusted (bob@example.org)" in out
+    bb.command_log()
+    assert "Signed: untrusted" in capsys.readouterr().out
+
+    path = bb.worklog_message_path(worklog_id, 'eng', original)
+    path.write_text(path.read_text(encoding='utf-8').replace('Explored', 'Ignored'), encoding='utf-8')
+    assert bb.worklog_message_signature_status(worklog_id, 'eng', original)[0] == 'invalid'
+    signatures = [p for p in bb.anchor_list_files() if p.suffix == '.sig']
+    assert len(signatures) == 3  # the worklog and its two messages
+
+
+@needs_ssh_keygen
+def test_show_says_what_is_signed(mock_bb_dir, monkeypatch, tmp_path, capsys):
+    _become(monkeypatch, tmp_path, 'alice')
+    func = _pool_add("def one():\n    return 1\n")
+    capsys.readouterr()
+    bb.code_show('one@eng')
+    out = capsys.readouterr().out
+    assert [line.split()[2] for line in out.splitlines() if line.startswith('# bb:')] == ['function', 'mapping', 'step']
+    assert out.count('signed: trusted') == 3
+    ast.parse(out)  # still the function's source
+    assert func == bb.code_compute_function_hash(bb.code_prepare_source(out, 'eng')['normalized_code'], None)
+
+
+def test_show_says_nothing_of_what_is_neither_signed_nor_anchored(mock_bb_dir, capsys):
+    _pool_add("def one():\n    return 1\n")
+    capsys.readouterr()
+    bb.code_show('one@eng')
+    assert '# bb:' not in capsys.readouterr().out
+
+
+@needs_ssh_keygen
+def test_rm_takes_the_signatures_along(mock_bb_dir, monkeypatch, tmp_path):
+    _become(monkeypatch, tmp_path, 'alice')
+    func = _pool_add("def one():\n    return 1\n")
+    bb.command_rm('one@eng')
+    assert sorted(p.name for p in bb.storage_get_pool_directory().rglob('*') if p.is_file()) == [
+        'object.json', 'object.json.sig']
+    bb.command_rm(func)
+    assert [p for p in bb.storage_get_pool_directory().rglob('*') if p.is_file()] == []
 
 
 @needs_ssh_keygen

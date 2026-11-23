@@ -76,13 +76,17 @@ $ (env BB_STATE_DIRECTORY=bob bb run show_double@eng 3 2>&1 || true) | head -1
 Error: Refusing to run code you have not reviewed (1 function(s) to approve).
 ```
 
-Alice had her key when she added the function, so the lineage step saying
-"Alice added `show_double`" is signed too. To Bob it is, for now, signed
-by a stranger.
+Alice had her key when she added the function, so what she saved is signed
+too: the function, and the lineage step saying "Alice added `show_double`".
+To Bob they are, for now, signed by a stranger. `bb show` says the same
+above the code, of the function, the mapping shown and the step.
 
 ```bash
 $ env BB_STATE_DIRECTORY=bob bb log show_double | grep '^Signed'
 Signed: untrusted (not a peer you trust: bb trust)
+Signed: untrusted (not a peer you trust: bb trust)
+$ env BB_STATE_DIRECTORY=bob bb show show_double@eng | grep -c '^# bb: .* signed: untrusted'
+3
 ```
 
 ### Step 5: Bob imports Alice from the shared list
@@ -101,6 +105,9 @@ $ env BB_STATE_DIRECTORY=bob bb run show_double@eng 3
 6
 $ env BB_STATE_DIRECTORY=bob bb log show_double | grep '^Signed'
 Signed: trusted
+Signed: trusted
+$ env BB_STATE_DIRECTORY=bob bb show show_double@eng | grep '^# bb: mapping' | cut -d' ' -f5-
+signed: trusted (alice@example.org)
 ```
 
 ---
@@ -141,7 +148,7 @@ Error: Refusing to run code you have not reviewed (1 function(s) to approve).
 
 2. **Signatures, not files, carry trust**: a review counts when it is signed by a key you trust, for the function it names. An edited, moved or forged review is invalid.
 
-3. **What you save is signed too**: with a signing key, each lineage step you save (add, edit, translate...) names your key and is signed. It says who vouches for a version; it never decides what may run, which stays with reviews.
+3. **What you save is signed too**: with a signing key, each function, mapping, lineage step and worklog you save is signed. It says who vouches for a version; it never decides what may run, which stays with reviews.
 
 4. **A review is written once**: changing your mind writes another signed review that supersedes yours; the earlier one stays in `review/`, and only a signed review of the same key can retire it.
 
