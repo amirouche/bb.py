@@ -1689,7 +1689,9 @@ def review_save_state(reviewed: set):
 #     $BB_DIRECTORY/trust/allowed_signers                peers shared publicly
 #     <state directory>/allowed_signers                  peers YOU trust
 #
-# Only the private list is trusted. The public one is a directory of peers
+# Only the private list is trusted, and your own signing key, which your
+# private config names: a review you signed on one machine counts on your
+# others. The public list is a directory of peers
 # that you copy from, entry by entry, with `bb trust import`. Both use the
 # OpenSSH allowed_signers format: "email key-type base64 [comment]".
 #
@@ -1857,7 +1859,7 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
     The shared reviews of a function, with their signature status.
 
     Each entry is the review record plus 'id', 'superseded' and 'status':
-    'trusted' (valid signature by a key in your private list), 'untrusted'
+    'trusted' (valid signature by your key or a key in your private list), 'untrusted'
     (valid signature by a key you do not trust) or 'invalid' (bad, missing,
     altered or misplaced). Only a validly signed review supersedes, and only
     reviews of its own key.
@@ -1870,6 +1872,7 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
         return []
     reviews = []
     superseded = set()
+    yours = helper_signing_identity()
     for path in sorted(review_dir.glob('*/*.json')):
         try:
             record = json.loads(path.read_text(encoding='utf-8'))
@@ -1895,7 +1898,10 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
                 own.write_text(f"{record['reviewer'].get('email', '')} {record['public_key']}\n",
                                encoding='utf-8')
                 if review_verify(path, own):
-                    status = 'untrusted'
+                    # Your own key needs no entry in your list: its config is private state too
+                    mine = yours and (yours[2], yours[1]) == (record['reviewer'].get('email'),
+                                                              ' '.join(record['public_key'].split()[:2]))
+                    status = 'trusted' if mine else 'untrusted'
         if status != 'invalid':
             superseded.update((key_id, old) for old in record.get('supersedes', []) if isinstance(old, str))
         record.update(id=path.stem, status=status)
@@ -1942,9 +1948,9 @@ def review_approvals(hashes: List[str]) -> Set[str]:
     """
     The functions among hashes that count as approved for you.
 
-    Approved means: you approved it yourself, or a peer you trust approved
-    it in a signed review and no peer you trust rejected it. Your own
-    rejection always wins.
+    Approved means: you approved it yourself (here, or in a review signed
+    with your key), or a peer you trust approved it in a signed review, and
+    no trusted review rejects it. Your own rejection here always wins.
     """
     private = review_load_state()
     rejected = review_load_rejections()
@@ -1981,7 +1987,7 @@ def command_reviews(identifier: str, as_json: bool = False, every: bool = False)
     """
     Show who reviewed a function: each shared review and its signature.
 
-    trusted: signed by a peer in your private list; untrusted: validly
+    trusted: signed by you or by a peer in your private list; untrusted: validly
     signed by someone you do not trust (yet); invalid: forged, altered or
     misplaced. Only trusted reviews count, and only current ones: with
     every, the reviews a reviewer replaced since are listed too, marked

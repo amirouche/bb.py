@@ -1293,6 +1293,32 @@ def test_signed_review_status(mock_bb_dir, monkeypatch, tmp_path):
 
 
 @needs_ssh_keygen
+def test_your_own_signed_review_is_trusted(mock_bb_dir, monkeypatch, tmp_path):
+    """A review signed with your key counts without adding yourself to your peers: on your other machines too"""
+    func = _pool_add("def one():\n    return 1\n")
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    bb.review_publish(func, 'approve')
+    assert bb.trust_parse(bb.trust_private_path()) == []
+    assert [r['status'] for r in bb.review_list_shared(func)] == ['trusted']
+
+    # Another machine: the same key and email, no private approval there
+    monkeypatch.setenv('BB_STATE_DIRECTORY', str(tmp_path / 'alice_laptop'))
+    bb.storage_write_config({'user': {'name': 'alice', 'email': 'alice@example.org',
+                                      'signing_key': str(alice_key), 'languages': ['eng']}})
+    assert bb.review_load_state() == set()
+    assert bb.review_approvals([func]) == {func}
+    bb.review_save_rejections({func})
+    assert bb.review_approvals([func]) == set()
+
+    # The key under another email is not you
+    bb.review_save_rejections(set())
+    bb.storage_write_config({'user': {'name': 'alice', 'email': 'other@example.org',
+                                      'signing_key': str(alice_key), 'languages': ['eng']}})
+    assert [r['status'] for r in bb.review_list_shared(func)] == ['untrusted']
+    assert bb.review_approvals([func]) == set()
+
+
+@needs_ssh_keygen
 def test_signed_review_cannot_be_moved_to_another_function(mock_bb_dir, monkeypatch, tmp_path):
     """Copying a valid review under another hash does not approve that hash"""
     good = _pool_add("def one():\n    return 1\n")

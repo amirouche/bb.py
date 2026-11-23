@@ -137,7 +137,7 @@ Error: Refusing to run code you have not reviewed (1 function(s) to approve).
 
 ## Key Insights
 
-1. **Only your private list is trusted**: it lives in your state directory, outside the shared `$BB_DIRECTORY`. The shared list is only a place to find keys.
+1. **Only your private list is trusted, and your own key**: both live in your state directory, outside the shared `$BB_DIRECTORY`. A review you signed counts on every machine where you sign with that key and email. The shared list is only a place to find keys.
 
 2. **Signatures, not files, carry trust**: a review counts when it is signed by a key you trust, for the function it names. An edited, moved or forged review is invalid.
 
