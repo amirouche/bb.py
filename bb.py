@@ -3705,7 +3705,6 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
     on = lineage_current_steps(lang, name, func_hash) if lang else []
     root = lineage_root_step(on[0]) if on else None
     forks = len(head_counts.get((lang, name, root), ())) if root else 0
-    namesakes = sum(len(heads) for (l, n, r), heads in head_counts.items() if (l, n) == (lang, name) and r != root)
     relatives = search_relatives(index, func_hash, lang, name) if on else []
     return {
         'hash': func_hash,
@@ -3724,7 +3723,6 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
         'untranslated': [list(pair) for pair in search_untranslated(func_hash)],
         'pinned': sorted(set(mapping.get('pinned') or [])),
         'forks': forks,
-        'namesakes': namesakes,
         # The other functions answering to this name here, and how each relates to this one
         'relatives': relatives,
         'checks': len(function['checks']),
