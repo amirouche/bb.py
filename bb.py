@@ -2141,10 +2141,19 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
         if not isinstance(record, dict):
             continue
         key_id = path.parent.name
+        reviewer = record.get('reviewer')
+        email = reviewer.get('email') if isinstance(reviewer, dict) else None
+        # The key and email go into an allowed_signers file (review_verify), one
+        # per line: a newline or extra field in either would inject a second,
+        # attacker-chosen signer. A public key is exactly "type base64", an
+        # email a single whitespace-free token (helper_key_id reads only the
+        # first two tokens, so a longer key must be rejected, not truncated).
+        well_formed = (isinstance(record.get('public_key'), str)
+                       and len(record['public_key'].split()) == 2
+                       and isinstance(email, str) and email and len(email.split()) == 1)
         # The signed content must be about this function, under its own key and id
         placed_right = (record.get('function') == func_hash and record.get('verdict') in REVIEW_VERDICTS
-                        and isinstance(record.get('public_key'), str)
-                        and isinstance(record.get('reviewer'), dict)
+                        and well_formed
                         and isinstance(record.get('supersedes', []), list)
                         and key_id == helper_key_id(record['public_key'])
                         and path.stem == review_compute_id(record))

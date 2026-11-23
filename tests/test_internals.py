@@ -1483,6 +1483,42 @@ def test_trusted_rejection_blocks_and_own_verdict_wins(mock_bb_dir, monkeypatch,
     assert bb.review_approvals([func]) == set()
 
 
+@needs_ssh_keygen
+def test_forged_review_cannot_inject_a_second_signer_through_public_key(mock_bb_dir, monkeypatch, tmp_path):
+    """A newline in public_key must not smuggle an attacker key into review_verify"""
+    func = _pool_add("def two():\n    return 2\n")
+    victim_key = _become(monkeypatch, tmp_path, 'victim')
+    victim_pub = bb.helper_signing_identity()[1]
+    attacker_key = _become(monkeypatch, tmp_path, 'attacker')
+    attacker_pub = bb.helper_signing_identity()[1]
+
+    # The forged record claims the victim's key (so helper_key_id, which reads
+    # only the first two tokens, files it in the victim's directory) but appends
+    # a second allowed_signers line binding the victim's email to the attacker's
+    # key. It is signed with the attacker's key.
+    record = {
+        'schema_version': 2, 'function': func, 'verdict': 'approve',
+        'reviewer': {'name': 'victim', 'email': 'victim@example.org'},
+        'public_key': victim_pub + '\nvictim@example.org ' + attacker_pub,
+        'created': '2026-11-24T00:00:00Z', 'comment': '', 'supersedes': [],
+    }
+    key_id = bb.helper_key_id(record['public_key'])
+    assert key_id == bb.helper_key_id(victim_pub)  # files under the victim's directory
+    directory = bb.storage_get_review_directory() / func[:2] / func[2:] / key_id
+    directory.mkdir(parents=True)
+    path = directory / f"{bb.review_compute_id(record)}.json"
+    path.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', str(attacker_key),
+                    '-n', bb.REVIEW_SIGNATURE_NAMESPACE, str(path)], check=True, capture_output=True)
+
+    # The victim themselves must not see this as their own trusted approval
+    _become(monkeypatch, tmp_path, 'victim')
+    bb.storage_write_config({'user': {'name': 'victim', 'email': 'victim@example.org',
+                                      'signing_key': str(victim_key), 'languages': ['eng']}})
+    assert [r['status'] for r in bb.review_list_shared(func)] == ['invalid']
+    assert bb.review_approvals([func]) == set()
+
+
 def _only_step(func):
     [step] = bb.lineage_index()['by_function'][func]
     return step
