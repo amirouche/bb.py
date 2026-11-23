@@ -325,3 +325,87 @@ def test_a_pick_moves_a_caller_to_a_fork_holding_the_code_it_already_uses(tmp_pa
     assert 'No changes.' in pool.bb('edit', 'opening@eng', str(draft), '--pick', f'is_weekend={old[:12]}').stdout
     again = reword(pool, tmp_path)
     assert again.returncode == 0 and pool.run(hash_of(again), 5) == 'False' and outdated(pool) == []
+
+
+WEEK = 'import bb\nopening = bb.resolve("opening")\n\n\ndef week():\n    """The days open."""\n    return [d for d in range(7) if opening(d)]\n'
+
+
+def latest(pool, name):
+    return pool.bb('latest', name, '--hash').stdout.split()
+
+
+def test_update_pays_the_debt_of_the_name_asked_and_leaves_a_name_that_pins(tmp_path):
+    pool = Pool(tmp_path)
+    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    both = hash_of(pool.add('opening', BY_NAME.format(name='opening')))
+    assert hash_of(pool.add('closing', OPENING.format(ref=f'bb.ref("{old}")', name='closing'))) == both
+    edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)'))
+    assert outdated(pool) == ['opening']
+    updated = pool.bb('update', 'opening@eng', '-m', 'catch up')
+    assert updated.returncode == 0 and 'Updated 1 function(s)' in updated.stdout, updated.stdout + updated.stderr
+    assert outdated(pool) == []
+    assert latest(pool, 'opening@eng') == [hash_of(updated)] != [both]
+    assert latest(pool, 'closing@eng') == [both]
+    assert f"is_weekend = bb.ref('{old}')" in pool.bb('show', 'closing@eng').stdout
+
+
+def test_update_moves_only_the_language_asked(tmp_path):
+    pool = Pool(tmp_path)
+    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    both = hash_of(pool.add('opening', BY_NAME.format(name='opening')))
+    french = tmp_path / 'ouverture_fra.py'
+    french.write_text('import bb\nis_weekend = bb.resolve("is_weekend")\n\n\ndef ouverture(jour):\n'
+                      '    """Ouvert les jours ouvrables."""\n    return not is_weekend(jour)\n')
+    assert hash_of(pool.bb('add', f'{french}@fra')) == both
+    edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)'))
+    updated = pool.bb('update', 'opening@eng', '-m', 'catch up')
+    assert updated.returncode == 0, updated.stderr
+    # Whoever updates cannot sign the other languages' names: they stay, and can be updated in turn
+    assert latest(pool, 'opening@eng') == [hash_of(updated)] != [both]
+    assert latest(pool, 'ouverture@fra') == [both]
+    again = pool.bb('update', 'ouverture@fra', '-m', 'rattraper')
+    assert again.returncode == 0 and latest(pool, 'ouverture@fra') == [hash_of(updated)], again.stdout + again.stderr
+
+
+def test_update_follows_what_it_uses_through_a_rename(tmp_path):
+    pool = Pool(tmp_path)
+    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    opening = hash_of(pool.add('opening', BY_NAME.format(name='opening')))
+    assert pool.add('week', WEEK).returncode == 0
+    # opening goes on under another name: week follows it there
+    renamed = edit_by_hash(pool, tmp_path, opening, BY_NAME.format(name='hours').replace('not is_weekend(day)',
+                                                                                         'is_weekend(day) is False'),
+                           name='hours.md')
+    assert renamed.returncode == 0 and 'Renamed' in renamed.stdout, renamed.stdout + renamed.stderr
+    # What hours uses goes on too, and its old code comes back in a fork: by hash alone it would look current
+    new = hash_of(edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)')))
+    fork(pool, tmp_path, f'{new}@eng', WEEKEND.format(days='(5, 6)'), 'as it was')
+    assert sorted(outdated(pool)) == ['hours', 'week']
+    updated = pool.bb('update', 'week@eng', '-m', 'catch up')
+    assert updated.returncode == 0 and 'Updated 2 function(s)' in updated.stdout, updated.stdout + updated.stderr
+    assert outdated(pool) == []
+    assert pool.run(hash_of(updated)) == '[0, 1, 2, 3, 4]'
+
+
+def test_update_follows_the_step_a_caller_stands_on_when_one_code_has_two(tmp_path):
+    pool = Pool(tmp_path)
+    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    opening = hash_of(pool.add('opening', BY_NAME.format(name='opening')))
+    new = hash_of(edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)')))
+    fork(pool, tmp_path, f'{new}@eng', WEEKEND.format(days='(5, 6)'), 'as it was')
+    # opening's code in two lineages: the first one, behind on is_weekend, and a fork of a fork, on the fork
+    always = hash_of(fork(pool, tmp_path, f'{opening}@eng', 'def opening(day):\n    """Always open."""\n    return True\n',
+                          'never closed', name='always.md'))
+    draft = tmp_path / 'back.md'
+    pool.bb('edit', f'{always}@eng', str(draft))
+    set_code(draft, BY_NAME.format(name='opening'))
+    back = pool.bb('edit', f'{always}@eng', str(draft), '--fork', '-m', 'closed again', '--pick', f'is_weekend={old[:12]}')
+    assert back.returncode == 0 and hash_of(back) == opening, back.stdout + back.stderr
+    assert outdated(pool) == ['opening']
+    # week stands on the first lineage (not a fork's): that one is brought up to date
+    assert add(pool, 'week', WEEK, '--pick', f'opening={opening[:12]}').returncode == 0
+    updated = pool.bb('update', 'week@eng', '-m', 'catch up')
+    assert updated.returncode == 0 and 'Updated 2 function(s)' in updated.stdout, updated.stdout + updated.stderr
+    assert outdated(pool) == []
+    assert pool.run(hash_of(updated)) == '[0, 1, 2, 3, 4]'
+    assert opening in latest(pool, 'opening@eng')  # the fork that holds the code stays

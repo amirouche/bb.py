@@ -3228,7 +3228,8 @@ def lineage_newer_version(func_hash: str, lang: str = None, name: str = None, st
 
 
 def lineage_continue(old_hash: str, new_hash: str, comment: str, hash_map: Dict[str, str] = None,
-                     relation: str = 'refactor', keep: Callable[[Dict[str, Any]], bool] = None) -> str:
+                     relation: str = 'refactor', keep: Callable[[Dict[str, Any]], bool] = None,
+                     follows: Dict[str, str] = None) -> str:
     """
     Move every name of old_hash on to new_hash, copying their mappings.
 
@@ -3237,7 +3238,9 @@ def lineage_continue(old_hash: str, new_hash: str, comment: str, hash_map: Dict[
     name, new_hash gets a copy of the step's mapping (references renamed
     through hash_map) and a step after it. Names that share the code move
     together, unless keep (given a step record) says a name stays. A step
-    on a function its lineage already went through is a restore.
+    on a function its lineage already went through is a restore. follows
+    ({pool function used: step}) says which steps the new ones follow,
+    where the caller knows (default: lineage_follows_build).
 
     Returns:
         'restored' when new_hash was an older version, 'new' otherwise
@@ -3273,7 +3276,11 @@ def lineage_continue(old_hash: str, new_hash: str, comment: str, hash_map: Dict[
                                        comment, data.get('markdown', ''),
                                        pinned=[hash_map.get(h, h) for h in data.get('pinned') or []])
         restored = restored or was
-        lineage_save(step_id, new_hash, lang, new_mapping, 'restore' if was else relation, comment)
+        followed = None
+        if follows:
+            followed = lineage_follows_build(new_hash, lang, new_mapping, step_id)
+            followed.update({dep: s for dep, s in follows.items() if dep in followed})
+        lineage_save(step_id, new_hash, lang, new_mapping, 'restore' if was else relation, comment, follows=followed)
     return 'restored' if restored else 'new'
 
 
@@ -7621,7 +7628,8 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
 
 
 def refactor_save(old_hash: str, new_hash: str, new_code: str, checks: List[str], comment: str,
-                  hash_map: Dict[str, str], keep: Callable[[Dict[str, Any]], bool] = None) -> str:
+                  hash_map: Dict[str, str], keep: Callable[[Dict[str, Any]], bool] = None,
+                  follows: Dict[str, str] = None) -> str:
     """
     Save new_hash as the version after old_hash; returns 'new', 'restored' or 'existing'.
 
@@ -7639,7 +7647,7 @@ def refactor_save(old_hash: str, new_hash: str, new_code: str, checks: List[str]
     if not existed:
         object_save(new_hash, new_code, code_create_metadata(), checks=checks,
                     normalization=object_normalization(old_hash))
-    if lineage_continue(old_hash, new_hash, comment, hash_map, keep=keep) == 'restored':
+    if lineage_continue(old_hash, new_hash, comment, hash_map, keep=keep, follows=follows) == 'restored':
         return 'restored'
     return 'existing' if existed else 'new'
 
@@ -7686,9 +7694,16 @@ def command_update(identifier: str, comment: str = None, unreviewed: bool = Fals
     Every function reached from NAME that uses a version which is no
     longer current is rewritten to use the current one, deepest first,
     then NAME itself: what `bb search --outdated` lists, paid at once,
-    as if each were edited and saved unchanged. Current means current in
-    NAME's language, for the name each function is used by (another
-    language's newer version waits for a translation). Pinned references
+    as if each were edited and saved unchanged. The walk goes from lineage
+    step to lineage step: each name's own step says what it pins, by
+    which alias it uses a function and which step of it it follows, so a
+    function is followed along the lineage its caller stands on, through
+    renames, whatever else holds the same code. A name of the same code
+    in NAME's language moves along when it follows the same steps and
+    pins none of them; one that pins or follows otherwise stays, and so
+    do the names in other languages (whoever updates cannot sign a
+    translation; bb update them in turn). A function used
+    from another language only is used as it is. Pinned references
     (written as bb.ref) are kept. A function whose lineage split (several
     current versions, no declared fork) is left as it is, with a warning;
     a declared fork (bb edit --fork) is another function, never moved to. One comment goes on every new version.
@@ -7710,61 +7725,94 @@ def command_update(identifier: str, comment: str = None, unreviewed: bool = Fals
             comment = input("Comment (press Enter to skip): ").strip()
         except EOFError:
             comment = ""
-    done: Dict[Tuple[str, Optional[str]], str] = {}
+    done: Dict[str, str] = {}
     rewritten: List[Tuple[str, str]] = []
     failed: List[Tuple[str, str, List[str]]] = []
 
-    def update(func_hash: str, name: Optional[str], stack: Tuple[str, ...] = (), step: str = None) -> str:
-        """The up-to-date hash for func_hash, used by name from step (itself when nothing changes)."""
-        if (func_hash, name) in done:
-            return done[(func_hash, name)]
-        if func_hash in stack or code_detect_schema(func_hash) is None:
-            return func_hash
-        base = lineage_newer_version(func_hash, lang, name, step) or func_hash
-        on_base = lineage_current_steps(lang, name, base) or lineage_steps_on(base, lang, name)
-        follows = lineage_step_follows(on_base[0]) if on_base else {}
+    def end_step(func_hash: str, start: List[str]) -> Optional[str]:
+        """The one step func_hash's lineage is at now, from the steps start; None when there is no single one."""
+        steps = lineage_index()['steps']
+        reached = lineage_reach(start)
+        still = [s for s in reached if steps[s]['function'] == func_hash]
+        if still:
+            return next((s for s in start if s in still), still[0])
+        heads = sorted({steps[s]['function'] for s in reached})
+        if len(heads) > 1:
+            print(f"Warning: {helper_function_label(func_hash)} has {len(heads)} current versions; "
+                  f"keeping the one in use ({func_hash[:12]}...)", file=sys.stderr)
+        return reached[0] if len(heads) == 1 else None
+
+    def update(step_id: str, stack: Tuple[str, ...] = ()) -> str:
+        """The up-to-date step for the name standing on step_id (itself when nothing changes)."""
+        if step_id in done:
+            return done[step_id]
+        record = lineage_index()['steps'][step_id]
+        base = record['function']
+        if record['lang'] != lang or base in stack or code_detect_schema(base) is None:
+            return step_id
+        data = mapping_load_json(base, lang, record['mapping']) or {}
+        aliases, pins = data.get('alias_mapping', {}), set(data.get('pinned') or [])
+        recorded = record.get('follows') or {}
         code = object_load(base)['normalized_code']
-        pins: Set[str] = set()
-        for mapping_lang in storage_list_languages(base):
-            for mapping_hash in mapping_leaves(base, mapping_lang):
-                pins.update(mapping_load_json(base, mapping_lang, mapping_hash).get('pinned') or [])
-        shown = lang if lang in storage_list_languages(base) else helper_pick_language(base, lang)
-        aliases = mapping_load_json(base, shown, mapping_select(base, shown, name)).get('alias_mapping', {})
-        swaps = {}
+        swaps, follows = {}, {}
         for dep in code_extract_dependencies(code):
             if dep in pins:
                 continue
-            new_dep = update(dep, lineage_name_for(dep, lang, aliases.get(dep)), stack + (func_hash,),
-                             follows.get(dep))
+            steps = lineage_index()['steps']
+            if recorded.get(dep) in steps and steps[recorded[dep]]['function'] == dep:
+                start = [recorded[dep]]
+            elif lineage_steps_on(dep, lang):
+                # Saved before steps said what they follow: by the name it is used by
+                start = lineage_steps_on(dep, lang, lineage_name_for(dep, lang, aliases.get(dep)))
+            else:
+                start = lineage_steps_on(dep)
+            end = end_step(dep, start)
+            if end is None:
+                continue
+            new_step = update(end, stack + (base,))
+            new_dep = lineage_index()['steps'][new_step]['function']
+            follows[new_dep] = new_step
             if new_dep != dep:
                 swaps[dep] = new_dep
-        result = base
+        result_step = step_id
         if swaps:
             new_code = ast.unparse(code_swap_refs(ast.parse(code), swaps))
             checks = object_load_checks(base)
             result = code_hash_rewritten(new_code, checks)
-            followed = {dep: lineage_name_for(dep, lang, aliases.get(dep)) for dep in swaps}
             problems = update_check_rewritten(base, result, new_code, checks, unreviewed) if checks else []
             if problems and result != base:
                 failed.append((base, result, problems))
-                done[(func_hash, name)] = done[(base, name)] = base
-                return base
-
-            def keep(record):
-                """Names of base that use the swapped functions by other names stay (two names, one code)."""
-                if record['lang'] != lang:
+                done[step_id] = step_id
+                return step_id
+            def keep(other):
+                """This name moves, and the names of base in lang that follow the same steps without a pin."""
+                if lineage_step_id(other) == step_id:
                     return True
-                theirs = mapping_load_json(base, lang, record['mapping']).get('alias_mapping', {})
-                return all(lineage_name_for(dep, lang, theirs.get(dep)) == followed[dep] for dep in swaps)
+                if other['lang'] != lang:
+                    return False  # whoever updates cannot sign another language's names
+                theirs = set((mapping_load_json(base, lang, other['mapping']) or {}).get('pinned') or [])
+                return all(dep not in theirs and (other.get('follows') or {}).get(dep) == recorded.get(dep)
+                           for dep in swaps)
 
             if result != base:
                 with contextlib.redirect_stdout(io.StringIO()):  # its own Hash: lines would mislead
-                    refactor_save(base, result, new_code, checks, comment, swaps, keep=keep)
+                    refactor_save(base, result, new_code, checks, comment, swaps, keep=keep, follows=follows)
                 rewritten.append((base, result))
-        done[(func_hash, name)] = done[(base, name)] = result
-        return result
+                index = lineage_index()
+                after = [s for s in index['successors'].get(step_id, []) if index['steps'][s]['function'] == result]
+                result_step = after[0] if after else step_id
+        done[step_id] = result_step
+        return result_step
 
-    new_root = update(root, helper_identifier_name(identifier) or lineage_name_for(root, lang))
+    name = helper_identifier_name(identifier) or lineage_name_for(root, lang)
+    start = lineage_current_steps(lang, name, root) or lineage_steps_on(root, lang, name)
+    if not start:
+        print(f"Error: {helper_function_label(root)} has no name in {lang}: nothing to update there "
+              f"(bb translate it, or update it in a language it has)", file=sys.stderr)
+        sys.exit(1)
+    root_step = end_step(root, start) or start[0]
+    new_step = update(root_step)
+    new_root = lineage_index()['steps'][new_step]['function']
     if not rewritten and not failed:
         print(f"{helper_function_label(root)} is up to date: nothing to save")
         return
