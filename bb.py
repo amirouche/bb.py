@@ -3263,12 +3263,14 @@ def lineage_newer_version(func_hash: str, lang: str = None, name: str = None, st
     current version instead. With several current versions (its lineage split) there
     is no single one: None, with a warning.
     """
-    lang = lang or lineage_preferred_language(func_hash)
-    if lang is None:
-        return None
     steps = lineage_index()['steps']
-    reached = (lineage_reach([step]) if step in steps and steps[step]['function'] == func_hash
-               else lineage_follow(func_hash, lang, name))
+    if step in steps and steps[step]['function'] == func_hash:
+        reached = lineage_reach([step])
+    else:
+        lang = lang or lineage_preferred_language(func_hash)
+        if lang is None:
+            return None
+        reached = lineage_follow(func_hash, lang, name)
     heads = sorted({steps[s]['function'] for s in reached})
     if not heads or func_hash in heads:
         return None
@@ -8259,6 +8261,16 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
         except EOFError:
             comment = ""
 
+    # The step of each function the tree stands on, as its user recorded it (its step's
+    # 'follows'), from WHAT down: one code may sit in two lineages, the step says which
+    followed: Dict[str, str] = {}
+    queue = lineage_current_steps(function=what_hash) or lineage_steps_on(what_hash)
+    while queue:
+        for used, step_id in sorted(lineage_step_follows(queue.pop(0)).items()):
+            if used not in followed:
+                followed[used] = step_id
+                queue.append(step_id)
+
     # Build hash replacement map for recursive refactoring
     # We need to refactor all functions in the chain that depend on from_hash
     hash_map = {from_hash: to_hash}  # Maps old_hash -> new_hash
@@ -8272,7 +8284,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
         if dep_hash in hash_map:
             continue  # what is being replaced (FROM), or already rewritten
         # Build on the function's current version when it was edited since the root saw it
-        base = lineage_newer_version(dep_hash) or dep_hash
+        base = lineage_newer_version(dep_hash, step=followed.get(dep_hash)) or dep_hash
         dep_data = object_load(base)
         dep_code = dep_data['normalized_code']
 

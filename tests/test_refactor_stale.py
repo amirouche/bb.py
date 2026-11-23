@@ -1,5 +1,5 @@
 """bb edit --refactor over a function edited since the root last saw it."""
-from tests.test_edit_file import set_code
+from tests.test_edit_file import fork, set_code
 from tests.test_import_by_name import Pool, hash_of
 
 
@@ -43,3 +43,24 @@ def test_rm_refuses_a_function_still_in_use(tmp_path):
     assert pool.bb('rm', user).returncode == 0  # nothing uses user
     assert pool.bb('rm', leaf).returncode == 0  # and now nothing uses leaf
     assert pool.bb('rm', '--force', 'x' * 64).returncode == 1  # a missing function is still an error
+
+
+def test_bb_refactor_builds_on_the_lineage_the_root_follows_not_on_a_fork_with_the_same_code(tmp_path):
+    pool = Pool(tmp_path)
+    leaf = hash_of(pool.edit('leaf', 'def leaf(n):\n    """Leaf."""\n    return n + 1\n'))
+    other = hash_of(pool.edit('other', 'def other(n):\n    """Other."""\n    return n + 10\n'))
+    mid_code = 'import bb\nleaf = bb.resolve("leaf")\n\n\ndef mid(n):\n    """Mid."""\n    return leaf(n) * {k}\n'
+    mid1 = hash_of(pool.edit('mid', mid_code.format(k=2)))
+    main = hash_of(pool.edit('main', 'import bb\nmid = bb.resolve("mid")\n\n\ndef main(n):\n    """Main."""\n'
+                             '    return mid(n)\n'))
+    mid2 = hash_of(pool.edit('mid', mid_code.format(k=3)))
+    # A fork of the new mid goes back to the first mid's code: that code is current again, in another lineage
+    back = fork(pool, tmp_path, f'{mid2}@eng', mid_code.format(k=2), 'times two after all')
+    assert back.returncode == 0 and hash_of(back) == mid1
+    done = pool.bb('refactor', main, leaf, other, '-m', 'other leaf')
+    assert done.returncode == 0, done.stderr
+    # main followed mid's own lineage, which is at mid2: the rewrite builds on it
+    assert f'using its current version {mid2[:12]}' in done.stdout
+    new_main = done.stdout.split('new hash:')[1].split()[0] if 'new hash:' in done.stdout else hash_of(done)
+    assert pool.run(new_main, 1) == '33'  # (1 + 10) * 3
+    assert 'No matches found' in pool.bb('search', '--diverged').stdout
