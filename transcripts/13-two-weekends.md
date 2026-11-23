@@ -2,13 +2,13 @@
 
 ## Metadata
 - ID: 13
-- Feature: bb edit --fork, bb.follow, relations in bb search
+- Feature: bb edit --fork, --pick, relations in bb search
 - Date: 2026-11-21
 - Status: draft
 - Complexity: intermediate
 
 ## Overview
-A pool does not need everyone to agree on what a name means. In Dakar the weekend is Saturday and Sunday; in Algiers it is Friday and Saturday. Both are right, and both are called `est_weekend`. This transcript writes the Dakar function and a shop that uses it, forks it for Algiers under the same name with `bb edit --fork`, and shows what follows: the Dakar function stays current and nothing is out of date, `bb search` says how the two relate, the name alone no longer picks one, and each shop keeps following its own function with `bb.follow("<hash>")`, through later edits, without anybody pinning anything.
+A pool does not need everyone to agree on what a name means. In Dakar the weekend is Saturday and Sunday; in Algiers it is Friday and Saturday. Both are right, and both are called `est_weekend`. This transcript writes the Dakar function and a shop that uses it, forks it for Algiers under the same name with `bb edit --fork`, and shows what follows: the Dakar function stays current and nothing is out of date, `bb search` says how the two relate, the name alone no longer picks one, so a new shop says once which weekend it means (`--pick`, or an answer at the terminal), and each shop then keeps following its own function, through later edits, without anybody pinning anything or writing a hash in the code.
 
 Days are numbered as Python does: 0 is Monday, 4 is Friday, 5 is Saturday, 6 is Sunday.
 
@@ -114,27 +114,15 @@ From: est_weekend@fra 258117aefda83e4c400fb36bb534c7560f7de343101fbd425044932f85
 
 # Chapter 3: A Name Is a Search
 
-Two functions answer to `est_weekend`, so the name alone picks neither. bb does not guess: commands take a hash, and code says which function it means with `bb.follow("<hash>")`.
+Two functions answer to `est_weekend`, so the name alone picks neither. bb does not guess: commands take a hash, and a function that starts using the name says once which one it means. The code still says `bb.resolve("est_weekend")`: the choice is kept by the lineage, not written in the source.
 
 ## Source Files
 
-### A shop in Algiers, by name `essai_fra.py`
+### A shop in Algiers `ouvert_alger_fra.py`
 ```python
 import bb
 
 est_weekend = bb.resolve("est_weekend")
-
-
-def ouvert_alger(jour):
-    """Dit si la boutique d'Alger ouvre ce jour (0 pour lundi)."""
-    print("ouvert" if not est_weekend(jour) else "fermé")
-```
-
-### A shop in Algiers, following its weekend `ouvert_alger_fra.py`
-```python
-import bb
-
-est_weekend = bb.follow("6968570ec4b391ca7d42c448a2bb4bb8c06eca72b2cba5a7df5d0be70c418963")
 
 
 def ouvert_alger(jour):
@@ -154,20 +142,22 @@ def est_weekend(jour):
     return int(jour) in (4, 5)
 ```
 
-### Step 7: By name, saving is refused, with the lines to paste
-Each candidate comes as a line to put in the source, followed by its date, author and comment.
+### Step 7: Saving asks which one
+At a terminal, bb lists the candidates and asks. With nobody to answer (a script, an agent), saving is refused with a `--pick` for each candidate; a fork says what it left and why.
 
 ```bash
-$ (bb add essai_fra.py@fra 2>&1 || true) | grep -o 'est_weekend = bb.follow("[0-9a-f]*")' | sort
-est_weekend = bb.follow("258117aefda83e4c400fb36bb534c7560f7de343101fbd425044932f8534a469")
-est_weekend = bb.follow("6968570ec4b391ca7d42c448a2bb4bb8c06eca72b2cba5a7df5d0be70c418963")
+$ (bb add ouvert_alger_fra.py@fra 2>&1 < /dev/null || true) | grep -o -- '--pick est_weekend=[0-9a-f]*' | sort
+--pick est_weekend=258117aefda8
+--pick est_weekend=6968570ec4b3
+$ (bb add ouvert_alger_fra.py@fra 2>&1 < /dev/null || true) | grep -o 'a fork of.*'
+a fork of 258117aefda8... (Vendredi et samedi, comme en Algérie)
 ```
 
-### Step 8: Follow the one you mean
-`bb.follow` is resolved when saving, like `bb.resolve`: the stored code holds a hash.
+### Step 8: Pick the one you mean
+The first characters of the hash are enough. The stored code holds the hash, and the shop's lineage step records which function it follows.
 
 ```bash
-$ bb add ouvert_alger_fra.py@fra | grep '^Import'
+$ bb add ouvert_alger_fra.py@fra --pick est_weekend=6968570ec4b3 | grep '^Import'
 Import: est_weekend -> 6968570ec4b391ca7d42c448a2bb4bb8c06eca72b2cba5a7df5d0be70c418963
 $ yes | bb review ouvert_alger@fra > /dev/null
 $ bb run ouvert_alger@fra 4
@@ -180,18 +170,20 @@ ouvert
 
 # Chapter 4: Each Shop Follows Its Own Weekend
 
-The shop in Dakar was written with `bb.resolve("est_weekend")`, when one function had that name. Its stored code holds a hash, and a hash knows which function it means. So its draft now shows `bb.follow`, and it keeps following the Dakar function whatever else is called `est_weekend`.
+The shop in Dakar was written with `bb.resolve("est_weekend")`, when one function had that name. Its step says which function it follows, so it keeps following the Dakar function whatever else is called `est_weekend`, and saving it asks nothing.
 
 ## Workflow
 
-### Step 9: The draft follows a lineage, not a name
-The note is a `# bb:` comment line in the draft; `sed` takes the `# ` off here, only because a line starting with `#` is a comment in a transcript.
+### Step 9: The draft says which one is followed, and what else there is
+The notes are `# bb:` comment lines in the draft: the function followed, and for each other one its `--pick` and where it comes from. Someone (or an agent) reading the draft can choose without asking the pool. `sed` takes the `# ` off here, only because a line starting with `#` is a comment in a transcript.
 
 ```bash
-$ bb show ouvert@fra | head -3 | sed 's/^# //'
+$ bb show ouvert@fra | head -5 | sed 's/^# //; s/followed: .*/followed/'
 import bb
-bb: one of 2 called est_weekend: its lineage is followed
-est_weekend = bb.follow('258117aefda83e4c400fb36bb534c7560f7de343101fbd425044932f8534a469')
+bb: 2 functions are called est_weekend: this follows 258117aefda8... and saving keeps to it (--pick follows another)
+bb:   258117aefda8...  followed
+bb:   6968570ec4b3...  --pick est_weekend=6968570ec4b3: a fork of 258117aefda8... (Vendredi et samedi, comme en Algérie)
+est_weekend = bb.resolve('est_weekend')
 ```
 
 ### Step 10: Dakar edits its function
@@ -220,11 +212,9 @@ ouvert — Dit si la boutique ouvre ce jour (0 pour lundi).
 $ bb tree ouvert_alger@fra
 ouvert_alger — Dit si la boutique d'Alger ouvre ce jour (0 pour lundi).
 └── est_weekend — Vrai quand jour (0 pour lundi) est un jour de repos.
-$ bb show ouvert@fra | head -4 | sed 's/^# //'
+$ bb show ouvert@fra | head -2 | sed 's/^# //'
 import bb
 bb: out of date: uses 258117aefda8..., saving picks d53984577b6d...
-bb: one of 2 called est_weekend: its lineage is followed
-est_weekend = bb.follow('258117aefda83e4c400fb36bb534c7560f7de343101fbd425044932f8534a469')
 ```
 
 ### Step 12: Updating goes to the new Dakar weekend, never to the fork
@@ -233,10 +223,9 @@ $ bb update ouvert@fra -m "Suivre Dakar" | head -1
 Updated 1 function(s), deepest first:
 $ bb search --outdated | tail -1
 No matches found: nothing outdated
-$ bb show ouvert@fra | head -3 | sed 's/^# //'
+$ bb show ouvert@fra | head -2 | sed 's/^# //; s/ and saving.*//'
 import bb
-bb: one of 2 called est_weekend: its lineage is followed
-est_weekend = bb.follow('d53984577b6d626ecfe381ae2d29a49d1b769a081a707854d2cac56219dc1d1f')
+bb: 2 functions are called est_weekend: this follows d53984577b6d...
 ```
 
 ### Step 13: Two shops, two weekends, one name
@@ -260,6 +249,6 @@ ouvert
 
 3. **A name is a search**: when several functions answer to it, bb does not pick. `bb search NAME` tells them apart; commands take a hash.
 
-4. **`bb.follow("<hash>")` refers to a lineage**: any version of it will do, and saving stores where that lineage is now. `bb.ref("<hash>")` stays on one version; `bb.resolve("name")` is the short form for a name only one function answers to.
+4. **The choice is made once, and the lineage keeps it**: a new reference to a shared name is settled by an answer at the terminal or by `--pick NAME=HASH`. The code keeps saying `bb.resolve("name")`; the caller's lineage step records which function it follows, and later saves ask nothing. `--pick` on `bb edit` moves a caller to another fork. `bb.ref("<hash>")` stays on one version.
 
-5. **Callers never lose their way**: a caller's stored hash says which function it means. `bb show` and `bb edit` write the reference as `bb.follow` when the name no longer finds that function alone, so `bb search --outdated` and `bb update` keep following the right lineage.
+5. **Callers never lose their way**: `bb show` and `bb edit` list, in `# bb:` comments, the function followed and the others with their `--pick` and the reason each fork gave, and `bb search --outdated` and `bb update` keep following the right lineage.

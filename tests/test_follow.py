@@ -1,12 +1,17 @@
-"""bb.follow("<hash>"): a reference to a lineage, which needs no agreement on names."""
+"""A name several functions answer to: the caller's lineage step remembers which one it follows."""
 import json
+import os
+import subprocess
+import sys
+import time
 
 from tests.test_edit_file import fork, set_code
-from tests.test_import_by_name import Pool, hash_of
+from tests.test_import_by_name import BB, Pool, hash_of
 
 WEEKEND = 'def is_weekend(day):\n    """A day of rest (0 is Monday)."""\n    return day in {days}\n'
 OPENING = ('import bb\nis_weekend = {ref}\n\n\ndef {name}(day):\n    """Open on working days."""\n'
            '    return not is_weekend(day)\n')
+BY_NAME = OPENING.format(ref='bb.resolve("is_weekend")', name='{name}')
 
 
 def edit_by_hash(pool, tmp_path, func_hash, code, name='draft.md'):
@@ -16,90 +21,148 @@ def edit_by_hash(pool, tmp_path, func_hash, code, name='draft.md'):
     return pool.bb('edit', f'{func_hash}@eng', str(draft), '-m', 'change')
 
 
+def add(pool, name, code, *args, answer=None):
+    """bb add name with arguments; with answer, at a terminal (a pty) where answer is typed."""
+    source = pool.tmp / f'{name}_eng.py'
+    source.write_text(code)
+    command = [sys.executable, str(BB), 'add', f'{source}@eng', *args]
+    if answer is None:
+        return subprocess.run(command, capture_output=True, text=True, env=pool.env, stdin=subprocess.DEVNULL)
+    master, slave = os.openpty()
+    try:
+        os.write(master, answer.encode())
+        return subprocess.run(command, capture_output=True, text=True, env=pool.env, stdin=slave, timeout=60)
+    finally:
+        os.close(master)
+        os.close(slave)
+
+
+def reword(pool, tmp_path, *args, name='opening.md'):
+    """Save opening with other words in its docstring: an edit that changes no reference."""
+    draft = tmp_path / name
+    pool.bb('edit', 'opening@eng', str(draft))
+    draft.write_text(draft.read_text().replace('Open on working days', 'Open when people work'))
+    return pool.bb('edit', 'opening@eng', str(draft), '-m', 'words', *args)
+
+
+def outdated(pool):
+    return [r['name'] for r in json.loads(pool.bb('search', '--outdated', '--json').stdout)]
+
+
 def test_a_caller_keeps_following_its_function_when_another_takes_the_name(tmp_path):
     pool = Pool(tmp_path)
     origin = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
-    caller = pool.add('opening', OPENING.format(ref='bb.resolve("is_weekend")', name='opening'))
+    caller = pool.add('opening', BY_NAME.format(name='opening'))
     assert caller.returncode == 0, caller.stderr
-    assert "is_weekend = bb.resolve('is_weekend')" in pool.bb('show', 'opening@eng').stdout
+    assert pool.bb('show', 'opening@eng').stdout.startswith("import bb\nis_weekend = bb.resolve('is_weekend')")
     other = hash_of(fork(pool, tmp_path, 'is_weekend@eng', WEEKEND.format(days='(4, 5)'), 'Friday and Saturday'))
-    # Two functions answer to the name: the draft says which one this caller means, by its lineage
+    # Two functions answer to the name: the draft still names it, and says which one is followed and what else there is
     shown = pool.bb('show', 'opening@eng').stdout
-    assert f"is_weekend = bb.follow('{origin}')" in shown and 'bb.ref' not in shown
+    assert "is_weekend = bb.resolve('is_weekend')" in shown and 'bb.ref' not in shown
+    assert f'# bb: 2 functions are called is_weekend: this follows {origin[:12]}...' in shown
+    assert f'# bb:   {origin[:12]}...  followed' in shown
+    assert f'# bb:   {other[:12]}...  --pick is_weekend={other[:12]}: a fork of {origin[:12]}... ' \
+           f'(Friday and Saturday)' in shown
     assert 'nothing outdated' in pool.bb('search', '--outdated').stdout
-    # The followed function moves on: saving the caller follows it, never the fork, and pins nothing
+    # The followed function moves on: saving the caller follows it, never the fork, asks nothing and pins nothing
     newer = hash_of(edit_by_hash(pool, tmp_path, origin, WEEKEND.format(days='(6, 5)')))
     assert f'saving picks {newer[:12]}' in pool.bb('show', 'opening@eng').stdout
-    draft = tmp_path / 'opening.md'
-    pool.bb('edit', 'opening@eng', str(draft))
-    draft.write_text(draft.read_text().replace('Open on working days', 'Open when people work'))
-    saved = pool.bb('edit', 'opening@eng', str(draft), '-m', 'words')
+    saved = reword(pool, tmp_path)
     assert saved.returncode == 0, saved.stderr
     assert f'Import: is_weekend -> {newer} (was {origin})' in saved.stdout
     found = {r['name']: r for r in json.loads(pool.bb('search', 'opening', '--json').stdout)}
     assert found['opening']['pinned'] == [] and found['opening']['outdated'] == []
-    assert other not in pool.bb('show', 'opening@eng').stdout
     assert pool.run(hash_of(saved), 5) == 'False'
 
 
-def test_a_shared_name_is_refused_with_lines_to_paste(tmp_path):
+def test_a_new_reference_to_a_shared_name_needs_a_pick(tmp_path):
     pool = Pool(tmp_path)
     one = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
     two = hash_of(pool.add('is_weekend', WEEKEND.format(days='(4, 5)')))
-    refused = pool.add('opening', OPENING.format(ref='bb.resolve("is_weekend")', name='opening'))
-    assert refused.returncode == 1
+    refused = add(pool, 'opening', BY_NAME.format(name='opening'))
+    assert refused.returncode == 1 and "2 functions answer to 'is_weekend'" in refused.stderr
     for func_hash in (one, two):
-        assert f'is_weekend = bb.follow("{func_hash}")' in refused.stderr
-    chosen = pool.add('opening', OPENING.format(ref=f'bb.follow("{two}")', name='opening'))
+        assert f'--pick is_weekend={func_hash[:12]}' in refused.stderr
+    wrong = add(pool, 'opening', BY_NAME.format(name='opening'), '--pick', 'is_weekend=ffffffffffff')
+    assert wrong.returncode == 1 and 'names none of the functions' in wrong.stderr
+    chosen = add(pool, 'opening', BY_NAME.format(name='opening'), '--pick', f'is_weekend={two[:12]}')
     assert chosen.returncode == 0, chosen.stderr
     assert pool.run(hash_of(chosen), 4) == 'False' and pool.run(hash_of(chosen), 6) == 'True'
+    # Chosen once: the step remembers, later saves ask nothing
+    again = reword(pool, tmp_path)
+    assert again.returncode == 0, again.stderr
+    assert pool.run(hash_of(again), 4) == 'False'
+    assert f'this follows {two[:12]}' in pool.bb('show', 'opening@eng').stdout
 
 
-def test_following_an_old_version_saves_the_current_one(tmp_path):
+def test_someone_at_the_terminal_is_asked_which_one(tmp_path):
     pool = Pool(tmp_path)
-    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
-    new = hash_of(edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)')))
-    saved = pool.add('opening', OPENING.format(ref=f'bb.follow("{old}")', name='opening'))
-    assert saved.returncode == 0 and f'Import: is_weekend -> {new}' in saved.stdout
-    stored = tmp_path / 'bb' / 'pool' / 'functions' / hash_of(saved)[:2] / hash_of(saved)[2:] / 'object.json'
-    assert f"bb.ref('{new}')" in stored.read_text() and 'follow' not in stored.read_text()
+    hashes = [hash_of(pool.add('is_weekend', WEEKEND.format(days=days))) for days in ('(5, 6)', '(4, 5)')]
+    asked = add(pool, 'opening', BY_NAME.format(name='opening'), answer='2\n')
+    assert asked.returncode == 0, asked.stderr
+    assert "2 functions answer to 'is_weekend'" in asked.stdout and 'Which one?' in asked.stdout
+    second = next(line for line in asked.stdout.splitlines() if line.startswith('  2. '))
+    picked = next(h for h in hashes if h[:12] in second)
+    assert f'Import: is_weekend -> {picked}' in asked.stdout
+    # No answer: nothing is guessed
+    silent = add(pool, 'closing', BY_NAME.format(name='closing'), answer='\n')
+    assert silent.returncode == 1 and '--pick is_weekend=' in silent.stderr
+
+
+def test_a_pick_moves_a_caller_to_another_fork(tmp_path):
+    pool = Pool(tmp_path)
+    origin = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    pool.add('opening', BY_NAME.format(name='opening'))
+    other = hash_of(fork(pool, tmp_path, 'is_weekend@eng', WEEKEND.format(days='(4, 5)'), 'Friday and Saturday'))
+    draft = tmp_path / 'move.md'
+    pool.bb('edit', 'opening@eng', str(draft))
+    moved = pool.bb('edit', 'opening@eng', str(draft), '-m', 'the other weekend', '--pick', f'is_weekend={other[:12]}')
+    assert moved.returncode == 0, moved.stderr
+    assert f'Import: is_weekend -> {other} (was {origin})' in moved.stdout
+    shown = pool.bb('show', 'opening@eng').stdout
+    assert f'this follows {other[:12]}' in shown and f'--pick is_weekend={origin[:12]}' in shown
+    # And stays there
+    again = reword(pool, tmp_path)
+    assert again.returncode == 0 and pool.run(hash_of(again), 4) == 'False'
 
 
 def test_a_lineage_with_two_ends_is_not_guessed(tmp_path):
     pool = Pool(tmp_path)
     root = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    pool.add('opening', BY_NAME.format(name='opening'))
     one = hash_of(edit_by_hash(pool, tmp_path, root, WEEKEND.format(days='(6, 5)'), 'one.md'))
     two = hash_of(edit_by_hash(pool, tmp_path, root, WEEKEND.format(days='[5, 6]'), 'two.md'))
-    refused = pool.add('opening', OPENING.format(ref=f'bb.follow("{root}")', name='opening'))
-    assert refused.returncode == 1 and 'has 2 ends' in refused.stderr
-    assert f'bb.follow("{one}")' in refused.stderr and f'bb.follow("{two}")' in refused.stderr
-    assert pool.add('opening', OPENING.format(ref=f'bb.follow("{two}")', name='opening')).returncode == 0
-
-
-def test_a_hash_the_pool_does_not_have_is_refused(tmp_path):
-    pool = Pool(tmp_path)
-    refused = pool.add('opening', OPENING.format(ref=f'bb.follow("{"ab" * 32}")', name='opening'))
-    assert refused.returncode == 1 and 'no function abababababab... in the pool' in refused.stderr
+    shown = pool.bb('show', 'opening@eng').stdout
+    assert 'has 2 ends: saving asks which' in shown and "is_weekend = bb.resolve('is_weekend')" in shown
+    refused = reword(pool, tmp_path)
+    assert refused.returncode == 1
+    assert f'--pick is_weekend={one[:12]}' in refused.stderr and f'--pick is_weekend={two[:12]}' in refused.stderr
+    saved = reword(pool, tmp_path, '--pick', f'is_weekend={two[:12]}', name='again.md')
+    assert saved.returncode == 0, saved.stderr
+    assert f'Import: is_weekend -> {two} (was {root})' in saved.stdout
 
 
 def test_a_caller_follows_its_function_through_a_rename(tmp_path):
     pool = Pool(tmp_path)
     old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
-    pool.add('opening', OPENING.format(ref='bb.resolve("is_weekend")', name='opening'))
+    pool.add('opening', BY_NAME.format(name='opening'))
     renamed = edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)').replace('is_weekend', 'is_rest_day'))
     assert renamed.returncode == 0 and 'Renamed' in renamed.stdout
+    # The draft names it as it is called now, under the alias the code uses
     shown = pool.bb('show', 'opening@eng').stdout
-    assert f"is_weekend = bb.follow('{old}')" in shown and f'saving picks {hash_of(renamed)[:12]}' in shown
+    assert "is_weekend = bb.resolve('is_rest_day')" in shown and f'saving picks {hash_of(renamed)[:12]}' in shown
+    saved = reword(pool, tmp_path)
+    assert saved.returncode == 0, saved.stderr
+    assert pool.run(hash_of(saved), 5) == 'False' and outdated(pool) == []
 
 
 def test_a_reference_inside_the_function_body_is_refused(tmp_path):
     pool = Pool(tmp_path)
-    weekend = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
-    for written in ('bb.resolve("is_weekend")', f'bb.follow("{weekend}")'):
-        refused = pool.add('opening', 'import bb\n\n\ndef opening(day):\n    """Open on working days."""\n'
-                           f'    is_weekend = {written}\n    return not is_weekend(day)\n')
-        assert refused.returncode == 1, refused.stdout
-        assert 'is inside the function: bind it above the def' in refused.stderr
+    pool.add('is_weekend', WEEKEND.format(days='(5, 6)'))
+    refused = pool.add('opening', 'import bb\n\n\ndef opening(day):\n    """Open on working days."""\n'
+                       '    is_weekend = bb.resolve("is_weekend")\n    return not is_weekend(day)\n')
+    assert refused.returncode == 1, refused.stdout
+    assert 'is inside the function: bind it above the def' in refused.stderr
     inline = pool.add('opening', 'import bb\n\n\ndef opening(day):\n    """Open on working days."""\n'
                       '    return not bb.resolve("is_weekend")(day)\n')
     assert inline.returncode == 1 and 'is inside the function' in inline.stderr
@@ -124,31 +187,17 @@ def test_a_hash_inside_the_body_gets_a_draft_that_saves(tmp_path):
     assert again.returncode == 0, again.stderr
     # Bound above the def, it follows by name again
     draft.write_text(draft.read_text().replace(f"    is_weekend = bb.ref('{weekend}')\n", '')
-                     .replace('def opening', f"is_weekend = bb.follow('{weekend}')\n\n\ndef opening"))
-    moved = pool.bb('edit', 'opening@eng', str(draft), '-m', 'follow')
+                     .replace('def opening', 'is_weekend = bb.resolve("is_weekend")\n\n\ndef opening'))
+    moved = pool.bb('edit', 'opening@eng', str(draft), '-m', 'by name')
     assert moved.returncode == 0, moved.stderr
     shown = pool.bb('show', 'opening@eng').stdout
     assert "is_weekend = bb.resolve('is_weekend')" in shown and '# bb:' not in shown
 
 
-def test_a_follow_that_names_no_hash_says_what_it_takes(tmp_path):
-    pool = Pool(tmp_path)
-    origin = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
-    for written in ('is_weekend', origin[:12], origin.upper()):
-        refused = pool.add('opening', OPENING.format(ref=f'bb.follow("{written}")', name='opening'))
-        assert refused.returncode == 1
-        assert "bb.follow takes one pool function's hash" in refused.stderr
-        assert 'outside its function' not in refused.stderr
-
-
-def outdated(pool):
-    return [r['name'] for r in json.loads(pool.bb('search', '--outdated', '--json').stdout)]
-
-
 def test_a_fork_back_to_old_code_does_not_take_over_who_used_that_code(tmp_path):
     pool = Pool(tmp_path)
     old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
-    assert pool.add('opening', OPENING.format(ref='bb.resolve("is_weekend")', name='opening')).returncode == 0
+    assert pool.add('opening', BY_NAME.format(name='opening')).returncode == 0
     new = hash_of(edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)')))
     assert outdated(pool) == ['opening']
     # A fork of the new version, with the old version's code: one code, now in two lineages
@@ -157,29 +206,27 @@ def test_a_fork_back_to_old_code_does_not_take_over_who_used_that_code(tmp_path)
     # opening follows the step it was saved on: its lineage went on to new, whatever the fork holds
     assert outdated(pool) == ['opening']
     shown = pool.bb('show', 'opening@eng').stdout
-    assert f"is_weekend = bb.follow('{old}')" in shown and f'saving picks {new[:12]}' in shown
+    assert f'saving picks {new[:12]}' in shown and f'this follows {new[:12]}' in shown
+    assert f'--pick is_weekend={old[:12]}: a fork of {new[:12]}... (as it was)' in shown
+    saved = reword(pool, tmp_path)
+    assert saved.returncode == 0, saved.stderr
+    assert f'Import: is_weekend -> {new} (was {old})' in saved.stdout and outdated(pool) == []
+    # A function saved on the fork follows the fork: it is up to date on the same code
+    closing = add(pool, 'closing', BY_NAME.format(name='closing'), '--pick', f'is_weekend={old[:12]}')
+    assert closing.returncode == 0, closing.stderr
+    assert outdated(pool) == []
+
+
+def test_update_follows_the_lineage_a_step_stands_on(tmp_path):
+    pool = Pool(tmp_path)
+    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    pool.add('opening', BY_NAME.format(name='opening'))
+    new = hash_of(edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)')))
+    fork(pool, tmp_path, f'{new}@eng', WEEKEND.format(days='(5, 6)'), 'as it was')
     updated = pool.bb('update', 'opening@eng', '-m', 'follow')
     assert updated.returncode == 0, updated.stderr
     assert outdated(pool) == [] and 'out of date' not in pool.bb('show', 'opening@eng').stdout
     assert pool.run(pool.bb('latest', 'opening@eng', '--hash').stdout.strip(), 5) == 'False'
-    # A function saved on the fork follows the fork: it is up to date on the same code
-    assert pool.add('closing', OPENING.format(ref=f'bb.follow("{old}")', name='closing')).returncode == 0
-    assert outdated(pool) == []
-
-
-def test_saving_a_draft_follows_the_lineage_its_step_stands_on(tmp_path):
-    pool = Pool(tmp_path)
-    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
-    pool.add('opening', OPENING.format(ref='bb.resolve("is_weekend")', name='opening'))
-    new = hash_of(edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)')))
-    fork(pool, tmp_path, f'{new}@eng', WEEKEND.format(days='(5, 6)'), 'as it was')
-    draft = tmp_path / 'opening.md'
-    pool.bb('edit', 'opening@eng', str(draft))
-    assert f"bb.follow('{old}')" in draft.read_text()
-    draft.write_text(draft.read_text().replace('Open on working days', 'Open when people work'))
-    saved = pool.bb('edit', 'opening@eng', str(draft), '-m', 'words')
-    assert saved.returncode == 0, saved.stderr
-    assert f'Import: is_weekend -> {new} (was {old})' in saved.stdout
 
 
 def forget_follows(pool_dir):
@@ -204,10 +251,9 @@ def forget_follows(pool_dir):
 
 
 def test_migrate_says_what_older_steps_follow_without_rewriting_them(tmp_path):
-    import time
     pool = Pool(tmp_path)
     old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
-    pool.add('opening', OPENING.format(ref='bb.resolve("is_weekend")', name='opening'))
+    pool.add('opening', BY_NAME.format(name='opening'))
     time.sleep(1.1)  # steps are dated to the second, and the migration reads dates
     new = hash_of(edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)')))
     fork(pool, tmp_path, f'{new}@eng', WEEKEND.format(days='(5, 6)'), 'as it was')
