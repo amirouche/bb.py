@@ -9,6 +9,8 @@
 Write a function in your language; if someone else, human or machine, had the same thought, the hash will show it.
 
 > **Experimental**: This is research software under active development.
+>
+> **Warning**: There are no backward compatibility guarantees and no migrations until v1. A new version may not read a pool written by an older one.
 
 Convergence is detected, divergence is preserved. When two minds write the same logic, they get the same hash, and no shared language was needed to find each other. When they write different logic, they get different hashes, and both are kept. Nothing is flattened into a single English version.
 

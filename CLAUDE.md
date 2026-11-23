@@ -221,9 +221,7 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
    step of it the reference stands on: one code may sit in two lineages
    (a fork back to an older version's code), and a caller follows one,
    from that step (lineage_ends). Steps saved before it existed are
-   followed by hash; `bb migrate` appends a 'follow' step saying it
-   (nothing is rewritten; a date decides only there, when a used
-   function had several steps). Steps are per
+   followed by hash. Steps are per
    (language, name): a name's current version is the end of its own
    lineage. Relations: add, edit, document, rename (supersedes the old
    name), refactor, restore (an older version's code again), translate,
@@ -234,8 +232,8 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
    Two names may share one code; an edit in one language leaves the others
    on their version, waiting for a translation ("not yet translated").
    One caller using two names of one code is refused. Drafts' bb:parent
-   marker names the step they continue. `bb migrate` converts pools in the
-   old layout (pool/XX/..., restore/); other commands refuse them
+   marker names the step they continue. There is no `bb migrate`: no
+   backward compatibility guarantees and no migrations until v1
 ```
 
 ### Public-Facing Hash Specification
@@ -275,7 +273,7 @@ Public hashes in Beyond Babel refer to content-addressed identifiers that follow
 2. Does this break multilingual support? (Test with different languages)
 3. Does this preserve built-in and imported name handling?
 4. Does this maintain import sorting?
-5. Is the JSON schema still backward compatible?
+5. Does this change the stored JSON format? (Allowed before v1: no backward compatibility guarantees, no migrations; say so in the commit)
 6. Are error messages helpful to users?
 
 ## Chore
@@ -296,6 +294,6 @@ Beyond Babel is a carefully designed system for multilingual function sharing th
 - Preserve the invariants listed above
 - Test with multiple languages
 - Ensure hash computation remains deterministic
-- Maintain backward compatibility with existing pool data
+- Before v1 there are no backward compatibility guarantees and no migrations (see README)
 
 The codebase is self-contained (single file), well-structured (clear function boundaries), and follows Python best practices.
