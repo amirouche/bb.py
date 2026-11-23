@@ -226,13 +226,17 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
    lineage. Relations: add, edit, document, rename (supersedes the old
    name), refactor, restore (an older version's code again), translate,
    fork (`bb edit --fork`: another function on purpose; the step it left
-   stays current, the fork starts its own lineage, its comment says why),
+   stays current, the fork starts its own lineage, its comment says why;
+   a check it changes is a fork too, a renamed one included, so the
+   origin keeps its checks and their names),
    follow (`--pick` moved a reference to another lineage holding the code
    it already used: same function, same mapping, another `follows`).
    One name may hold several functions: `bb search NAME` says how they
    relate (fork, same lineage, another origin, code alike, shared checks).
    Two names may share one code; an edit in one language leaves the others
    on their version, waiting for a translation ("not yet translated").
+   One name on one code is one function: an edit (fork or not) landing a
+   name on code another current function of that name holds is refused.
    One caller using two names of one code is refused. Drafts' bb:parent
    marker names the step they continue. There is no `bb migrate`: no
    backward compatibility guarantees and no migrations until v1

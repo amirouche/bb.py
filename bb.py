@@ -7172,6 +7172,13 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     name when the fork renames it. A check that keeps both its code and
     its name remains the origin's, as it was (a note says so).
 
+    One name, one code is one function: an edit (a fork or not) that would
+    give its name code another function called so already is, is refused.
+    A fork edited back to its origin's code would be the origin, and
+    nothing could follow one rather than the other: use the origin, or
+    keep them apart by code or by name. Code of an older version, which
+    nothing is current on, is fine.
+
     --pick NAME=HASH says which function a name means when several answer
     to bb.resolve("NAME") (the hash or its first characters, as bb show
     and the refusal list them). A reference the function already has
@@ -7362,6 +7369,34 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
               + (f"; your edit is kept in {path}" if file is None else "") + ".", file=sys.stderr)
         sys.exit(1)
 
+    # A fork leaves the origin's checks as they are: a check it changes is a fork too. One
+    # that keeps both its code and its name cannot be two functions: it remains the origin's
+    remains = set()
+    for check, prep in plan['checks'] if fork else []:
+        left = lineage_index()['steps'].get(check.get('parent') or '')
+        if (left and not unchanged(check, prep) and left['lang'] == lang
+                and (left['function'], left['name']) == (prep['hash'], prep['name_mapping'].get('_bb_v_0'))):
+            remains.add(id(check))
+            print(f"Note: check '{left['name']}' keeps its code and its name: it remains the origin's, as it "
+                  f"was (to fork it, rename it or change its code).", file=sys.stderr)
+
+    # One name, one code: one function. A save that would put a second lineage of a name on
+    # code another function called so already is (a fork edited to its origin's code, an
+    # origin to its fork's) is refused: nothing could tell the two apart, or follow one of them
+    for sec, prep in [(section, prepared)] + plan['checks']:
+        left = lineage_index()['steps'].get(sec.get('parent') or '')
+        if left is None or left['lang'] != lang or unchanged(sec, prep) or id(sec) in remains:
+            continue
+        called = prep['name_mapping'].get('_bb_v_0')
+        taken = [s for s in lineage_current_steps(lang, called, prep['hash']) if s != sec['parent']]
+        if taken:
+            relation = SEARCH_RELATIONS[lineage_relation(sec['parent'], taken[0])[0]]
+            print(f"Error: {called}@{lang} is already this code: {prep['hash']} ({relation}). Two functions "
+                  f"called {called} cannot be one code: use that one, or give this one other code or another "
+                  f"name. Nothing saved" + (f"; your edit is kept in {path}" if file is None else "") + ".",
+                  file=sys.stderr)
+            sys.exit(1)
+
     if comment is None:
         try:
             comment = input("Why it leaves (press Enter to skip): " if fork
@@ -7380,17 +7415,6 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
             f.write(markdown_render_edit(saved['title'], saved, saved_checks))
 
     previous_step = lineage_index()['steps'].get(section['parent'] or '')
-
-    # A fork leaves the origin's checks as they are: a check it changes is a fork too. One
-    # that keeps both its code and its name cannot be two functions: it remains the origin's
-    remains = set()
-    for check, prep in plan['checks'] if fork else []:
-        left = lineage_index()['steps'].get(check.get('parent') or '')
-        if (left and not unchanged(check, prep) and left['lang'] == lang
-                and (left['function'], left['name']) == (prep['hash'], prep['name_mapping'].get('_bb_v_0'))):
-            remains.add(id(check))
-            print(f"Note: check '{left['name']}' keeps its code and its name: it remains the origin's, as it "
-                  f"was (to fork it, rename it or change its code).", file=sys.stderr)
 
     # Save checks first, so the implementation never lists a missing check
     with contextlib.redirect_stdout(io.StringIO()):

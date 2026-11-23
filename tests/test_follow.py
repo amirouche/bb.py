@@ -415,22 +415,27 @@ def test_update_follows_the_step_a_caller_stands_on_when_one_code_has_two(tmp_pa
     opening = hash_of(pool.add('opening', BY_NAME.format(name='opening')))
     new = hash_of(edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)')))
     fork(pool, tmp_path, f'{new}@eng', WEEKEND.format(days='(5, 6)'), 'as it was')
-    # opening's code in two lineages: the first one, behind on is_weekend, and a fork of a fork, on the fork
+    # opening's code in two lineages: the first one, behind on is_weekend, and a fork of a fork, on the
+    # fork, under another name (one name on one code is one function: the same name would be refused)
     always = hash_of(fork(pool, tmp_path, f'{opening}@eng', 'def opening(day):\n    """Always open."""\n    return True\n',
                           'never closed', name='always.md'))
     draft = tmp_path / 'back.md'
     pool.bb('edit', f'{always}@eng', str(draft))
     set_code(draft, BY_NAME.format(name='opening'))
+    same = pool.bb('edit', f'{always}@eng', str(draft), '--fork', '-m', 'closed again', '--pick', f'is_weekend={old[:12]}')
+    assert same.returncode == 1 and f'opening@eng is already this code: {opening}' in same.stderr
+    set_code(draft, BY_NAME.format(name='hours'))
     back = pool.bb('edit', f'{always}@eng', str(draft), '--fork', '-m', 'closed again', '--pick', f'is_weekend={old[:12]}')
     assert back.returncode == 0 and hash_of(back) == opening, back.stdout + back.stderr
-    assert outdated(pool) == ['opening']
+    behind = json.loads(pool.bb('search', '--outdated', '--json').stdout)
+    assert [list(r['outdated_as'].values()) for r in behind] == [[['opening@eng']]]  # one code: only that name of it
     # week stands on the first lineage (not a fork's): that one is brought up to date
     assert add(pool, 'week', WEEK, '--pick', f'opening={opening[:12]}').returncode == 0
     updated = pool.bb('update', 'week@eng', '-m', 'catch up')
     assert updated.returncode == 0 and 'Updated 2 function(s)' in updated.stdout, updated.stdout + updated.stderr
     assert outdated(pool) == []
     assert pool.run(hash_of(updated)) == '[0, 1, 2, 3, 4]'
-    assert opening in latest(pool, 'opening@eng')  # the fork that holds the code stays
+    assert latest(pool, 'hours@eng') == [opening]  # the name on the fork, which holds the code, stays
 
 
 def test_the_tree_of_a_name_says_what_that_name_pins_and_follows(tmp_path):

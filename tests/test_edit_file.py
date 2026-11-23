@@ -216,7 +216,7 @@ def test_a_fork_that_changes_a_check_leaves_the_origin_its_check(tmp_path):
     assert 'No matches found' in pool.bb('search', '--diverged').stdout
 
 
-def test_a_fork_edited_back_to_its_origins_code_restores_nothing(tmp_path):
+def test_a_fork_edited_to_its_origins_code_is_refused_and_to_an_older_version_restores_nothing(tmp_path):
     pool = Pool(tmp_path)
     code = 'def is_weekend(day):\n    """A day of rest (0 is Monday)."""\n    return day in {days}\n'
     origin = hash_of(pool.edit('is_weekend', code.format(days='(5, 6)')))
@@ -224,10 +224,25 @@ def test_a_fork_edited_back_to_its_origins_code_restores_nothing(tmp_path):
     draft = tmp_path / 'back.md'
     pool.bb('edit', f'{other}@eng', str(draft))
     set_code(draft, code.format(days='(5, 6)'))
+    # One name, one code is one function: the fork would be its origin, and nothing could follow one of them
     back = pool.bb('edit', f'{other}@eng', str(draft), '-m', 'the same days after all')
+    assert back.returncode == 1 and 'Nothing saved' in back.stderr
+    assert f'is_weekend@eng is already this code: {origin} (this one forked from it)' in back.stderr
+    # Nor the origin its fork: the other way round is refused as well
+    forth = tmp_path / 'forth.md'
+    pool.bb('edit', f'{origin}@eng', str(forth))
+    set_code(forth, code.format(days='(4, 5)'))
+    refused = pool.bb('edit', f'{origin}@eng', str(forth), '-m', 'Friday too')
+    assert refused.returncode == 1 and f'is already this code: {other} (forked from this one)' in refused.stderr
+    assert sorted(pool.bb('latest', 'is_weekend@eng', '--hash').stdout.split()) == sorted([origin, other])
+    # The origin moves on: its old code is nobody's now, and the fork may take it.
     # Its own lineage never held that code: an edit, not a restore
+    set_code(forth, code.format(days='(6,)'))
+    assert pool.bb('edit', f'{origin}@eng', str(forth), '-m', 'Sunday').returncode == 0
+    back = pool.bb('edit', f'{other}@eng', str(draft), '-m', 'the days the origin left')
     assert back.returncode == 0 and 'Restored' not in back.stdout and f'Parent: {other}' in back.stdout
     assert hash_of(back) == origin
+    assert 'is valid' in pool.bb('validate').stdout
 
 
 def test_a_fork_that_renames_a_check_leaves_the_origin_its_name(tmp_path):
