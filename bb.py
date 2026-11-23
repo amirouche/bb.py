@@ -63,9 +63,13 @@ Writing functions for the pool:
     bb.resolve("name"), never as bb.ref: choosing is not pinning, and
     bb search --outdated goes on following the chosen function.
   - bb.ref("<hash>") is that version, kept: it stays pinned across edits.
-    A pin is not debt: bb search --outdated does not list it (the
-    function's status says "N pinned", and its draft notes
-    `# bb: pinned; the current name is ...` when the name moved on).
+    A pin is not debt: bb search --outdated does not list it. To find
+    pins: `bb search --pinned` lists the functions that hold one (a
+    `Pinned:` line each, saying whether that version's lineage went on),
+    `bb caller X` marks the callers that pin X, bb tree marks them
+    `[pinned]`, and a draft notes `# bb: pinned; the current name is
+    ...` when the name moved on. A pin belongs to a name: when two
+    names share one code, each may pin or follow on its own.
 
   bb show and bb edit display references by name (bb.resolve). When
   several functions answer to the name, `# bb:` comment lines above the
@@ -3625,6 +3629,30 @@ def search_pins(function: Dict[str, Any]) -> Set[str]:
     return set.intersection(*(use['pins'] for use in uses)) if uses else set()
 
 
+def search_pinned_uses(function: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    The versions a function pins on purpose (bb.ref), under any of its names.
+
+    Returns:
+        [{'hash' (the version pinned), 'alias' (the name it is used by),
+        'as' (the names of the function that pin it, name@lang, when not
+        all of them do; [] when all do), 'now' (where that version's
+        lineage is now: the functions a caller following it would get;
+        [hash] when the pinned version is still current)}], sorted by hash
+    """
+    uses = search_uses(function)
+    pinned: Dict[str, Dict[str, Any]] = {}
+    for use in uses:
+        for dep in sorted(use['pins']):
+            entry = pinned.setdefault(dep, {'hash': dep, 'alias': use['aliases'].get(dep), 'as': [], 'now': set()})
+            entry['as'].append(f"{use['name']}@{use['lang']}" if use['name'] else use['lang'])
+            entry['now'].update(lineage_ends(dep, use['lang'], use['aliases'].get(dep)) or [dep])
+    for entry in pinned.values():
+        entry['as'] = sorted(set(entry['as'])) if len(set(entry['as'])) < len({(u['lang'], u['name']) for u in uses}) else []
+        entry['now'] = sorted(entry['now'])
+    return [pinned[dep] for dep in sorted(pinned)]
+
+
 def search_outdated_names(index: Dict[str, Any], func_hash: str) -> Dict[str, List[str]]:
     """
     The versions a function uses that are no longer current, and the names of it that are behind.
@@ -3784,7 +3812,9 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
         'aliases': dict(mapping.get('alias_mapping') or {}),
         'behind': (behind or {}).get(func_hash, []),
         'untranslated': [list(pair) for pair in search_untranslated(func_hash)],
-        'pinned': sorted(set(mapping.get('pinned') or [])),
+        # Under any name of the function; 'pins' says which names and whether the version is still current
+        'pinned': [pin['hash'] for pin in search_pinned_uses(function)],
+        'pins': search_pinned_uses(function),
         'forks': forks,
         # The other functions answering to this name here, and how each relates to this one
         'relatives': relatives,
@@ -3800,7 +3830,8 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
 
 def command_search(query: List[str], all_versions: bool = False, as_json: bool = False,
                    untested: bool = False, unreviewed: bool = False, diverged: bool = False,
-                   unused: bool = False, uses: str = None, outdated: bool = False, similar: bool = False):
+                   unused: bool = False, uses: str = None, outdated: bool = False, similar: bool = False,
+                   pinned: bool = False):
     """
     Search the pool by words, by status, and by architecture.
 
@@ -3829,6 +3860,11 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
                   not declared as forks (bb edit --fork), and not
                   functions of another origin that share the name
     --unused      functions nothing imports and no function uses as a check
+    --pinned      functions that pin a version on purpose (bb.ref): each
+                  `Pinned:` line says which, whether its lineage went on
+                  since, and under which name when only one name pins it.
+                  Pins are not debt and --outdated leaves them out; with
+                  --uses X, the callers of X that hold on to a version
     --outdated    functions using versions that are no longer current (their
                   debt: editing one brings it up to date; pins are kept),
                   and the functions above them that must follow (behind);
@@ -3898,6 +3934,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
         results = [r for r in results if r['diverged']]
     if unused:
         results = [r for r in results if r['callers'] == 0 and not r['is_check']]
+    if pinned:
+        results = [r for r in results if r['pinned']]
     if outdated:
         results = [r for r in results if r['outdated'] or r['behind'] or r['untranslated']]
     if uses_hash:
@@ -3926,7 +3964,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
 
     asked = ' '.join(query + [flag for flag, on in (('--untested', untested), ('--unreviewed', unreviewed),
                                                     ('--diverged', diverged), ('--unused', unused),
-                                                    ('--outdated', outdated), ('--similar', similar)) if on]
+                                                    ('--outdated', outdated), ('--similar', similar),
+                                                    ('--pinned', pinned)) if on]
                      + ([f"--uses {uses}"] if uses else []))
     if asked:
         print(f"Search Results ({len(results)} matches for: {asked})")
@@ -3971,6 +4010,12 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
             status.append("looks like " + ', '.join(f"{helper_function_label(other)} {score:.0%}"
                                                     for score, other in r['similar']))
         print(f"Status: {', '.join(status)}")
+        for pin in r['pins']:
+            moved = [h for h in pin['now'] if h != pin['hash']]
+            print(f"Pinned: {pin['alias'] or helper_function_label(pin['hash'])} {pin['hash']}, "
+                  + (f"its lineage went on to {', '.join(h[:12] + '...' for h in moved)}" if moved
+                     else "still current")
+                  + (f", as {', '.join(pin['as'])}" if pin['as'] else ''))
         for other in r['relatives']:
             told = [SEARCH_RELATIONS[other['relation']] + (f" ({other['comment']})" if other['comment'] else ''),
                     f"code {other['similarity']:.0%} alike"]
@@ -6493,8 +6538,11 @@ def command_caller(identifier: str, as_json: bool = False, every: bool = False):
     nothing once nothing uses that name any more. With every (--all),
     replaced versions are listed too, marked "not current". By name,
     when one code carries several names, only the callers that use it
-    under that name are listed. --json gives hash, name, language and
-    whether the caller is current.
+    under that name are listed. A caller that pins this version on
+    purpose (bb.ref) is marked "pinned" (with the name that pins it when
+    only one of its names does): it stays on it whatever comes after,
+    and bb search --outdated will not list it. --json gives hash, name,
+    language, whether the caller is current, and pinned / pinned_as.
     """
     hash_value, lang = helper_parse_identifier(identifier)
     functions = storage_scan_functions()
@@ -6503,17 +6551,23 @@ def command_caller(identifier: str, as_json: bool = False, every: bool = False):
     if not every:
         callers = [c for c in callers if functions[c]['current']]
     callers = [c for c in callers if search_uses_under_name(functions[c], hash_value, identifier)]
+    # Who holds on to this version on purpose (bb.ref): {caller: the names that pin it, [] when all do}
+    pins = {c: pin['as'] for c in callers for pin in search_pinned_uses(functions[c]) if pin['hash'] == hash_value}
 
     if as_json:
         out = []
         for caller_hash in callers:
             lang = helper_pick_language(caller_hash)
             out.append({'hash': caller_hash, 'name': helper_function_label(caller_hash), 'lang': lang,
-                        'current': functions[caller_hash]['current']})
+                        'current': functions[caller_hash]['current'], 'pinned': caller_hash in pins,
+                        'pinned_as': pins.get(caller_hash, [])})
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return
     for caller_hash in callers:
-        print(f"bb show {caller_hash}" + ("" if functions[caller_hash]['current'] else "  # not current"))
+        notes = [] if functions[caller_hash]['current'] else ["not current"]
+        if caller_hash in pins:
+            notes.append("pinned" + (f" as {', '.join(pins[caller_hash])}" if pins[caller_hash] else ""))
+        print(f"bb show {caller_hash}" + (f"  # {', '.join(notes)}" if notes else ""))
 
 
 def command_tree(identifier: str, as_json: bool = False):
@@ -9121,6 +9175,8 @@ def _build_parser():
     search_parser.add_argument('--all', dest='all_versions', action='store_true',
                                help='Include superseded versions (a later version came after them)')
     search_parser.add_argument('--untested', action='store_true', help='Only functions without checks')
+    search_parser.add_argument('--pinned', action='store_true',
+                               help='Only functions that pin a version on purpose (bb.ref)')
     search_parser.add_argument('--unreviewed', action='store_true', help='Only functions you have not approved')
     search_parser.add_argument('--diverged', action='store_true', help='Only lineages with several ends, not declared as forks')
     search_parser.add_argument('--unused', action='store_true',
@@ -9274,7 +9330,7 @@ def main():
         command_search(args.query, all_versions=args.all_versions, as_json=args.as_json,
                        untested=args.untested, unreviewed=args.unreviewed, diverged=args.diverged,
                        unused=args.unused, uses=args.uses, outdated=args.outdated,
-                       similar=args.similar)
+                       similar=args.similar, pinned=args.pinned)
     elif args.command == 'latest':
         name, lang = args.name, args.lang
         if '@' in name and not lang:

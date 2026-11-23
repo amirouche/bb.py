@@ -325,3 +325,33 @@ def test_a_pin_belongs_to_a_name_not_to_the_code_two_names_share(tmp_path):
     # Each draft still says its own: one out of date, the other pinned
     assert 'out of date' in pool.bb('show', 'opening@eng').stdout
     assert f"is_weekend = bb.ref('{old}')" in pool.bb('show', 'closing@eng').stdout
+
+
+def test_pinned_callers_can_be_found(tmp_path):
+    pool = Pool(tmp_path)
+    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    follower = hash_of(pool.add('opening', BY_NAME.format(name='opening')))
+    holder = hash_of(pool.add('closing', OPENING.format(ref=f'bb.ref("{old}")', name='closing')
+                              .replace('not is_weekend', 'is_weekend')))
+    # bb caller says who holds on to the version
+    listed = pool.bb('caller', old).stdout.splitlines()
+    assert f'bb show {holder}  # pinned' in listed and f'bb show {follower}' in listed
+    callers = {c['hash']: c for c in json.loads(pool.bb('caller', old, '--json').stdout)}
+    assert callers[holder]['pinned'] is True and callers[follower]['pinned'] is False
+    # bb search --pinned lists them, and says whether the pinned version is still current
+    found = json.loads(pool.bb('search', '--pinned', '--json').stdout)
+    assert [r['name'] for r in found] == ['closing'] and found[0]['pins'][0]['now'] == [old]
+    assert f'Pinned: is_weekend {old}, still current' in pool.bb('search', '--pinned').stdout
+    new = hash_of(edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)')))
+    assert f'Pinned: is_weekend {old}, its lineage went on to {new[:12]}...' in pool.bb('search', '--pinned').stdout
+    assert [r['name'] for r in json.loads(pool.bb('search', '--pinned', '--uses', old, '--json').stdout)] == ['closing']
+    assert outdated(pool) == ['opening']
+
+
+def test_a_pin_under_one_of_two_names_says_which(tmp_path):
+    pool = Pool(tmp_path)
+    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    both = hash_of(pool.add('opening', BY_NAME.format(name='opening')))
+    assert hash_of(pool.add('closing', OPENING.format(ref=f'bb.ref("{old}")', name='closing'))) == both
+    assert f'bb show {both}  # pinned as closing@eng' in pool.bb('caller', old).stdout
+    assert f'Pinned: is_weekend {old}, still current, as closing@eng' in pool.bb('search', '--pinned').stdout
