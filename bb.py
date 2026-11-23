@@ -271,7 +271,7 @@ import tempfile
 import time
 import types
 import uuid
-from collections import namedtuple
+from collections import Counter, namedtuple
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Set, Tuple, List, Union, Any, Generator, Callable, Optional
@@ -2347,6 +2347,296 @@ def review_run_checks(func_hash: str, reviewed: set) -> bool:
     return check_report(results)
 
 
+# ============================================================================
+# Anchoring (OpenTimestamps)
+# ============================================================================
+#
+# The 'created' of a record is what its author says. `bb anchor` has
+# OpenTimestamps attest it: each JSON file of the pool, the worklogs and the
+# reviews (and each review signature) gets a proof next to it, FILE.ots,
+# that these bytes existed when a given Bitcoin block was mined. Proofs are
+# plain OpenTimestamps files: `ots verify FILE.ots` checks one without bb.
+#
+# bb runs the OpenTimestamps client (`ots`, or the command in $BB_OTS) to
+# stamp, upgrade and verify, and reads the proofs itself to say, offline,
+# which block attests a file or that a proof is for other content. Only
+# `bb anchor` reaches the network: saving never does.
+
+ANCHOR_MAGIC = b'\x00OpenTimestamps\x00\x00Proof\x00\xbf\x89\xe2\xe8\x84\xe8\x92\x94'
+ANCHOR_ATTESTATION_BITCOIN = bytes.fromhex('0588960d73d71901')
+ANCHOR_ATTESTATION_PENDING = bytes.fromhex('83dfe30d2ef90c8e')
+ANCHOR_OP_SHA256 = 0x08
+ANCHOR_OPS_UNARY = {0x02, 0x03, 0x08, 0x67, 0xf2, 0xf3}
+ANCHOR_OPS_BINARY = {0xf0, 0xf1}
+ANCHOR_BATCH = 500
+
+
+def anchor_proof_path(path: Path) -> Path:
+    """Where the proof of a file lives: next to it, FILE.ots."""
+    return Path(str(path) + '.ots')
+
+
+def anchor_unlink(path: Path):
+    """Remove a file and its proof, if it has one."""
+    path.unlink()
+    proof = anchor_proof_path(path)
+    if proof.exists():
+        proof.unlink()
+
+
+def anchor_list_files(func_hash: str = None) -> List[Path]:
+    """
+    The files bb anchor covers: every JSON file of the pool, the worklogs
+    and the reviews, and the review signatures.
+
+    Args:
+        func_hash: Only this function's object, mappings, lineage steps and reviews
+    """
+    if func_hash:
+        files = [storage_object_path(func_hash)]
+        files += storage_mapping_directory(func_hash).rglob('*.json')
+        files += [storage_step_path(step_id) for step_id in lineage_index()['by_function'].get(func_hash, [])]
+        review_dir = storage_get_review_directory() / func_hash[:2] / func_hash[2:]
+        files += [*review_dir.rglob('*.json'), *review_dir.rglob('*.json.sig')]
+    else:
+        files = [*storage_get_pool_directory().rglob('*.json'),
+                 *storage_get_worklog_directory().rglob('*.json'),
+                 *storage_get_review_directory().rglob('*.json'),
+                 *storage_get_review_directory().rglob('*.json.sig')]
+    return sorted(path for path in files if path.is_file())
+
+
+def anchor_parse(data: bytes) -> Optional[Tuple[bytes, List[int], int]]:
+    """
+    Read an OpenTimestamps proof of a SHA256 digest.
+
+    Returns:
+        (the digest it is a proof of, the Bitcoin block heights attesting
+        it, how many calendars have yet to), or None when data is not such
+        a proof
+    """
+    position = 0
+
+    def take(count: int) -> bytes:
+        nonlocal position
+        if count < 0 or position + count > len(data):
+            raise ValueError("truncated")
+        position += count
+        return data[position - count:position]
+
+    def take_varuint() -> int:
+        value = shift = 0
+        while True:
+            byte = take(1)[0]
+            value |= (byte & 0x7f) << shift
+            if not byte & 0x80:
+                return value
+            shift += 7
+
+    try:
+        if take(len(ANCHOR_MAGIC)) != ANCHOR_MAGIC or take_varuint() != 1 or take(1)[0] != ANCHOR_OP_SHA256:
+            return None
+        digest = take(32)
+        heights, pending = [], 0
+        branches = 1
+        while branches:
+            tag = take(1)[0]
+            if tag == 0xff:
+                # A fork: one more branch follows this one
+                branches += 1
+                tag = take(1)[0]
+            if tag == 0x00:
+                kind = take(8)
+                payload_end = take_varuint() + position
+                if kind == ANCHOR_ATTESTATION_BITCOIN:
+                    heights.append(take_varuint())
+                elif kind == ANCHOR_ATTESTATION_PENDING:
+                    pending += 1
+                if position > payload_end:
+                    raise ValueError("attestation overruns its payload")
+                take(payload_end - position)
+                branches -= 1
+            elif tag in ANCHOR_OPS_BINARY:
+                take(take_varuint())
+            elif tag not in ANCHOR_OPS_UNARY:
+                raise ValueError("unknown operation")
+        if position != len(data):
+            return None
+    except (ValueError, IndexError):
+        return None
+    return digest, sorted(heights), pending
+
+
+def anchor_state(path: Path) -> Tuple[str, Optional[int]]:
+    """
+    What the proof next to a file says, without the network.
+
+    Returns:
+        (state, Bitcoin block height): 'none' (no proof), 'unreadable',
+        'stale' (the proof is for other content: the file changed since),
+        'pending' (calendars have it, no block yet) or 'complete' (with the
+        earliest block attesting it). Nothing here checks the block itself:
+        bb anchor --verify does
+    """
+    proof = anchor_proof_path(path)
+    if not proof.exists():
+        return 'none', None
+    try:
+        parsed = anchor_parse(proof.read_bytes())
+        content = path.read_bytes()
+    except OSError:
+        return 'unreadable', None
+    if parsed is None:
+        return 'unreadable', None
+    digest, heights, _ = parsed
+    if digest != hashlib.sha256(content).digest():
+        return 'stale', None
+    return ('complete', heights[0]) if heights else ('pending', None)
+
+
+def anchor_describe(path: Path) -> Optional[str]:
+    """One phrase on a file's anchor, for display; None when it has no proof."""
+    state, height = anchor_state(path)
+    return {'none': None,
+            'complete': f"Bitcoin block {height}",
+            'pending': "pending (bb anchor --upgrade)",
+            'stale': "proof of other content (bb anchor --status)",
+            'unreadable': "unreadable proof (bb anchor --status)"}[state]
+
+
+def anchor_log_lines(path: Path) -> List[str]:
+    """The 'Anchored:' line of a record in bb log: none when the file has no proof."""
+    described = anchor_describe(path)
+    return [f"Anchored: {described}"] if described else []
+
+
+def anchor_run(arguments: List[str]) -> subprocess.CompletedProcess:
+    """
+    Run the OpenTimestamps client: $BB_OTS (it may hold arguments), else `ots`.
+
+    Exits with an explanation when the client is not installed.
+    """
+    command = shlex.split(os.environ.get('BB_OTS') or 'ots')
+    try:
+        return subprocess.run(command + arguments, capture_output=True, text=True)
+    except FileNotFoundError:
+        print(f"Error: OpenTimestamps client not found: {command[0]}", file=sys.stderr)
+        print("Install it (pip install opentimestamps-client) or set BB_OTS to its command, "
+              "e.g. BB_OTS='uvx --from opentimestamps-client ots'.", file=sys.stderr)
+        sys.exit(1)
+
+
+def anchor_relay(result: subprocess.CompletedProcess, expected: Tuple[str, ...] = ()):
+    """Print to stderr what the client said, but for the lines starting with an expected prefix."""
+    for line in (result.stdout + result.stderr).splitlines():
+        if line.strip() and not line.startswith(expected):
+            print(f"ots: {line}", file=sys.stderr)
+
+
+def command_anchor(identifier: str = None, upgrade: bool = False, verify: bool = False, status: bool = False):
+    """
+    Anchor the records in Bitcoin with OpenTimestamps.
+
+    - bb anchor: stamp every file that has no proof yet (one request to
+      the calendars for all of them). Proofs are pending until a block
+      holds them, a few hours later.
+    - bb anchor --upgrade: complete the pending proofs.
+    - bb anchor --status: count what is anchored, without the network.
+    - bb anchor --verify: have the client check each complete proof
+      against Bitcoin (it needs a Bitcoin node) and say since when.
+
+    With an identifier, only that function's files. The exit status is 1
+    when a proof is unreadable, is for other content or fails to verify.
+    """
+    base = storage_get_bb_directory()
+    files = anchor_list_files(helper_resolve_to_hash(identifier) if identifier else None)
+    states = {path: anchor_state(path) for path in files}
+
+    def relative(path: Path) -> str:
+        return str(path.relative_to(base))
+
+    def report_broken() -> bool:
+        broken = [path for path in files if states[path][0] in ('stale', 'unreadable')]
+        for path in broken:
+            reason = ("the proof is for other content: the file changed since it was anchored"
+                      if states[path][0] == 'stale' else "the proof cannot be read")
+            print(f"Error: {relative(path)}: {reason}", file=sys.stderr)
+        return bool(broken)
+
+    if status:
+        heights = sorted(height for state, height in states.values() if state == 'complete')
+        blocks = ""
+        if heights:
+            blocks = (f" (Bitcoin block {heights[0]})" if heights[0] == heights[-1] else
+                      f" (Bitcoin blocks {heights[0]} to {heights[-1]})")
+        counts = Counter(state for state, _ in states.values())
+        print(f"Complete: {counts['complete']}{blocks}")
+        print(f"Pending: {counts['pending']}")
+        print(f"Not anchored: {counts['none']}")
+        if report_broken():
+            sys.exit(1)
+        return
+
+    if verify:
+        failed = report_broken()
+        for path in files:
+            state, height = states[path]
+            if state == 'pending':
+                print(f"{relative(path)}: pending")
+            elif state == 'complete':
+                result = anchor_run(['verify', '-f', str(path), str(anchor_proof_path(path))])
+                said = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
+                print(f"{relative(path)}: Bitcoin block {height}: {said[-1] if said else 'no answer'}")
+                failed = failed or result.returncode != 0
+        counts = Counter(state for state, _ in states.values())
+        if counts['none']:
+            print(f"Not anchored: {counts['none']}")
+        if failed:
+            sys.exit(1)
+        return
+
+    if upgrade:
+        pending = [path for path in files if states[path][0] == 'pending']
+        for start in range(0, len(pending), ANCHOR_BATCH):
+            batch = pending[start:start + ANCHOR_BATCH]
+            result = anchor_run(['upgrade'] + [str(anchor_proof_path(path)) for path in batch])
+            anchor_relay(result, expected=('Calendar ', 'Failed! Timestamp not complete', 'Success!', 'Got '))
+            for path in batch:
+                # The client keeps the proof it replaced as FILE.ots.bak: one proof per file is enough
+                backup = Path(str(anchor_proof_path(path)) + '.bak')
+                if backup.exists():
+                    if anchor_state(path)[0] in ('complete', 'pending'):
+                        backup.unlink()
+                    else:
+                        backup.replace(anchor_proof_path(path))
+        completed = sum(1 for path in pending if anchor_state(path)[0] == 'complete')
+        print(f"Completed: {completed}")
+        print(f"Still pending: {len(pending) - completed}")
+        if report_broken():
+            sys.exit(1)
+        return
+
+    new = [path for path in files if states[path][0] == 'none']
+    failed = False
+    for start in range(0, len(new), ANCHOR_BATCH):
+        result = anchor_run(['stamp'] + [str(path) for path in new[start:start + ANCHOR_BATCH]])
+        if result.returncode != 0:
+            anchor_relay(result)
+            failed = True
+            break
+    anchored = sum(1 for path in new if anchor_proof_path(path).exists())
+    if anchored:
+        print(f"Anchored: {anchored} file{'' if anchored == 1 else 's'}, pending until a Bitcoin block holds "
+              f"{'it' if anchored == 1 else 'them'} (in a few hours: bb anchor --upgrade)")
+    elif not failed:
+        print("Nothing to anchor.")
+    if failed:
+        print(f"Error: the OpenTimestamps client failed; {len(new) - anchored} file(s) not anchored.",
+              file=sys.stderr)
+    if report_broken() or failed:
+        sys.exit(1)
+
+
 def command_log(identifier: str = None):
     """
     Show the history of the pool: functions, lineage steps and worklogs, newest first.
@@ -2384,6 +2674,7 @@ def command_log(identifier: str = None):
         if function['names']:
             lines.append(f"Names: {', '.join(f'{name}@{lang}' for lang, name in sorted(function['names'].items()))}")
         lines += [f"Date: {metadata.get('created', 'unknown')}",
+                  *anchor_log_lines(storage_object_path(func_hash)),
                   f"Author: {helper_format_author(metadata)}"]
         langs = storage_list_languages(func_hash)
         lines.append(f"Languages: {', '.join(langs) if langs else 'none'}")
@@ -2401,6 +2692,7 @@ def command_log(identifier: str = None):
         if translated:
             lines.append(f"Translates: {translated['name']}@{translated['lang']} {translated['function']}")
         lines += [f"Date: {metadata.get('created', 'unknown')}",
+                  *anchor_log_lines(storage_step_path(step_id)),
                   f"Author: {helper_format_author(metadata)}"]
         if record.get('comment'):
             lines += ['', f"    {record['comment']}"]
@@ -2415,6 +2707,7 @@ def command_log(identifier: str = None):
         _, message = worklog_pick_message(worklog)
         lines = [f"Worklog: {worklog['uuid']}",
                  f"Date: {metadata.get('created', 'unknown')}",
+                 *anchor_log_lines(storage_get_worklog_directory() / worklog['uuid'] / 'worklog.json'),
                  f"Author: {helper_format_author(metadata)}",
                  f"Languages: {', '.join(sorted(worklog['messages']))}"]
         lines += [f"Attached: {reference}" for reference in worklog['references']]
@@ -2771,7 +3064,7 @@ def lineage_prune() -> int:
         if not gone:
             break
         for step_id in gone:
-            storage_step_path(step_id).unlink()
+            anchor_unlink(storage_step_path(step_id))
             removed += 1
     storage_cache_clear()
     return removed
@@ -4635,7 +4928,7 @@ def command_rm(identifier: str, force: bool = False):
             print(f"Error: Language mapping not found: {hash_value}@{lang}", file=sys.stderr)
             sys.exit(1)
         for mapping_hash in mappings:
-            storage_mapping_path(hash_value, lang, mapping_hash).unlink()
+            anchor_unlink(storage_mapping_path(hash_value, lang, mapping_hash))
         lang_dir = storage_mapping_directory(hash_value) / lang
         if lang_dir.is_dir() and not any(lang_dir.iterdir()):
             lang_dir.rmdir()
@@ -8975,6 +9268,7 @@ def command_skills():
         'edit': command_edit,
         'review': command_review,
         'reviews': command_reviews,
+        'anchor': command_anchor,
         'log': command_log,
         'search': command_search,
         'latest': command_latest,
@@ -9217,6 +9511,17 @@ def _build_parser():
     review_parser.add_argument('--comment', '-m', default="", help='Comment stored in your signed reviews')
 
     # Reviews command
+    anchor_parser = subparsers.add_parser(
+        'anchor', help='Anchor the records in Bitcoin with OpenTimestamps (FILE.ots proofs)',
+        description="Stamp every JSON file of the pool, the worklogs and the reviews that has no proof yet. "
+                    "Runs the OpenTimestamps client: ots, or the command in $BB_OTS.")
+    anchor_parser.add_argument('identifier', nargs='?', help='Only this function: hash or name, with optional @lang')
+    anchor_mode = anchor_parser.add_mutually_exclusive_group()
+    anchor_mode.add_argument('--upgrade', action='store_true', help='Complete the pending proofs')
+    anchor_mode.add_argument('--status', action='store_true', help='Count what is anchored, without the network')
+    anchor_mode.add_argument('--verify', action='store_true',
+                             help='Check each complete proof against Bitcoin (the client needs a Bitcoin node)')
+
     reviews_parser = subparsers.add_parser('reviews', help='Show who reviewed a function, with signature status')
     reviews_parser.add_argument('identifier', help='Hash or name, with optional @lang')
     reviews_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
@@ -9371,6 +9676,8 @@ def main():
                      ask=not args.no_ask, show=args.show)
     elif args.command == 'review':
         command_review(args.identifier, comment=args.comment)
+    elif args.command == 'anchor':
+        command_anchor(args.identifier, upgrade=args.upgrade, verify=args.verify, status=args.status)
     elif args.command == 'reviews':
         command_reviews(args.identifier, as_json=args.as_json, every=args.every)
     elif args.command == 'trust':
