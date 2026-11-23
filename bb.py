@@ -2317,8 +2317,8 @@ def command_log(identifier: str = None):
 
     Functions show their names, author and languages. Lineage steps show
     what happened to a name in a language (add, edit, document, rename,
-    refactor, restore, translate, fork), from which step, by whom, and their
-    comment. Worklogs show their author, languages, attached translations
+    refactor, restore, translate, fork; follow is bb migrate saying what
+    an older step follows), from which step, by whom, and their comment. Worklogs show their author, languages, attached translations
     and message, in your preferred language when translated.
     """
     entries = []
@@ -2753,6 +2753,16 @@ def lineage_prune() -> int:
 # translates), fork (another function on purpose: 'from' is where it left,
 # the comment says why).
 #
+# A step also says what its function follows: 'follows' maps each pool
+# function it uses (pins aside) to the step of that function the reference
+# stands on, {hash: step id}. A hash alone cannot say it: one code may sit
+# in two lineages (a fork that went back to an older version's code), and
+# a caller follows one of them. What a caller follows is then the ends
+# reached from that step (lineage_ends). Steps recorded before 'follows'
+# existed have none and are followed by hash, as they were; `bb migrate`
+# appends a 'follow' step after each current one (same function, same
+# mapping) saying what it follows.
+#
 # A fork does not come after the step it left: that step stays current,
 # nothing using it is out of date, and the fork starts a lineage of its
 # own. Several truths may hold at once; a fork says so instead of leaving
@@ -2764,7 +2774,7 @@ def lineage_prune() -> int:
 # share one code, and a French name stays on its version until someone
 # translates the English edit.
 
-LINEAGE_RELATIONS = ('add', 'edit', 'document', 'rename', 'refactor', 'restore', 'translate', 'fork')
+LINEAGE_RELATIONS = ('add', 'edit', 'document', 'rename', 'refactor', 'restore', 'translate', 'fork', 'follow')
 
 
 def storage_scan_lineage() -> Dict[str, Dict[str, Any]]:
@@ -2793,7 +2803,8 @@ def lineage_step_id(record: Dict[str, Any]) -> str:
 
 
 def lineage_save(previous: Optional[str], func_hash: str, lang: str, mapping_hash: str, relation: str,
-                 comment: str = "", translates: str = None, metadata: Dict[str, Any] = None) -> str:
+                 comment: str = "", translates: str = None, metadata: Dict[str, Any] = None,
+                 follows: Dict[str, str] = None) -> str:
     """
     Record a lineage step: (func_hash, lang, mapping_hash) comes after previous.
 
@@ -2802,6 +2813,8 @@ def lineage_save(previous: Optional[str], func_hash: str, lang: str, mapping_has
         relation: One of LINEAGE_RELATIONS
         translates: For a translation, the step in the source language
         metadata: Author and date (default: code_create_metadata())
+        follows: {pool function used: the step of it this one follows}
+            (default: lineage_follows_build, from what previous followed)
 
     Returns:
         The step's id
@@ -2819,6 +2832,10 @@ def lineage_save(previous: Optional[str], func_hash: str, lang: str, mapping_has
     }
     if translates:
         record['translates'] = translates
+    if follows is None:
+        follows = lineage_follows_build(func_hash, lang, mapping_hash, previous or translates)
+    if follows:
+        record['follows'] = dict(sorted(follows.items()))
     step_id = lineage_step_id(record)
     path = storage_step_path(step_id)
     if not path.exists():
@@ -2890,8 +2907,13 @@ def lineage_follow(func_hash: str, lang: str = None, name: str = None) -> List[s
     They stand for the up-to-date versions of func_hash: itself when one
     of its steps is current, otherwise what came after it.
     """
+    return lineage_reach(lineage_steps_on(func_hash, lang, name))
+
+
+def lineage_reach(start: List[str]) -> List[str]:
+    """The current steps reached from the steps start: themselves when current, else what came after them."""
     index = lineage_index()
-    stack = lineage_steps_on(func_hash, lang, name)
+    stack = [s for s in start if s in index['steps']]
     seen, reached = set(), set()
     while stack:
         step_id = stack.pop()
@@ -3056,18 +3078,23 @@ def lineage_preferred_language(func_hash: str) -> Optional[str]:
     return None
 
 
-def lineage_ends(func_hash: str, lang: str, alias: str = None) -> List[str]:
+def lineage_ends(func_hash: str, lang: str, alias: str = None, step: str = None) -> List[str]:
     """
     Where func_hash's lineage is now: the functions a caller following it gets.
 
-    Followed in lang, under the name the caller knows it by there (alias
-    when it is one of its names, see lineage_name_for); in every language
-    when func_hash has no lineage in lang. Forks are not followed: they
-    left. [func_hash] when it is still current; several functions when
-    its lineage has several ends; [] when no current version is left.
+    From step when the caller recorded the step of func_hash it follows
+    (its own step's 'follows'): one code may sit in two lineages, and the
+    step says which. Otherwise followed in lang, under the name the
+    caller knows it by there (alias when it is one of its names, see
+    lineage_name_for); in every language when func_hash has no lineage in
+    lang. Forks are not followed: they left. [func_hash] when it is still
+    current; several functions when its lineage has several ends; [] when
+    no current version is left.
     """
     steps = lineage_index()['steps']
-    if lineage_steps_on(func_hash, lang):
+    if step in steps and steps[step]['function'] == func_hash:
+        reached = lineage_reach([step])
+    elif lineage_steps_on(func_hash, lang):
         reached = lineage_follow(func_hash, lang, lineage_name_for(func_hash, lang, alias))
     else:
         reached = lineage_follow(func_hash)
@@ -3075,12 +3102,125 @@ def lineage_ends(func_hash: str, lang: str, alias: str = None) -> List[str]:
     return [func_hash] if func_hash in ends else ends
 
 
-def lineage_newer_version(func_hash: str, lang: str = None, name: str = None) -> Optional[str]:
+def lineage_step_follows(step_id: Optional[str]) -> Dict[str, str]:
+    """What a step follows: {pool function it uses: the step of it the reference stands on}, {} when unknown."""
+    return lineage_index()['steps'].get(step_id or '', {}).get('follows') or {}
+
+
+def lineage_skip_follow(step_id: Optional[str]) -> Optional[str]:
+    """
+    The step standing for step_id once `bb migrate` said what it follows.
+
+    A 'follow' step changes nothing a draft holds (same function, same
+    mapping): a draft made from the step before it continues from it.
+    """
+    index = lineage_index()
+    while True:
+        after = index['successors'].get(step_id or '', [])
+        if len(after) != 1 or index['steps'][after[0]]['relation'] != 'follow':
+            return step_id
+        step_id = after[0]
+
+
+def lineage_followed_step(dep: str, lang: str, alias: Optional[str], earlier: Dict[str, str]) -> Optional[str]:
+    """
+    The step of dep a function saved in lang, using dep as alias, follows from now on.
+
+    earlier is what the step before followed. In order: the step it
+    already followed on dep (the reference did not move); the current step
+    on dep reached from a step it followed on another function (the
+    reference moved along its lineage); a current step on dep under the
+    name it is used by (a new reference). When two lineages are current on
+    dep at once, one that is not a fork's comes first: bb.follow("<hash>")
+    names a version, and the lineage that version was made in. None when
+    dep is current nowhere: it is then followed by hash.
+    """
+    index = lineage_index()
+    steps = index['steps']
+    local = bool(lineage_steps_on(dep, lang))
+
+    def fits(step_id):
+        return step_id in steps and (steps[step_id]['lang'] == lang or not local)
+
+    kept = earlier.get(dep)
+    if fits(kept) and steps[kept]['function'] == dep:
+        return kept
+    current = (lineage_current_steps(lang, lineage_name_for(dep, lang, alias), dep) if local
+               else lineage_current_steps(function=dep))
+    for old, step_id in sorted(earlier.items()):
+        if old != dep and fits(step_id):
+            reached = [s for s in lineage_reach([step_id]) if s in current]
+            if reached:
+                return reached[0]
+    if current:
+        return min(current, key=lambda s: (steps[lineage_root_step(s)]['relation'] == 'fork', s))
+    return None
+
+
+def lineage_follows_build(func_hash: str, lang: str, mapping_hash: str, before: Optional[str]) -> Dict[str, str]:
+    """
+    What a new step on func_hash (with mapping_hash, in lang) follows.
+
+    One entry per pool function its code uses, pins aside (a pinned
+    version follows nothing), see lineage_followed_step. before is the
+    step it comes after, or translates.
+    """
+    if code_detect_schema(func_hash) is None:
+        return {}
+    data = mapping_load_json(func_hash, lang, mapping_hash) or {}
+    aliases, pins = data.get('alias_mapping', {}), set(data.get('pinned') or [])
+    earlier = lineage_step_follows(before)
+    follows = {}
+    for dep in code_extract_dependencies(object_load(func_hash)['normalized_code']):
+        if dep in pins:
+            continue
+        step_id = lineage_followed_step(dep, lang, aliases.get(dep), earlier)
+        if step_id:
+            follows[dep] = step_id
+    return follows
+
+
+def lineage_follows_guess(step_id: str) -> Dict[str, str]:
+    """
+    What a step recorded before 'follows' existed followed, for bb migrate.
+
+    For each pool function its code uses (pins aside): that function's
+    step in the step's language under the name it is used by (in any
+    language when it has none there). When it has several, nothing was
+    recorded to choose: the latest one recorded before step_id is taken,
+    the one that was there to be used. This is the only place a date
+    decides, once, for what was saved before.
+    """
+    steps = lineage_index()['steps']
+    record = steps[step_id]
+    func_hash, lang = record['function'], record['lang']
+    if code_detect_schema(func_hash) is None:
+        return {}
+    data = mapping_load_json(func_hash, lang, record['mapping']) or {}
+    aliases, pins = data.get('alias_mapping', {}), set(data.get('pinned') or [])
+    follows = {}
+    for dep in code_extract_dependencies(object_load(func_hash)['normalized_code']):
+        if dep in pins:
+            continue
+        if lineage_steps_on(dep, lang):
+            candidates = lineage_steps_on(dep, lang, lineage_name_for(dep, lang, aliases.get(dep)))
+        else:
+            candidates = lineage_steps_on(dep)
+        before = [s for s in candidates if lineage_created(s) <= lineage_created(step_id) and s != step_id]
+        if before:
+            follows[dep] = max(before, key=lambda s: (lineage_created(s), s))
+        elif candidates:
+            follows[dep] = min(candidates, key=lambda s: (lineage_created(s), s))
+    return follows
+
+
+def lineage_newer_version(func_hash: str, lang: str = None, name: str = None, step: str = None) -> Optional[str]:
     """
     The one up-to-date version of func_hash, when it is not func_hash.
 
     Follows func_hash's steps in lang (default: lineage_preferred_language),
-    called name when given, to the current steps. A caller may use a
+    called name when given (or the one step a caller recorded it follows),
+    to the current steps. A caller may use a
     function that was edited since: rewriting the version it uses would
     fork it beside that edit, so refactors and updates build on the
     current version instead. With several current versions (its lineage split) there
@@ -3090,7 +3230,9 @@ def lineage_newer_version(func_hash: str, lang: str = None, name: str = None) ->
     if lang is None:
         return None
     steps = lineage_index()['steps']
-    heads = sorted({steps[s]['function'] for s in lineage_follow(func_hash, lang, name)})
+    reached = (lineage_reach([step]) if step in steps and steps[step]['function'] == func_hash
+               else lineage_follow(func_hash, lang, name))
+    heads = sorted({steps[s]['function'] for s in reached})
     if not heads or func_hash in heads:
         return None
     if len(heads) > 1:
@@ -3443,10 +3585,16 @@ def search_outdated_refs(index: Dict[str, Any], func_hash: str) -> List[str]:
         if dep in pins or dep not in functions or dep in outdated:
             continue
         for lang in langs:
-            # Every mapping of the language: two names of one code may use dep by two names
-            mappings = function['all_mappings'].get(lang) or [function['mappings'].get(lang, {})]
-            for alias in {m.get('alias_mapping', {}).get(dep) for m in mappings}:
-                heads = lineage_ends(dep, lang, alias)
+            # Every name of the language: two names of one code may use dep by two names,
+            # and each of their steps says which step of dep it follows
+            mine = lineage_current_steps(lang, function=func_hash) or lineage_steps_on(func_hash, lang)
+            uses = {(mapping_load_json(func_hash, lang, steps[s]['mapping']).get('alias_mapping', {}).get(dep),
+                     lineage_step_follows(s).get(dep)) for s in mine}
+            if not uses:
+                mappings = function['all_mappings'].get(lang) or [function['mappings'].get(lang, {})]
+                uses = {(m.get('alias_mapping', {}).get(dep), None) for m in mappings}
+            for alias, followed in sorted(uses, key=repr):
+                heads = lineage_ends(dep, lang, alias, followed)
                 if heads and dep not in heads:
                     outdated.append(dep)
                     break
@@ -4644,6 +4792,35 @@ def migrate_plan(objects: Dict[str, Dict[str, Any]], mappings: Dict[Tuple[str, s
     return counts
 
 
+def migrate_follows() -> int:
+    """
+    Say what current steps follow, where they were recorded before 'follows' existed.
+
+    Each current step without 'follows' whose function uses pool
+    functions gets a 'follow' step after it (same function, same
+    mapping) carrying them, see lineage_follows_guess. Steps are
+    append-only and named by their content, so nothing is rewritten and
+    no id changes. Running it again adds nothing.
+
+    Returns:
+        How many steps were added
+    """
+    storage_cache_clear()
+    steps = lineage_index()['steps']
+    todo = []
+    for step_id in lineage_current_steps():
+        record = steps[step_id]
+        if record.get('follows'):
+            continue
+        follows = lineage_follows_guess(step_id)
+        if follows:
+            todo.append((step_id, record, follows))
+    for step_id, record, follows in todo:
+        lineage_save(step_id, record['function'], record['lang'], record['mapping'], 'follow',
+                     "bb migrate: what it follows", follows=follows)
+    return len(todo)
+
+
 def command_migrate():
     """
     Convert a pool from the layout before storage v2 to the current one.
@@ -4659,11 +4836,23 @@ def command_migrate():
     restore/ are removed. Track $BB_DIRECTORY with git before migrating:
     `git checkout` then brings the old layout back. Running it on a pool
     already migrated says so and changes nothing.
+
+    It also records what functions follow, in pools saved before lineage
+    steps said so (their 'follows': the step of each pool function they
+    use that the reference stands on, so one code in two lineages is
+    followed along the right one). Nothing stored is rewritten: each
+    current function using others gets one 'follow' step after its own,
+    same function, same mapping. Where a used function had several steps
+    to choose from, the latest recorded before its user is taken.
     """
     import shutil
 
     if not storage_pool_is_old_layout():
-        print("Already migrated: this pool uses the current layout.")
+        followed = migrate_follows()
+        if followed:
+            print(f"Recorded what {followed} lineage step(s) follow (their 'follows'); nothing else changed.")
+        else:
+            print("Already migrated: this pool uses the current layout.")
         return
 
     storage_cache_clear()
@@ -4683,7 +4872,9 @@ def command_migrate():
                                 pinned=data.get('pinned'))
 
     def save_step(previous, func_hash, lang, mapping_hash, relation, comment, translates, metadata):
-        return lineage_save(previous, func_hash, lang, mapping_hash, relation, comment, translates, metadata)
+        # What each follows is said once every step is there (migrate_follows)
+        return lineage_save(previous, func_hash, lang, mapping_hash, relation, comment, translates, metadata,
+                            follows={})
 
     counts = migrate_plan(objects, mappings, restores, save_mapping, save_step)
 
@@ -4700,6 +4891,9 @@ def command_migrate():
     print(f"Migrated {counts['functions']} functions, {counts['mappings']} mappings and "
           f"{counts['restores']} restore records into {counts['steps']} lineage steps.")
     print("Removed the old layout (pool/XX/ and restore/); git keeps it if you tracked the directory.")
+    followed = migrate_follows()
+    if followed:
+        print(f"Recorded what {followed} lineage step(s) follow.")
 
 
 def code_add(file_path_with_lang: str, comment: str = ""):
@@ -4900,7 +5094,8 @@ def code_imports_bb(tree: ast.Module) -> bool:
                for node in tree.body)
 
 
-def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") -> Tuple[str, Dict[str, str]]:
+def code_resolve_pool_names(source_code: str, lang: str, where: str = "source",
+                            follows: Dict[str, str] = None) -> Tuple[str, Dict[str, str]]:
     """
     Turn pool functions named by name into references by hash.
 
@@ -4921,7 +5116,9 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
     that needs no agreement on names. A name is a search; a hash knows
     which function it means. `helper = bb.follow(...)` is followed under
     the name helper when the function has several. A lineage with several
-    ends is refused: follow one of them.
+    ends is refused: follow one of them. follows is what the step being
+    edited follows: a bb.follow of a hash it names goes on from that step
+    (a draft's bb.follow names a version; the step knows its lineage).
 
     Both go above the def, bound to a name (NAME = bb.resolve("NAME")):
     that binding is what bb keeps as the function's alias, and what a
@@ -4966,7 +5163,8 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
             continue
         if followed:
             alias = aliases.get(id(node))
-            ends = lineage_ends(followed, lang, alias) if code_detect_schema(followed) is not None else None
+            ends = (lineage_ends(followed, lang, alias, (follows or {}).get(followed))
+                    if code_detect_schema(followed) is not None else None)
             if ends is None:
                 problems.append(f"  line {node.lineno}: bb.follow: no function {followed[:12]}... in the pool")
             elif len(ends) > 1:
@@ -5163,7 +5361,8 @@ def code_pretty(source_code: str, width: int = CODE_DISPLAY_WIDTH) -> str:
     return source_code
 
 
-def code_show_pool_names(source_code: str, lang: str, pinned: List[str] = ()) -> str:
+def code_show_pool_names(source_code: str, lang: str, pinned: List[str] = (),
+                         follows: Dict[str, str] = None) -> str:
     """
     Write the pool functions a displayed function uses by name.
 
@@ -5182,6 +5381,10 @@ def code_show_pool_names(source_code: str, lang: str, pinned: List[str] = ()) ->
     functions with no current version left. A `# bb:` comment line says
     when a reference is out of date; comments are not stored, so it goes
     when saving.
+
+    follows is what the displayed function's step follows (see
+    lineage_step_follows): where each reference's lineage is now is read
+    from the step it stands on, when the step said so.
 
     A bb.ref written inside the function body has no alias, so it stays
     a hash there (functions saved before bb.resolve was refused in a body
@@ -5207,7 +5410,7 @@ def code_show_pool_names(source_code: str, lang: str, pinned: List[str] = ()) ->
             note = (f"# bb: pinned; the current {name} is {heads[0][:12]}...\n"
                     if len(heads) == 1 and heads[0] != func_hash else "")
             return f"{note}{alias} = bb.ref({func_hash!r})"
-        ends = lineage_ends(func_hash, lang, alias)
+        ends = lineage_ends(func_hash, lang, alias, (follows or {}).get(func_hash))
         if not ends:
             return f"# bb: no current version is called {name}\n{alias} = bb.ref({func_hash!r})"
         if len(ends) > 1:
@@ -5987,7 +6190,9 @@ def code_show(identifier: str):
     try:
         normalized_code = code_replace_docstring(normalized_code, docstring)
         pinned = mapping_load_json(hash_value, lang, selected_hash).get('pinned') or []
-        original_code = code_pretty(code_show_pool_names(code_denormalize(normalized_code, name_mapping, alias_mapping), lang, pinned))
+        follows = lineage_step_follows(lineage_step_for(hash_value, lang, name_mapping.get('_bb_v_0'), selected_hash))
+        original_code = code_pretty(code_show_pool_names(code_denormalize(normalized_code, name_mapping, alias_mapping),
+                                                         lang, pinned, follows))
     except Exception as e:
         print(f"Error: Failed to denormalize code: {e}", file=sys.stderr)
         sys.exit(1)
@@ -6775,15 +6980,16 @@ def edit_load_section(func_hash: str, lang: str, name: str = None) -> Dict[str, 
     normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, section_lang, mapping_hash)
     pinned = mapping_load_json(func_hash, section_lang, mapping_hash).get('pinned') or []
     source = code_denormalize(code_replace_docstring(normalized_code, docstring), name_mapping, alias_mapping)
-    source = code_pretty(code_show_pool_names(source, section_lang, pinned))
-    markdown = mapping_load_markdown(func_hash, section_lang, mapping_hash)
     title = name_mapping.get('_bb_v_0', func_hash[:12])
+    parent = lineage_step_for(func_hash, section_lang, title, mapping_hash)
+    source = code_pretty(code_show_pool_names(source, section_lang, pinned, lineage_step_follows(parent)))
+    markdown = mapping_load_markdown(func_hash, section_lang, mapping_hash)
 
     return {
         'title': title,
         'source': source + '\n',
         'markdown': markdown,
-        'parent': lineage_step_for(func_hash, section_lang, title, mapping_hash),
+        'parent': parent,
         'mapping': f"{func_hash}@{section_lang}@{mapping_hash}",
         'fingerprint': edit_fingerprint(func_hash, docstring, name_mapping, alias_mapping, markdown, pinned),
     }
@@ -6810,7 +7016,7 @@ def edit_marker_step(marker: Optional[str], lang: str, name: str = None) -> Opti
     it. Anything else is kept as is, so the draft is refused as stale.
     """
     if marker is None or marker in lineage_index()['steps']:
-        return marker
+        return lineage_skip_follow(marker)
     if code_detect_schema(marker) is not None:
         return lineage_step_for(marker, lang, name) or marker
     return marker
@@ -6878,7 +7084,9 @@ def edit_prepare(text: str, lang: str, unreviewed: bool = False) -> Dict[str, An
     pins = {}
     for section, where in [(implementation, "Implementation")] + [(c, f"check '{c['title']}'") for c in parsed['checks']]:
         pins[id(section)] = code_pinned_refs(section['source'])
-        section['source'], names = code_resolve_pool_names(section['source'], lang, where=where)
+        section['source'], names = code_resolve_pool_names(
+            section['source'], lang, where=where,
+            follows=lineage_step_follows(lineage_skip_follow(section.get('parent'))))
         resolved.update(names)
     prepared_implementation = code_prepare_source(implementation['source'], lang, where="Implementation")
     for check in parsed['checks']:
@@ -6957,7 +7165,7 @@ def edit_save_section(section: Dict[str, Any], prepared: Dict[str, Any], lang: s
                                 prepared['alias_mapping'], comment, section['markdown'],
                                 pinned=prepared.get('pinned'))
     steps = lineage_index()['steps']
-    parent = section.get('parent') if section.get('parent') in steps else None
+    parent = lineage_skip_follow(section.get('parent')) if section.get('parent') in steps else None
     if parent and steps[parent]['lang'] != lang:
         parent = None  # loaded in another language: this language's lineage starts here
     if parent is None:
@@ -7658,13 +7866,15 @@ def command_update(identifier: str, comment: str = None, unreviewed: bool = Fals
     rewritten: List[Tuple[str, str]] = []
     failed: List[Tuple[str, str, List[str]]] = []
 
-    def update(func_hash: str, name: Optional[str], stack: Tuple[str, ...] = ()) -> str:
-        """The up-to-date hash for func_hash, used by name (itself when nothing changes)."""
+    def update(func_hash: str, name: Optional[str], stack: Tuple[str, ...] = (), step: str = None) -> str:
+        """The up-to-date hash for func_hash, used by name from step (itself when nothing changes)."""
         if (func_hash, name) in done:
             return done[(func_hash, name)]
         if func_hash in stack or code_detect_schema(func_hash) is None:
             return func_hash
-        base = lineage_newer_version(func_hash, lang, name) or func_hash
+        base = lineage_newer_version(func_hash, lang, name, step) or func_hash
+        on_base = lineage_current_steps(lang, name, base) or lineage_steps_on(base, lang, name)
+        follows = lineage_step_follows(on_base[0]) if on_base else {}
         code = object_load(base)['normalized_code']
         pins: Set[str] = set()
         for mapping_lang in storage_list_languages(base):
@@ -7676,7 +7886,8 @@ def command_update(identifier: str, comment: str = None, unreviewed: bool = Fals
         for dep in code_extract_dependencies(code):
             if dep in pins:
                 continue
-            new_dep = update(dep, lineage_name_for(dep, lang, aliases.get(dep)), stack + (func_hash,))
+            new_dep = update(dep, lineage_name_for(dep, lang, aliases.get(dep)), stack + (func_hash,),
+                             follows.get(dep))
             if new_dep != dep:
                 swaps[dep] = new_dep
         result = base
@@ -8843,7 +9054,7 @@ def _build_parser():
     skills_parser = subparsers.add_parser('skills', help='Generate skills reference for AI agents')
 
     # Migrate command
-    subparsers.add_parser('migrate', help='Convert a pool from the old layout (track it with git first)')
+    subparsers.add_parser('migrate', help='Convert a pool from the old layout, record what functions follow (track it with git first)')
 
     return parser
 

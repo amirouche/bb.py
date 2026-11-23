@@ -216,7 +216,14 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
    name their function and language and are content-addressed with them
 7. Current versions follow lineage steps, never time: append-only records
    {from, function, lang, mapping, name, relation, comment, metadata,
-   translates?} in pool/lineage/, id = hash of the record. Steps are per
+   translates?, follows?} in pool/lineage/, id = hash of the record.
+   'follows' maps each pool function the code uses (pins aside) to the
+   step of it the reference stands on: one code may sit in two lineages
+   (a fork back to an older version's code), and a caller follows one,
+   from that step (lineage_ends). Steps saved before it existed are
+   followed by hash; `bb migrate` appends a 'follow' step saying it
+   (nothing is rewritten; a date decides only there, when a used
+   function had several steps). Steps are per
    (language, name): a name's current version is the end of its own
    lineage. Relations: add, edit, document, rename (supersedes the old
    name), refactor, restore (an older version's code again), translate,
