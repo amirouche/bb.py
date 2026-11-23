@@ -7302,12 +7302,15 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         earlier = lineage_step_follows(sec.get('parent'))
         moved = {}
         for dep, alias in prep['alias_mapping'].items():
-            if alias in (picks or {}) and dep.startswith(picks[alias]) and dep not in (prep.get('pinned') or []):
+            if dep in chosen and dep not in (prep.get('pinned') or []):
                 step_id = lineage_picked_step(dep, lang, alias, earlier)
                 if step_id:
                     moved[dep] = step_id
         return moved
 
+    # A pick is given by the name searched for (bb.resolve("NAME")), whatever the code calls it (the alias)
+    chosen = {func_hash for name, func_hash in plan.get('resolved', {}).items()
+              if name in (picks or {}) and func_hash.startswith(picks[name])}
     moves = {id(s): picked_steps(s, p) for s, p in [(section, prepared)] + plan['checks']}
 
     if (prepared['hash'] == hash_value and unchanged(section, prepared)

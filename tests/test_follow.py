@@ -455,3 +455,20 @@ def test_a_name_bound_to_two_pool_functions_is_refused(tmp_path):
     twice = pool.add('opening', OPENING.format(ref=f'bb.ref("{one}")\nis_weekend = bb.ref("{two}")', name='opening'))
     assert twice.returncode == 1
     assert 'is_weekend is bound twice' in twice.stderr and 'keep one binding' in twice.stderr
+
+
+def test_a_pick_is_given_by_the_name_searched_whatever_the_code_calls_it(tmp_path):
+    pool = Pool(tmp_path)
+    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    opening = hash_of(pool.add('opening', 'import bb\nrest = bb.resolve("is_weekend")\n\n\ndef opening(day):\n'
+                                          '    """Open on working days."""\n    return not rest(day)\n'))
+    new = hash_of(edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)')))
+    fork(pool, tmp_path, f'{new}@eng', WEEKEND.format(days='(5, 6)'), 'as it was')
+    assert outdated(pool) == ['opening']
+    draft = tmp_path / 'move.md'
+    pool.bb('edit', 'opening@eng', str(draft))
+    moved = pool.bb('edit', 'opening@eng', str(draft), '-m', 'as it was', '--pick', f'is_weekend={old[:12]}')
+    assert moved.returncode == 0, moved.stderr
+    assert 'No changes.' not in moved.stdout and f'Follows: rest {old}' in moved.stdout
+    assert pool.bb('latest', 'opening@eng', '--hash').stdout.split() == [opening]
+    assert outdated(pool) == []
