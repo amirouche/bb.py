@@ -6217,7 +6217,7 @@ def command_tree(identifier: str, as_json: bool = False):
         lang = preferred_langs[0]
 
     index = storage_pool_index()
-    tree = _tree_build(hash_value, lang, set(), index)
+    tree = _tree_build(hash_value, lang, set(), index, name=helper_identifier_name(identifier))
     if as_json:
         print(json.dumps(tree, indent=2, ensure_ascii=False))
         return
@@ -6225,14 +6225,27 @@ def command_tree(identifier: str, as_json: bool = False):
 
 
 def _tree_marks(index: Dict[str, Any], func_hash: str, lang: str, caller: Optional[str],
-                behind: Dict[str, List[str]]) -> List[str]:
-    """The marks of a tree node (see command_tree): how up to date func_hash is, as its caller uses it."""
+                behind: Dict[str, List[str]], caller_name: str = None) -> List[str]:
+    """
+    The marks of a tree node (see command_tree): how up to date func_hash is, as its caller uses it.
+
+    A pin and what is followed belong to a name of the caller (see
+    search_uses): the caller is asked as caller_name in lang when it has
+    that name, else under its names in lang, else under all of them.
+    """
     marks = []
     if caller is not None:
-        caller_function = index['functions'].get(caller)
-        if caller_function and func_hash in search_pins(caller_function):
+        uses = search_uses(index['functions'][caller]) if caller in index['functions'] else []
+        uses = ([u for u in uses if u['lang'] == lang and u['name'] == caller_name]
+                or [u for u in uses if u['lang'] == lang] or uses)
+
+        def behind_on(use):
+            heads = lineage_ends(func_hash, use['lang'], use['aliases'].get(func_hash), use['follows'].get(func_hash))
+            return bool(heads) and func_hash not in heads
+
+        if uses and all(func_hash in use['pins'] for use in uses):
             marks.append('pinned')
-        elif func_hash in search_outdated_refs(index, caller):
+        elif func_hash in index['functions'] and any(func_hash not in use['pins'] and behind_on(use) for use in uses):
             marks.append('out of date')
     elif func_hash in index['functions'] and func_hash not in index['current']:
         marks.append('out of date')
@@ -6266,8 +6279,14 @@ def _tree_print(node: Dict[str, Any], prefix: str, is_last: bool, is_root: bool)
 
 
 def _tree_build(func_hash: str, lang: str, visited: set, index: Dict[str, Any] = None,
-                caller: str = None, behind: Dict[str, List[str]] = None) -> Dict[str, Any]:
-    """The dependency tree of a function as nested dicts: hash, name, description, marks, dependencies."""
+                caller: str = None, behind: Dict[str, List[str]] = None, caller_name: str = None,
+                name: str = None) -> Dict[str, Any]:
+    """
+    The dependency tree of a function as nested dicts: hash, name, description, marks, dependencies.
+
+    name is the name the tree was asked for (the root's), caller_name the
+    name its caller is walked under: each node is read as that name uses it.
+    """
     index = index or storage_pool_index()
     if behind is None:
         behind = search_behind(index)
@@ -6280,7 +6299,7 @@ def _tree_build(func_hash: str, lang: str, visited: set, index: Dict[str, Any] =
         caller_lang = lang if lang in storage_list_languages(caller) else helper_pick_language(caller, lang)
         alias = index['functions'].get(caller, {}).get('mappings', {}).get(caller_lang, {}).get(
             'alias_mapping', {}).get(func_hash)
-    mapping_hash = mapping_select(func_hash, shown, lineage_name_for(func_hash, shown, alias) or alias)
+    mapping_hash = mapping_select(func_hash, shown, name or lineage_name_for(func_hash, shown, alias) or alias)
     normalized_code, name_mapping, _, docstring = code_load(func_hash, shown, mapping_hash)
     node = {
         'hash': func_hash,
@@ -6288,11 +6307,12 @@ def _tree_build(func_hash: str, lang: str, visited: set, index: Dict[str, Any] =
         'lang': shown,
         'description': docstring.strip().split('\n')[0] if docstring else '',
         'found': True,
-        'marks': _tree_marks(index, func_hash, lang, caller, behind),
+        'marks': _tree_marks(index, func_hash, lang, caller, behind, caller_name),
         'dependencies': [],
     }
     if func_hash not in visited:
-        node['dependencies'] = [_tree_build(dep, lang, visited | {func_hash}, index, func_hash, behind)
+        node['dependencies'] = [_tree_build(dep, lang, visited | {func_hash}, index, func_hash, behind,
+                                            caller_name=node['name'])
                                 for dep in code_extract_dependencies(normalized_code)]
     return node
 

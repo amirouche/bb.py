@@ -409,3 +409,14 @@ def test_update_follows_the_step_a_caller_stands_on_when_one_code_has_two(tmp_pa
     assert outdated(pool) == []
     assert pool.run(hash_of(updated)) == '[0, 1, 2, 3, 4]'
     assert opening in latest(pool, 'opening@eng')  # the fork that holds the code stays
+
+
+def test_the_tree_of_a_name_says_what_that_name_pins_and_follows(tmp_path):
+    pool = Pool(tmp_path)
+    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    both = hash_of(pool.add('opening', BY_NAME.format(name='opening')))
+    assert hash_of(pool.add('closing', OPENING.format(ref=f'bb.ref("{old}")', name='closing'))) == both
+    edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)'))
+    assert '[out of date]' in pool.bb('tree', 'opening@eng').stdout
+    pinned = pool.bb('tree', 'closing@eng').stdout
+    assert pinned.startswith('closing') and '[pinned]' in pinned and 'out of date' not in pinned
