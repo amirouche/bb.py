@@ -3219,7 +3219,10 @@ def lineage_follows_guess(step_id: str) -> Dict[str, str]:
     language when it has none there). When it has several, nothing was
     recorded to choose: the latest one recorded before step_id is taken,
     the one that was there to be used. This is the only place a date
-    decides, once, for what was saved before.
+    decides, once, for what was saved before. Dates are to the second:
+    of the steps dated like step_id, one in a fork's lineage is not
+    taken (a fork that holds the code again came after an edit of what
+    it left, so what was there to be used was the other).
     """
     steps = lineage_index()['steps']
     record = steps[step_id]
@@ -3236,9 +3239,13 @@ def lineage_follows_guess(step_id: str) -> Dict[str, str]:
             candidates = lineage_steps_on(dep, lang, lineage_name_for(dep, lang, aliases.get(dep)))
         else:
             candidates = lineage_steps_on(dep)
-        before = [s for s in candidates if lineage_created(s) <= lineage_created(step_id) and s != step_id]
-        if before:
-            follows[dep] = max(before, key=lambda s: (lineage_created(s), s))
+        when = lineage_created(step_id)
+        before = [s for s in candidates if s != step_id and (
+            lineage_created(s) < when
+            or (lineage_created(s) == when and steps[lineage_root_step(s)]['relation'] != 'fork'))]
+        tied = [s for s in candidates if s != step_id and lineage_created(s) == when]
+        if before or tied:
+            follows[dep] = max(before or tied, key=lambda s: (lineage_created(s), s))
         elif candidates:
             follows[dep] = min(candidates, key=lambda s: (lineage_created(s), s))
     return follows

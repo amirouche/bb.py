@@ -3,7 +3,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 
 from tests.test_edit_file import fork, set_code
 from tests.test_import_by_name import BB, Pool, hash_of
@@ -255,8 +254,12 @@ def test_update_follows_the_lineage_a_step_stands_on(tmp_path):
     assert pool.run(pool.bb('latest', 'opening@eng', '--hash').stdout.strip(), 5) == 'False'
 
 
-def forget_follows(pool_dir):
-    """Rewrite a pool's lineage as it was before steps said what they follow (ids are content hashes)."""
+def forget_follows(pool_dir, created=None):
+    """
+    Rewrite a pool's lineage as it was before steps said what they follow (ids are content hashes).
+
+    With created, every step is dated so: all saved within one second.
+    """
     import bb
     lineage = pool_dir / 'pool' / 'lineage'
     steps = {p.parent.name + p.stem: json.loads(p.read_text()) for p in lineage.glob('*/*.json')}
@@ -268,6 +271,8 @@ def forget_follows(pool_dir):
                 continue
             record = {k: renamed.get(v, v) if k in ('from', 'translates') else v
                       for k, v in record.items() if k != 'follows'}
+            if created:
+                record['metadata'] = {**record['metadata'], 'created': created}
             renamed[step_id] = bb.lineage_step_id(record)
             path = lineage / renamed[step_id][:2] / f'{renamed[step_id][2:]}.json'
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -280,10 +285,10 @@ def test_migrate_says_what_older_steps_follow_without_rewriting_them(tmp_path):
     pool = Pool(tmp_path)
     old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
     pool.add('opening', BY_NAME.format(name='opening'))
-    time.sleep(1.1)  # steps are dated to the second, and the migration reads dates
     new = hash_of(edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)')))
     fork(pool, tmp_path, f'{new}@eng', WEEKEND.format(days='(5, 6)'), 'as it was')
-    forget_follows(tmp_path / 'bb')
+    # All of it within one second: dates alone do not tell the fork's step from the one opening used
+    forget_follows(tmp_path / 'bb', created='2026-01-01T00:00:00Z')
     lineage = tmp_path / 'bb' / 'pool' / 'lineage'
     before = {p: p.read_text() for p in lineage.glob('*/*.json')}
     assert not any('follows' in text for text in before.values())
@@ -355,3 +360,20 @@ def test_a_pin_under_one_of_two_names_says_which(tmp_path):
     assert hash_of(pool.add('closing', OPENING.format(ref=f'bb.ref("{old}")', name='closing'))) == both
     assert f'bb show {both}  # pinned as closing@eng' in pool.bb('caller', old).stdout
     assert f'Pinned: is_weekend {old}, still current, as closing@eng' in pool.bb('search', '--pinned').stdout
+
+
+def test_migrate_does_not_take_a_fork_dated_like_its_user(tmp_path):
+    """Steps are dated to the second; ids order equal dates by chance, so several dates are tried."""
+    import shutil
+    pool = Pool(tmp_path / 'made')
+    (tmp_path / 'made').mkdir()
+    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    pool.add('opening', BY_NAME.format(name='opening'))
+    new = hash_of(edit_by_hash(pool, tmp_path / 'made', old, WEEKEND.format(days='(6, 5)')))
+    fork(pool, tmp_path / 'made', f'{new}@eng', WEEKEND.format(days='(5, 6)'), 'as it was')
+    for second in range(8):
+        copy = tmp_path / f'copy{second}'
+        shutil.copytree(tmp_path / 'made', copy)
+        forget_follows(copy / 'bb', created=f'2026-01-01T00:00:0{second}Z')
+        assert Pool(copy).bb('migrate').returncode == 0
+        assert outdated(Pool(copy)) == ['opening'], second
