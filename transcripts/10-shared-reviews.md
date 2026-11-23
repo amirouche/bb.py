@@ -103,7 +103,7 @@ matches, so the review stops counting.
 
 ### Step 7: Change one word of the signed review
 ```bash
-$ sed -i 's/Read it/Never read it/' $BB_DIRECTORY/review/*/*/*.json
+$ sed -i 's/Read it/Never read it/' $BB_DIRECTORY/review/*/*/*/*.json
 $ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -1 | awk '{print $1, $2, $3}'
 invalid approve Alice
 $ (env BB_STATE_DIRECTORY=bob bb run show_double@eng 3 2>&1 || true) | head -1
@@ -119,6 +119,7 @@ Error: Refusing to run code you have not reviewed (1 function(s) to approve).
 | `bb whoami signing-key PATH` | Sign your reviews with this SSH key (PATH.pub next to it) |
 | `bb review X -m COMMENT` | Approve (`y`) or reject (`r`); with a key, publishes a signed review |
 | `bb reviews X` | Who reviewed X: trusted, untrusted or invalid |
+| `bb reviews X --all` | Also the reviews their reviewer replaced since (superseded) |
 | `bb trust publish` | Add yourself to the shared list of peers |
 | `bb trust import` | Copy peers from the shared list into yours, one by one |
 | `bb trust add/remove/list` | Manage your trusted peers directly |
@@ -129,4 +130,6 @@ Error: Refusing to run code you have not reviewed (1 function(s) to approve).
 
 2. **Signatures, not files, carry trust**: a review counts when it is signed by a key you trust, for the function it names. An edited, moved or forged review is invalid.
 
-3. **Rejections count too**: a trusted peer's rejection cancels trusted approvals of that hash. Your own verdict always wins.
+3. **A review is written once**: changing your mind writes another signed review that supersedes yours; the earlier one stays in `review/`, and only a signed review of the same key can retire it.
+
+4. **Rejections count too**: a trusted peer's rejection cancels trusted approvals of that hash. Your own verdict always wins.

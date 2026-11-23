@@ -1300,7 +1300,7 @@ def test_signed_review_cannot_be_moved_to_another_function(mock_bb_dir, monkeypa
     alice_key = _become(monkeypatch, tmp_path, 'alice')
     path = bb.review_publish(good, 'approve')
 
-    target = bb.storage_get_review_directory() / evil[:2] / evil[2:]
+    target = bb.storage_get_review_directory() / evil[:2] / evil[2:] / path.parent.name
     target.mkdir(parents=True)
     shutil.copy(path, target / path.name)
     shutil.copy(str(path) + '.sig', target / (path.name + '.sig'))
@@ -1308,6 +1308,60 @@ def test_signed_review_cannot_be_moved_to_another_function(mock_bb_dir, monkeypa
     _become(monkeypatch, tmp_path, 'bob')
     bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
     assert bb.review_approvals([good, evil]) == {good}
+
+
+@needs_ssh_keygen
+def test_review_changed_mind_is_another_review(mock_bb_dir, monkeypatch, tmp_path):
+    """A new verdict supersedes the old review, which stays in the pool untouched"""
+    func = _pool_add("def one():\n    return 1\n")
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    first = bb.review_publish(func, 'approve', 'fine')
+    before = first.read_bytes()
+    assert bb.review_publish(func, 'approve', 'fine') == first
+    second = bb.review_publish(func, 'reject', 'on second thought')
+    assert second != first and second.parent == first.parent
+    assert first.read_bytes() == before and Path(str(first) + '.sig').exists()
+    assert json.loads(second.read_text(encoding='utf-8'))['supersedes'] == [first.stem]
+    assert second.stem == bb.review_compute_id(json.loads(second.read_text(encoding='utf-8')))
+
+    _become(monkeypatch, tmp_path, 'bob')
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    assert [(r['verdict'], r['superseded']) for r in bb.review_list_shared(func)] == [('reject', False)]
+    assert sorted((r['verdict'], r['superseded']) for r in bb.review_list_shared(func, every=True)) == [
+        ('approve', True), ('reject', False)]
+    assert bb.review_approvals([func]) == set()
+
+
+@needs_ssh_keygen
+def test_review_is_superseded_only_by_a_signed_review_of_its_key(mock_bb_dir, monkeypatch, tmp_path):
+    """Neither a forged file nor another reviewer can retire someone's review"""
+    func = _pool_add("def one():\n    return 1\n")
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    rejection = bb.review_publish(func, 'reject', 'unsafe')
+
+    # Forged: an unsigned approval in Alice's directory claiming to replace her rejection
+    record = json.loads(rejection.read_text(encoding='utf-8'))
+    record.update(verdict='approve', comment='', supersedes=[rejection.stem])
+    forged = rejection.parent / f"{bb.review_compute_id(record)}.json"
+    forged.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+    # Eve signs a review of her own naming Alice's
+    eve_key = _become(monkeypatch, tmp_path, 'eve')
+    public_key = bb.helper_signing_identity()[1]
+    record.update(reviewer={'name': 'eve', 'email': 'eve@example.org'}, public_key=public_key)
+    hers = rejection.parent.parent / bb.helper_key_id(public_key) / f"{bb.review_compute_id(record)}.json"
+    hers.parent.mkdir()
+    hers.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', str(eve_key), '-n', bb.REVIEW_SIGNATURE_NAMESPACE,
+                    str(hers)], check=True, capture_output=True)
+
+    _become(monkeypatch, tmp_path, 'bob')
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    current = {(r['reviewer']['name'], r['verdict'], r['status']) for r in bb.review_list_shared(func)}
+    assert ('alice', 'reject', 'trusted') in current
+    assert ('alice', 'approve', 'invalid') in current
+    assert ('eve', 'approve', 'untrusted') in current
+    assert bb.review_approvals([func]) == set()
 
 
 @needs_ssh_keygen

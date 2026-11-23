@@ -918,7 +918,7 @@ def storage_get_bb_directory() -> Path:
         ├── pool/          # functions/, mappings/ and lineage/ (see storage_get_functions_directory)
         ├── worklog/       # Worklogs: <uuid7>/worklog.json and translated messages
         ├── edit/          # Unfinished bb edit files (a scratch pad)
-        ├── review/        # Signed reviews: XX/YYYY.../<key id>.json and .sig
+        ├── review/        # Signed reviews: XX/YYYY.../<key id>/<review id>.json and .sig
         └── trust/         # allowed_signers: shared list of peers (not trusted by itself)
 
     Private state (config, review approvals, trusted peers) lives
@@ -1674,14 +1674,19 @@ def review_save_state(reviewed: set):
 # with git. Anyone able to commit can write a file there, so a shared review
 # only counts when it is signed (ssh-keygen -Y sign) by a key you trust:
 #
-#     $BB_DIRECTORY/review/XX/YYYY.../<key id>.json      the review
-#     $BB_DIRECTORY/review/XX/YYYY.../<key id>.json.sig  its signature
+#     $BB_DIRECTORY/review/XX/YYYY.../<key id>/<review id>.json      a review
+#     $BB_DIRECTORY/review/XX/YYYY.../<key id>/<review id>.json.sig  its signature
 #     $BB_DIRECTORY/trust/allowed_signers                peers shared publicly
 #     <state directory>/allowed_signers                  peers YOU trust
 #
 # Only the private list is trusted. The public one is a directory of peers
 # that you copy from, entry by entry, with `bb trust import`. Both use the
 # OpenSSH allowed_signers format: "email key-type base64 [comment]".
+#
+# Reviews are written once, like the pool: a review's id is the hash of its
+# record, and changing your mind writes another review whose 'supersedes'
+# lists the ones it replaces. A reviewer's current reviews are those none of
+# their validly signed reviews supersedes.
 
 REVIEW_SIGNATURE_NAMESPACE = 'bb-review'
 REVIEW_VERDICTS = ('approve', 'reject')
@@ -1750,12 +1755,18 @@ def helper_signing_identity() -> Optional[Tuple[str, str, str]]:
     return key_path, public_key, user.get('email') or ''
 
 
+def review_compute_id(record: Dict[str, Any]) -> str:
+    """A review's id: the hash of its canonical JSON."""
+    return hash_compute(json.dumps(record, sort_keys=True, ensure_ascii=False))
+
+
 def review_publish(func_hash: str, verdict: str, comment: str = "") -> Optional[Path]:
     """
     Write a signed review of a function into $BB_DIRECTORY/review/.
 
-    One review per reviewer and function: a new verdict replaces yours
-    (git keeps the history).
+    Reviews are never rewritten: a new verdict is another review, which
+    supersedes the current ones of yours. Giving the verdict and comment
+    your current review already holds writes nothing.
 
     Returns:
         Path of the review, or None when you have no signing key or signing failed
@@ -1770,19 +1781,26 @@ def review_publish(func_hash: str, verdict: str, comment: str = "") -> Optional[
               file=sys.stderr)
         return None
 
+    key_id = helper_key_id(public_key)
+    review_dir = storage_get_review_directory() / func_hash[:2] / func_hash[2:] / key_id
+    mine = [r for r in review_list_shared(func_hash)
+            if r['status'] != 'invalid' and helper_key_id(r['public_key']) == key_id]
+    if len(mine) == 1 and mine[0]['verdict'] == verdict and mine[0].get('comment', '') == comment:
+        return review_dir / f"{mine[0]['id']}.json"
+
     user = storage_read_config()['user']
     record = {
-        'schema_version': 1,
+        'schema_version': 2,
         'function': func_hash,
         'verdict': verdict,
         'reviewer': {'name': user.get('name', ''), 'email': email},
         'public_key': public_key,
         'created': code_create_metadata()['created'],
         'comment': comment,
+        'supersedes': sorted(r['id'] for r in mine),
     }
-    review_dir = storage_get_review_directory() / func_hash[:2] / func_hash[2:]
     review_dir.mkdir(parents=True, exist_ok=True)
-    path = review_dir / f"{helper_key_id(public_key)}.json"
+    path = review_dir / f"{review_compute_id(record)}.json"
     path.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
     signature = Path(str(path) + '.sig')
@@ -1822,39 +1840,57 @@ def review_verify(path: Path, allowed_signers: Path) -> bool:
     return result.returncode == 0
 
 
-def review_list_shared(func_hash: str) -> List[Dict[str, Any]]:
+def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, Any]]:
     """
-    Every shared review of a function, with its signature status.
+    The shared reviews of a function, with their signature status.
 
-    Each entry is the review record plus 'status': 'trusted' (valid
-    signature by a key in your private list), 'untrusted' (valid signature
-    by a key you do not trust) or 'invalid' (bad, missing or misplaced).
+    Each entry is the review record plus 'id', 'superseded' and 'status':
+    'trusted' (valid signature by a key in your private list), 'untrusted'
+    (valid signature by a key you do not trust) or 'invalid' (bad, missing,
+    altered or misplaced). Only a validly signed review supersedes, and only
+    reviews of its own key.
+
+    Args:
+        every: Also return the superseded reviews (default: current ones only)
     """
     review_dir = storage_get_review_directory() / func_hash[:2] / func_hash[2:]
     if not review_dir.exists():
         return []
     reviews = []
-    for path in sorted(review_dir.glob('*.json')):
+    superseded = set()
+    for path in sorted(review_dir.glob('*/*.json')):
         try:
             record = json.loads(path.read_text(encoding='utf-8'))
         except (OSError, json.JSONDecodeError):
             continue
-        # The signed content must be about this function and its own key
+        if not isinstance(record, dict):
+            continue
+        key_id = path.parent.name
+        # The signed content must be about this function, under its own key and id
         placed_right = (record.get('function') == func_hash and record.get('verdict') in REVIEW_VERDICTS
-                        and path.stem == helper_key_id(record.get('public_key', '')))
+                        and isinstance(record.get('public_key'), str)
+                        and isinstance(record.get('reviewer'), dict)
+                        and isinstance(record.get('supersedes', []), list)
+                        and key_id == helper_key_id(record['public_key'])
+                        and path.stem == review_compute_id(record))
+        status = 'invalid'
         if placed_right and review_verify(path, trust_private_path()):
-            record['status'] = 'trusted'
-        else:
-            record['status'] = 'invalid'
-            if placed_right:
-                # Check the signature against the key it claims, to tell bad from untrusted
-                with tempfile.TemporaryDirectory() as tmp:
-                    own = Path(tmp) / 'allowed_signers'
-                    own.write_text(f"{record['reviewer']['email']} {record['public_key']}\n", encoding='utf-8')
-                    if review_verify(path, own):
-                        record['status'] = 'untrusted'
-        reviews.append(record)
-    return reviews
+            status = 'trusted'
+        elif placed_right:
+            # Check the signature against the key it claims, to tell bad from untrusted
+            with tempfile.TemporaryDirectory() as tmp:
+                own = Path(tmp) / 'allowed_signers'
+                own.write_text(f"{record['reviewer'].get('email', '')} {record['public_key']}\n",
+                               encoding='utf-8')
+                if review_verify(path, own):
+                    status = 'untrusted'
+        if status != 'invalid':
+            superseded.update((key_id, old) for old in record.get('supersedes', []) if isinstance(old, str))
+        record.update(id=path.stem, status=status)
+        reviews.append((key_id, record))
+    for key_id, record in reviews:
+        record['superseded'] = (key_id, record['id']) in superseded
+    return [record for _, record in reviews if every or not record['superseded']]
 
 
 def review_authored_path() -> Path:
@@ -1929,18 +1965,20 @@ def review_save_rejections(rejected: Set[str]):
     path.write_text(json.dumps({'rejected': sorted(rejected)}, indent=2), encoding='utf-8')
 
 
-def command_reviews(identifier: str, as_json: bool = False):
+def command_reviews(identifier: str, as_json: bool = False, every: bool = False):
     """
-    Show who reviewed a function: every shared review and its signature.
+    Show who reviewed a function: each shared review and its signature.
 
     trusted: signed by a peer in your private list; untrusted: validly
     signed by someone you do not trust (yet); invalid: forged, altered or
-    misplaced. Only trusted reviews count.
+    misplaced. Only trusted reviews count, and only current ones: with
+    every, the reviews a reviewer replaced since are listed too, marked
+    'superseded'.
     """
     func_hash = helper_resolve_to_hash(identifier)
     yours = ("approved" if func_hash in review_load_state() else
              "rejected" if func_hash in review_load_rejections() else "not reviewed")
-    reviews = review_list_shared(func_hash)
+    reviews = review_list_shared(func_hash, every)
     if as_json:
         print(json.dumps({'function': func_hash, 'you': yours, 'reviews': reviews}, indent=2, ensure_ascii=False))
         return
@@ -1951,7 +1989,8 @@ def command_reviews(identifier: str, as_json: bool = False):
         return
     for record in reviews:
         reviewer = record.get('reviewer', {})
-        line = (f"{record['status']}  {record.get('verdict', '?')}  "
+        line = (("superseded  " if record['superseded'] else "") +
+                f"{record['status']}  {record.get('verdict', '?')}  "
                 f"{reviewer.get('name', '')} <{reviewer.get('email', '')}>  {record.get('created', '')}")
         print(line + (f"  {record['comment']}" if record.get('comment') else ""))
 
@@ -9181,6 +9220,8 @@ def _build_parser():
     reviews_parser = subparsers.add_parser('reviews', help='Show who reviewed a function, with signature status')
     reviews_parser.add_argument('identifier', help='Hash or name, with optional @lang')
     reviews_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
+    reviews_parser.add_argument('--all', dest='every', action='store_true',
+                                help='Also list the reviews their reviewer replaced since (superseded)')
 
     # Trust command with subcommands
     trust_parser = subparsers.add_parser('trust', help='Manage the peers whose signed reviews you trust')
@@ -9331,7 +9372,7 @@ def main():
     elif args.command == 'review':
         command_review(args.identifier, comment=args.comment)
     elif args.command == 'reviews':
-        command_reviews(args.identifier, as_json=args.as_json)
+        command_reviews(args.identifier, as_json=args.as_json, every=args.every)
     elif args.command == 'trust':
         if args.trust_command == 'add':
             command_trust_add(args.email, args.key)
