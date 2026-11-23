@@ -494,3 +494,33 @@ def test_a_pick_is_given_by_the_name_searched_whatever_the_code_calls_it(tmp_pat
     assert 'No changes.' not in moved.stdout and f'Follows: rest {old}' in moved.stdout
     assert pool.bb('latest', 'opening@eng', '--hash').stdout.split() == [opening]
     assert outdated(pool) == []
+
+
+def test_a_pick_for_a_name_nothing_searches_for_is_refused(tmp_path):
+    pool = Pool(tmp_path)
+    weekend = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    # One function answers, so the name alone would do: a pick under another name is a typo, not a choice
+    typo = add(pool, 'opening', BY_NAME.format(name='opening'), '--pick', f'is_wekend={weekend[:12]}')
+    assert typo.returncode == 1 and 'Nothing saved' in typo.stderr
+    assert f'--pick is_wekend={weekend[:12]}' in typo.stderr and 'it names: is_weekend' in typo.stderr
+    assert pool.bb('latest', 'opening@eng').returncode == 1
+    opening = hash_of(add(pool, 'opening', BY_NAME.format(name='opening'), '--pick', f'is_weekend={weekend[:12]}'))
+    # bb edit refuses it too, and saves nothing of the edit
+    draft = tmp_path / 'opening.md'
+    pool.bb('edit', 'opening@eng', str(draft))
+    draft.write_text(draft.read_text().replace('Open on working days', 'Open when people work'))
+    refused = pool.bb('edit', 'opening@eng', str(draft), '-m', 'words', '--pick', f'weekend={weekend[:12]}')
+    assert refused.returncode == 1 and 'Nothing saved' in refused.stderr
+    assert pool.bb('latest', 'opening@eng', '--hash').stdout.split() == [opening]
+    assert 'Open on working days' in pool.bb('show', 'opening@eng').stdout
+    # bb scratchpad gives its picks to every section: one is enough to use it, none is refused
+    pad = tmp_path / 'pad.md'
+    pool.bb('scratchpad', 'is_weekend@eng', 'opening@eng', str(pad))
+    pad.write_text(pad.read_text().replace('Open on working days', 'Open when people work'))
+    unused = pool.bb('scratchpad', 'is_weekend@eng', 'opening@eng', str(pad), '-m', 'words', '--pick',
+                     f'weekend={weekend[:12]}')
+    assert unused.returncode == 1 and 'Nothing saved' in unused.stderr
+    assert 'Open on working days' in pool.bb('show', 'opening@eng').stdout
+    used = pool.bb('scratchpad', 'is_weekend@eng', 'opening@eng', str(pad), '-m', 'words', '--pick',
+                   f'is_weekend={weekend[:12]}')
+    assert used.returncode == 0 and 'saved opening' in used.stdout, used.stdout + used.stderr

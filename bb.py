@@ -4671,6 +4671,7 @@ def code_add(file_path_with_lang: str, comment: str = "", picks: Dict[str, str] 
         source_code, resolved = code_resolve_pool_names(source_code, lang, where=file_path, picks=picks, ask=ask)
         prepared = code_prepare_source(source_code, lang, where=file_path)
         prepared['pinned'] = sorted(pins & set(code_extract_dependencies(prepared['normalized_code'])))
+        helper_refuse_unused_picks(picks, set(resolved), file_path)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -4910,6 +4911,23 @@ def helper_parse_picks(picks: List[str] = None) -> Dict[str, str]:
             sys.exit(1)
         parsed[name] = func_hash
     return parsed
+
+
+def helper_refuse_unused_picks(picks: Optional[Dict[str, str]], searched: Set[str], where: str):
+    """
+    Refuse (exit status 1) a --pick whose NAME nothing in where searches for.
+
+    A pick that settles nothing is a mistake, most often in the name: the
+    reference it was meant for would be saved on another function without
+    a word. searched holds the names where resolves (bb.resolve("NAME")).
+    """
+    unused = sorted(set(picks or {}) - searched)
+    if unused:
+        print(f"Error: --pick {', '.join(f'{name}={picks[name]}' for name in unused)}: nothing in {where} is "
+              f"written bb.resolve(\"{unused[0]}\")"
+              + (f" (it names: {', '.join(sorted(searched))})" if searched else "") + ". Nothing saved.",
+              file=sys.stderr)
+        sys.exit(1)
 
 
 def code_resolve_pool_names(source_code: str, lang: str, where: str = "source",
@@ -7097,7 +7115,7 @@ def helper_ask_yes(question: str) -> bool:
 
 def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
                  refactor: str = None, at: str = None, file: str = None, fork: bool = False,
-                 picks: Dict[str, str] = None, ask: bool = True):
+                 picks: Dict[str, str] = None, ask: bool = True, picks_shared: bool = False):
     """
     Edit a function and its checks as one markdown file, then save a new version.
 
@@ -7166,7 +7184,8 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     --no-ask, nothing is saved, the candidates are listed on stderr with
     the --pick for each, and the exit status is 1. Forgetting --pick
     never saves a guess. It also never moves a function: without it, a
-    reference stays on the function it follows.
+    reference stays on the function it follows. A --pick for a name the
+    function does not search for (a typo) is refused too: nothing is saved.
 
     Examples:
 
@@ -7326,6 +7345,8 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
                     moved[dep] = step_id
         return moved
 
+    if not picks_shared:  # bb scratchpad gives its picks to every section, and checks them itself
+        helper_refuse_unused_picks(picks, set(plan.get('resolved', {})), file or path)
     # A pick is given by the name searched for (bb.resolve("NAME")), whatever the code calls it (the alias)
     chosen = {func_hash for name, func_hash in plan.get('resolved', {}).items()
               if name in (picks or {}) and func_hash.startswith(picks[name])}
@@ -7639,6 +7660,7 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
             order.append(ready[0])
             placed.add(ready[0])
 
+        helper_refuse_unused_picks(picks, {ref for _, text in sections for ref in SCRATCHPAD_REF.findall(text)}, file)
         if comment is None:
             try:
                 comment = input("Comment (press Enter to skip): ").strip()
@@ -7656,7 +7678,7 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
                 with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
                     # Its output is collected: nobody can be asked which function a name means
                     command_edit(f"{name}@{lang}", comment=comment, unreviewed=unreviewed, file=str(draft),
-                                 picks=picks, ask=False)
+                                 picks=picks, ask=False, picks_shared=True)
             except SystemExit as stop:
                 if stop.code:
                     failed = name
