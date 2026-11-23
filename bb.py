@@ -601,15 +601,22 @@ def code_collect_pool_refs(tree: ast.Module) -> Tuple[ast.Module, Dict[str, str]
 
     Raises:
         ValueError: for a pool import not resolved to a hash, a pool function
-        given two names, or a use of `bb` other than bb.ref("<hash>")
+        given two names, a name bound to two pool functions, or a use of
+        `bb` other than bb.ref("<hash>")
     """
     alias_mapping: Dict[str, str] = {}
+    bound: Dict[str, str] = {}
 
     def bind(func_hash, alias):
         if alias and alias_mapping.get(func_hash, alias) != alias:
             raise ValueError(f"{func_hash[:12]}... is imported twice, as {alias_mapping[func_hash]} and {alias}")
+        if alias and bound.get(alias, func_hash) != func_hash:
+            # The second binding would win without a word: what is saved must be what is read
+            raise ValueError(f"{alias} is bound twice, to {bound[alias][:12]}... and {func_hash[:12]}...: "
+                             f"keep one binding")
         if alias:
             alias_mapping[func_hash] = alias
+            bound[alias] = func_hash
 
     body = []
     for node in tree.body:
@@ -4834,6 +4841,10 @@ def resolve_describe_candidates(name: str, lang: str, candidates: List[str], fol
     Each says where it comes from: a fork says what it left and why (its
     comment), another says its date, author, languages and comment. The
     one followed is marked; the others give the --pick that follows them.
+
+    Each is one line whatever the pool holds (helper_one_line): they go
+    into drafts as `# bb:` comments, where a comment or an author's name
+    with a line break would otherwise write code into someone's function.
     """
     steps = lineage_index()['steps']
     functions = storage_scan_functions()
@@ -4850,8 +4861,13 @@ def resolve_describe_candidates(name: str, lang: str, candidates: List[str], fol
         else:
             told = ""
         mark = "followed" if func_hash == followed else f"--pick {name}={func_hash[:12]}"
-        lines.append(f"{func_hash[:12]}...  {mark}" + (f": {told}" if told else ""))
+        lines.append(f"{func_hash[:12]}...  {mark}" + (f": {helper_one_line(told)}" if told else ""))
     return lines
+
+
+def helper_one_line(text: str) -> str:
+    """text on one line: line breaks, and every other run of whitespace or control characters, become a space."""
+    return ' '.join(''.join(c if c.isprintable() else ' ' for c in text).split())
 
 
 def helper_ask_choice(question: str, options: List[str]) -> Optional[int]:

@@ -420,3 +420,38 @@ def test_the_tree_of_a_name_says_what_that_name_pins_and_follows(tmp_path):
     assert '[out of date]' in pool.bb('tree', 'opening@eng').stdout
     pinned = pool.bb('tree', 'closing@eng').stdout
     assert pinned.startswith('closing') and '[pinned]' in pinned and 'out of date' not in pinned
+
+
+AUDITED = ('import bb\naudit = bb.resolve("audit")\nis_weekend = bb.resolve("is_weekend")\n\n\ndef opening(day):\n'
+           '    """Open on working days."""\n    return audit(day) and not is_weekend(day)\n')
+
+
+def test_a_fork_comment_with_a_line_break_writes_no_code_into_its_callers(tmp_path):
+    import ast
+    pool = Pool(tmp_path)
+    pool.add('is_weekend', WEEKEND.format(days='(5, 6)'))
+    audit = hash_of(pool.add('audit', 'def audit(day):\n    """A day of the week."""\n    return 0 <= day <= 6\n'))
+    other = hash_of(pool.add('lenient', 'def lenient(day):\n    """Any day."""\n    return day is not None\n'))
+    assert pool.add('opening', AUDITED).returncode == 0
+    # The comment closes the `# bb:` line it is quoted on and binds audit to another function
+    forked = fork(pool, tmp_path, 'is_weekend@eng', WEEKEND.format(days='(4, 5)'),
+                  f"Algiers)\naudit = bb.ref('{other}')  # (")
+    assert forked.returncode == 0, forked.stderr
+    shown = pool.bb('show', 'opening@eng').stdout
+    bindings = [node for node in ast.parse(shown).body if isinstance(node, ast.Assign)]
+    assert [node.targets[0].id for node in bindings] == ['audit', 'is_weekend']
+    assert f"(Algiers) audit = bb.ref('{other}') # ()" in shown
+    saved = reword(pool, tmp_path)
+    assert saved.returncode == 0, saved.stderr
+    assert f'Import: audit -> {audit}' in saved.stdout
+    assert other not in pool.bb('show', 'opening@eng').stdout.replace(f"bb.ref('{other}') # ()", '')
+    assert json.loads(pool.bb('search', '--pinned', '--json').stdout) == []
+
+
+def test_a_name_bound_to_two_pool_functions_is_refused(tmp_path):
+    pool = Pool(tmp_path)
+    one = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    two = hash_of(pool.add('is_rest', WEEKEND.format(days='(4, 5)').replace('is_weekend', 'is_rest')))
+    twice = pool.add('opening', OPENING.format(ref=f'bb.ref("{one}")\nis_weekend = bb.ref("{two}")', name='opening'))
+    assert twice.returncode == 1
+    assert 'is_weekend is bound twice' in twice.stderr and 'keep one binding' in twice.stderr
