@@ -20,8 +20,14 @@ def edit_by_hash(pool, tmp_path, func_hash, code, name='draft.md'):
     return pool.bb('edit', f'{func_hash}@eng', str(draft), '-m', 'change')
 
 
-def add(pool, name, code, *args, answer=None):
-    """bb add name with arguments; with answer, at a terminal (a pty) where answer is typed."""
+def add(pool, name, code, *args, answer=None, piped=False):
+    """
+    bb add name with arguments; with answer, at a terminal (a pty) where answer is typed.
+
+    The terminal is the input and the output, as when someone sits at it
+    (stdout and stderr are then one screen); with piped, the input only
+    (the output is captured, as in `bb add ... | grep`).
+    """
     source = pool.tmp / f'{name}_eng.py'
     source.write_text(code)
     command = [sys.executable, str(BB), 'add', f'{source}@eng', *args]
@@ -30,7 +36,18 @@ def add(pool, name, code, *args, answer=None):
     master, slave = os.openpty()
     try:
         os.write(master, answer.encode())
-        return subprocess.run(command, capture_output=True, text=True, env=pool.env, stdin=slave, timeout=60)
+        if piped:
+            return subprocess.run(command, capture_output=True, text=True, env=pool.env, stdin=slave, timeout=60)
+        done = subprocess.run(command, stdin=slave, stdout=slave, stderr=slave, env=pool.env, timeout=60)
+        os.set_blocking(master, False)
+        shown = b''
+        try:
+            while chunk := os.read(master, 65536):
+                shown += chunk
+        except OSError:  # nothing more to read
+            pass
+        done.stdout = done.stderr = shown.decode().replace('\r\n', '\n')  # one screen
+        return done
     finally:
         os.close(master)
         os.close(slave)
@@ -111,6 +128,11 @@ def test_someone_at_the_terminal_is_asked_which_one(tmp_path):
     # No answer: nothing is guessed
     silent = add(pool, 'closing', BY_NAME.format(name='closing'), answer='\n')
     assert silent.returncode == 1 and '--pick is_weekend=' in silent.stderr
+    # Output piped or captured (`bb add ... | grep Hash`): the question would not be seen, so it is not asked
+    unseen = add(pool, 'closing', BY_NAME.format(name='closing'), answer='2\n', piped=True)
+    assert unseen.returncode == 1 and 'Which one?' not in unseen.stdout
+    assert all(f'--pick is_weekend={h[:12]}' in unseen.stderr for h in hashes)
+    assert pool.bb('latest', 'closing@eng').returncode == 1
 
 
 def test_a_pick_moves_a_caller_to_another_fork(tmp_path):

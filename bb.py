@@ -48,7 +48,8 @@ Writing functions for the pool:
     version called name (the end of that name's lineage of edits, never
     by date). Several functions may answer to a name (a fork that kept
     it, functions of another origin called alike). bb does not guess:
-    at a terminal it lists them and asks which; with no terminal, or
+    at a terminal it lists them and asks which; with no terminal (input
+    or output redirected: a pipe, a capture), or
     with --no-ask (agents and scripts: use it, a terminal may be there
     without anyone at it), nothing is saved, exit status 1, and stderr
     lists a `--pick name=HASH` per candidate (the first characters of
@@ -4870,6 +4871,17 @@ def helper_one_line(text: str) -> str:
     return ' '.join(''.join(c if c.isprintable() else ' ' for c in text).split())
 
 
+def helper_at_terminal() -> bool:
+    """
+    Whether someone can be asked a question: input and output are both a terminal.
+
+    A question is written to standard output. With output redirected (a
+    pipe, `$(bb add ... | grep Hash)`) nobody would see it and bb would
+    wait for an answer to it: that is no terminal, whatever the input is.
+    """
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 def helper_ask_choice(question: str, options: List[str]) -> Optional[int]:
     """Ask which of options (numbered from 1); None on no answer (EOF, an empty line)."""
     print(question)
@@ -4923,7 +4935,8 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source",
       called NAME now. So the choice is made once, and kept by the
       lineage, not by the text;
     - the only one, when one function answers;
-    - the answer to a question (ask), when someone is at the terminal.
+    - the answer to a question (ask), when someone is at the terminal
+      (helper_at_terminal: output redirected is no terminal).
     Otherwise saving is refused, with a --pick per candidate. A lineage
     with several ends (two edits of one version, no declared fork) is
     asked about the same way. An answer is kept in picks, so preparing
@@ -5001,7 +5014,7 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source",
         else:
             described = resolve_describe_candidates(name, lang, candidates)
             answer = helper_ask_choice(f"{where}, line {node.lineno}: {len(candidates)} functions answer to "
-                                       f"'{name}' (bb search {name} tells them apart):", described) if ask and sys.stdin.isatty() else None
+                                       f"'{name}' (bb search {name} tells them apart):", described) if ask and helper_at_terminal() else None
             if answer is None:
                 problems.append(f"  line {node.lineno}: {len(candidates)} functions answer to '{name}'; say which "
                                 f"with --pick (bb search {name} tells them apart):")
@@ -7148,7 +7161,8 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     With --pick it moves to another one, e.g. to a fork.
 
     When several answer and nothing picks one: at a terminal bb lists
-    them and asks; with no terminal (a script, an agent), or with
+    them and asks; with no terminal (a script, an agent, output piped
+    or captured: the question would not be seen), or with
     --no-ask, nothing is saved, the candidates are listed on stderr with
     the --pick for each, and the exit status is 1. Forgetting --pick
     never saves a guess. It also never moves a function: without it, a
