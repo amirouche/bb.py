@@ -20,6 +20,15 @@ against Bitcoin; `bb anchor --verify` asks the OpenTimestamps client, whose Pyth
 version needs a Bitcoin node for that. Proofs stay pending for a few hours, and a
 pending proof is a calendar's promise, not yet evidence.
 
+## A signed step says who vouches, not who wrote
+
+With a signing key, the lineage steps you save are signed (`Signed:` in `bb log`).
+The signature shows that the holder of a key saved that code under that name after
+that step. It does not show they wrote it: anyone can add, and sign, a copy of
+someone else's function. Who came first is a question for `bb anchor`, and only
+between those who anchored. The author recorded in a function's own `object.json`
+is not signed, nor are worklogs or steps saved before signing existed.
+
 ## Potential Enhancements
 
 1. **Class support**: Would require normalizing method names, class hierarchy, etc.

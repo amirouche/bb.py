@@ -31,7 +31,7 @@ The bb function pool location is controlled by the `BB_DIRECTORY` environment va
 - **Default**: `$HOME/.local/bb/` (follows XDG Base Directory specification)
 - **Custom location**: Set `BB_DIRECTORY=/path/to/pool` to override
 
-It holds `pool/` (`functions/`, `mappings/` and `lineage/`), `worklog/` (worklogs), `edit/` (unfinished `bb edit` files), `review/` (signed reviews, written once: `review/xx/yy.../<key id>/<review id>.json`, a new verdict being another review whose `supersedes` lists yours it replaces; only a validly signed review of the same key supersedes), and `trust/` (shared list of peers). Next to any JSON file of `pool/`, `worklog/` and `review/` (and a review's `.sig`) there may be `FILE.ots`, its OpenTimestamps proof (see Anchoring). Private state, your config, review approvals and trusted peers, lives outside it in `$BB_STATE_DIRECTORY` (default `~/.local/state/bb/`) so nobody can approve code for you through git. The user tracks the whole directory with git; bb has no commit, push or remote commands and never runs git.
+It holds `pool/` (`functions/`, `mappings/` and `lineage/`), `worklog/` (worklogs), `edit/` (unfinished `bb edit` files), `review/` (signed reviews, written once: `review/xx/yy.../<key id>/<review id>.json`, a new verdict being another review whose `supersedes` lists yours it replaces; only a validly signed review of the same key supersedes), and `trust/` (shared list of peers). Next to any JSON file of `pool/`, `worklog/` and `review/` (and the `.sig` of a lineage step or a review) there may be `FILE.ots`, its OpenTimestamps proof (see Anchoring). Private state, your config, review approvals and trusted peers, lives outside it in `$BB_STATE_DIRECTORY` (default `~/.local/state/bb/`) so nobody can approve code for you through git. The user tracks the whole directory with git; bb has no commit, push or remote commands and never runs git.
 
 ### Anchoring
 
@@ -220,7 +220,14 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
    name their function and language and are content-addressed with them
 7. Current versions follow lineage steps, never time: append-only records
    {from, function, lang, mapping, name, relation, comment, metadata,
-   translates?, follows?} in pool/lineage/, id = hash of the record.
+   translates?, follows?, public_key?} in pool/lineage/, id = hash of the
+   record. With a signing key the step you save names it ('public_key')
+   and is signed next to it (FILE.sig, namespace bb-lineage):
+   lineage_signature_status says unsigned, trusted (your key or a peer of
+   your private list under the author's email), untrusted or invalid (a
+   named key without a valid signature, or content that is not what the
+   id names); bb log shows it as Signed:. A step given its metadata is
+   never signed; signatures gate nothing, reviews do.
    'follows' maps each pool function the code uses (pins aside) to the
    step of it the reference stands on: one code may sit in two lineages
    (a fork back to an older version's code), and a caller follows one,

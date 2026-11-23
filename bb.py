@@ -249,6 +249,10 @@ $BB_DIRECTORY/edit/, signed reviews in $BB_DIRECTORY/review/ and the
 shared list of peers in $BB_DIRECTORY/trust/. bb does not manage history or sharing: track
 $BB_DIRECTORY with git and use git's own commands to share it.
 
+With a signing key (bb whoami signing-key), the reviews you give and the
+lineage steps you save are signed (ssh-keygen): bb reviews and bb log say
+whether a signature is by a peer you trust (bb trust).
+
 Records are written once and say when themselves ('created'). bb anchor
 has it attested: an OpenTimestamps proof next to each file (FILE.ots) that
 it existed when a given Bitcoin block was mined. It is the only command
