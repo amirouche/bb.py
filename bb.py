@@ -930,6 +930,7 @@ def storage_get_bb_directory() -> Path:
         ├── worklog/       # Worklogs: <uuid7>/worklog.json and translated messages
         ├── edit/          # Unfinished bb edit files (a scratch pad)
         ├── review/        # Signed reviews: XX/YYYY.../<key id>/<review id>.json and .sig
+        ├── anchor/        # Snapshots: the list of every anchored file, as what changed since the last
         └── trust/         # allowed_signers: shared list of peers (not trusted by itself)
 
     Private state (config, review approvals, trusted peers) lives
@@ -2769,7 +2770,200 @@ def anchor_relay(result: subprocess.CompletedProcess, expected: Tuple[str, ...] 
             print(f"ots: {line}", file=sys.stderr)
 
 
-def command_anchor(identifier: str = None, upgrade: bool = False, verify: bool = False, status: bool = False):
+# A proof says a file existed; it does not say what else did. A snapshot
+# does: the list of every file bb anchor covers, with its SHA256, anchored
+# like any record. So that a snapshot stays small, it holds what changed
+# since the one before it:
+#
+#     $BB_DIRECTORY/anchor/<snapshot id>.json
+#     {previous: [ids], added: {path: sha256}, removed: [paths], count, root, metadata}
+#
+# 'added' also holds a file whose content differs from before; 'root' is the
+# hash of the whole list, 'count' its length. The list at a snapshot is the
+# list at previous[0] with its own changes applied; the id is the hash of the
+# record, so anchoring one snapshot anchors every list before it. A record
+# removed later is still in the snapshots taken before, and the next one says
+# 'removed': deleting no longer goes unseen. Several ends (two people anchored
+# before merging) are all named by the next snapshot, which continues the first.
+
+def storage_get_snapshot_directory() -> Path:
+    """Get the directory of snapshots: $BB_DIRECTORY/anchor/"""
+    return storage_get_bb_directory() / 'anchor'
+
+
+def snapshot_path(snapshot_id: str) -> Path:
+    """Where a snapshot lives."""
+    return storage_get_snapshot_directory() / f'{snapshot_id}.json'
+
+
+def snapshot_compute_root(listing: Dict[str, str]) -> str:
+    """The hash of a whole list of files: of its canonical JSON."""
+    return hash_compute(json.dumps(listing, sort_keys=True, ensure_ascii=False))
+
+
+def snapshot_scan() -> Tuple[Dict[str, Dict[str, Any]], List[Path]]:
+    """
+    Every snapshot, by id, and the files of anchor/ that are not one
+    (unreadable, or whose content is not what their name says).
+    """
+    snapshots, broken = {}, []
+    directory = storage_get_snapshot_directory()
+    for path in sorted(directory.glob('*.json')) if directory.is_dir() else []:
+        try:
+            record = json.loads(path.read_text(encoding='utf-8'))
+            valid = (hash_compute(json.dumps(record, sort_keys=True, ensure_ascii=False)) == path.stem
+                     and isinstance(record['added'], dict) and isinstance(record['removed'], list)
+                     and isinstance(record['previous'], list))
+        except (OSError, ValueError, KeyError, TypeError):
+            valid = False
+        if valid:
+            snapshots[path.stem] = record
+        else:
+            broken.append(path)
+    return snapshots, broken
+
+
+def snapshot_heads(snapshots: Dict[str, Dict[str, Any]]) -> List[str]:
+    """Ids of the snapshots no other continues, sorted."""
+    continued = {previous for record in snapshots.values() for previous in record['previous']}
+    return sorted(set(snapshots) - continued)
+
+
+def snapshot_listing(snapshots: Dict[str, Dict[str, Any]], snapshot_id: str) -> Optional[Dict[str, str]]:
+    """
+    The list of files at a snapshot: {path: sha256}.
+
+    Returns:
+        None when it cannot be told: a snapshot before it is missing, or
+        the list is not the one the snapshot says (root, count)
+    """
+    chain = []
+    current = snapshot_id
+    while current is not None:
+        if current not in snapshots or current in chain:
+            return None
+        chain.append(current)
+        current = (snapshots[current]['previous'] or [None])[0]
+    listing: Dict[str, str] = {}
+    for current in reversed(chain):
+        record = snapshots[current]
+        for path in record['removed']:
+            listing.pop(path, None)
+        listing.update(record['added'])
+        if record.get('count') != len(listing) or record.get('root') != snapshot_compute_root(listing):
+            return None
+    return listing
+
+
+def snapshot_current_listing() -> Dict[str, str]:
+    """The list of files as it is now: every file bb anchor covers, with its SHA256."""
+    base = storage_get_bb_directory()
+    return {path.relative_to(base).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in anchor_list_files()}
+
+
+def snapshot_compare(before: Dict[str, str], now: Dict[str, str]) -> Tuple[List[str], List[str], List[str]]:
+    """What differs between two lists of files: (added, changed, removed) paths, sorted."""
+    return (sorted(set(now) - set(before)),
+            sorted(path for path in set(now) & set(before) if now[path] != before[path]),
+            sorted(set(before) - set(now)))
+
+
+def snapshot_save() -> Optional[str]:
+    """
+    Take a snapshot when the files are not those of the last one.
+
+    Returns:
+        The id of the new snapshot; None when nothing changed, or when the
+        list at the last snapshot cannot be told (bb anchor --status says why)
+    """
+    snapshots, _ = snapshot_scan()
+    heads = snapshot_heads(snapshots)
+    before = snapshot_listing(snapshots, heads[0]) if heads else {}
+    if before is None:
+        return None
+    now = snapshot_current_listing()
+    added, changed, removed = snapshot_compare(before, now)
+    if not (added or changed or removed) and len(heads) <= 1:
+        return None
+    record = {
+        'schema_version': 1,
+        'previous': heads,
+        'added': {path: now[path] for path in added + changed},
+        'removed': removed,
+        'count': len(now),
+        'root': snapshot_compute_root(now),
+        'metadata': code_create_metadata(),
+    }
+    snapshot_id = hash_compute(json.dumps(record, sort_keys=True, ensure_ascii=False))
+    path = snapshot_path(snapshot_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(record, f, indent=2, ensure_ascii=False)
+    return snapshot_id
+
+
+def snapshot_report(every: bool = False) -> bool:
+    """
+    Print where the snapshots stand: the last one and what changed since.
+
+    Args:
+        every: List every snapshot, oldest first, with what each removed
+
+    Returns:
+        False when something is wrong with them (printed to stderr)
+    """
+    base = storage_get_bb_directory()
+    snapshots, broken = snapshot_scan()
+    for path in broken:
+        print(f"Error: {path.relative_to(base)}: not the snapshot its name says", file=sys.stderr)
+    heads = snapshot_heads(snapshots)
+    if not snapshots:
+        print("Snapshot: none (bb anchor takes one)")
+        return not broken
+
+    def describe(snapshot_id: str) -> str:
+        record = snapshots[snapshot_id]
+        anchored = anchor_describe(snapshot_path(snapshot_id)) or "not anchored"
+        return (f"{snapshot_id[:12]}... of {record.get('count')} file{'' if record.get('count') == 1 else 's'} "
+                f"(+{len(record['added'])} -{len(record['removed'])}), {anchored}")
+
+    if every:
+        depth: Dict[str, int] = {}
+        for snapshot_id in snapshots:
+            # How many snapshots come before it: the order they were taken in
+            chain, current = [], snapshot_id
+            while current in snapshots and current not in depth and current not in chain:
+                chain.append(current)
+                current = (snapshots[current]['previous'] or [None])[0]
+            for offset, link in enumerate(reversed(chain)):
+                depth[link] = depth.get(current, -1) + 1 + offset
+        for snapshot_id in sorted(snapshots, key=lambda i: (depth[i], i)):
+            print(f"Snapshot: {describe(snapshot_id)}")
+            print(f"  Date: {(snapshots[snapshot_id].get('metadata') or {}).get('created', 'unknown')}")
+            for path in snapshots[snapshot_id]['removed']:
+                print(f"  removed: {path}")
+    else:
+        print(f"Snapshot: {describe(heads[0])}")
+    if len(heads) > 1:
+        print(f"Snapshots to join: {len(heads)} (the next bb anchor continues {heads[0][:12]}... and names them all)")
+    before = snapshot_listing(snapshots, heads[0])
+    if before is None:
+        print(f"Error: the list of files at snapshot {heads[0][:12]}... cannot be told: "
+              f"a snapshot before it is missing or was altered", file=sys.stderr)
+        return False
+    added, changed, removed = snapshot_compare(before, snapshot_current_listing())
+    if added or changed or removed:
+        print(f"Since then: {len(added)} added, {len(changed)} changed, {len(removed)} removed")
+        for path in changed:
+            print(f"  changed: {path}")
+        for path in removed:
+            print(f"  removed: {path}")
+    return not broken
+
+
+def command_anchor(identifier: str = None, upgrade: bool = False, verify: bool = False, status: bool = False,
+                   snapshots: bool = False):
     """
     Anchor the records in Bitcoin with OpenTimestamps.
 
@@ -2780,12 +2974,30 @@ def command_anchor(identifier: str = None, upgrade: bool = False, verify: bool =
     - bb anchor --status: count what is anchored, without the network.
     - bb anchor --verify: have the client check each complete proof
       against Bitcoin (it needs a Bitcoin node) and say since when.
+    - bb anchor --snapshots: list every snapshot and what each removed.
 
-    With an identifier, only that function's files. The exit status is 1
-    when a proof is unreadable, is for other content or fails to verify.
+    bb anchor also takes a snapshot: the list of every file it covers,
+    with its hash, anchored like a record (in $BB_DIRECTORY/anchor/, as
+    what changed since the snapshot before). A proof says a file existed;
+    a snapshot says what else did, so a record removed since is seen:
+    --status lists what was added, changed and removed since the last one.
+
+    With an identifier, only that function's files, and no snapshot. The
+    exit status is 1 when a proof is unreadable, is for other content or
+    fails to verify, or when a snapshot was altered or is missing.
     """
     base = storage_get_bb_directory()
-    files = anchor_list_files(helper_resolve_to_hash(identifier) if identifier else None)
+    if snapshots:
+        if not snapshot_report(every=True):
+            sys.exit(1)
+        return
+    if not (identifier or upgrade or verify or status):
+        snapshot_save()
+    records = anchor_list_files(helper_resolve_to_hash(identifier) if identifier else None)
+    # Snapshots are anchored with the records, and counted apart
+    taken = [] if identifier else [snapshot_path(snapshot_id) for snapshot_id in sorted(snapshot_scan()[0])]
+    files = records + taken
+    records = set(records)
     states = {path: anchor_state(path) for path in files}
 
     def relative(path: Path) -> str:
@@ -2800,16 +3012,17 @@ def command_anchor(identifier: str = None, upgrade: bool = False, verify: bool =
         return bool(broken)
 
     if status:
-        heights = sorted(height for state, height in states.values() if state == 'complete')
+        heights = sorted(states[path][1] for path in records if states[path][0] == 'complete')
         blocks = ""
         if heights:
             blocks = (f" (Bitcoin block {heights[0]})" if heights[0] == heights[-1] else
                       f" (Bitcoin blocks {heights[0]} to {heights[-1]})")
-        counts = Counter(state for state, _ in states.values())
+        counts = Counter(states[path][0] for path in records)
         print(f"Complete: {counts['complete']}{blocks}")
         print(f"Pending: {counts['pending']}")
         print(f"Not anchored: {counts['none']}")
-        if report_broken():
+        sound = identifier is not None or snapshot_report()
+        if report_broken() or not sound:
             sys.exit(1)
         return
 
@@ -2824,7 +3037,7 @@ def command_anchor(identifier: str = None, upgrade: bool = False, verify: bool =
                 said = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
                 print(f"{relative(path)}: Bitcoin block {height}: {said[-1] if said else 'no answer'}")
                 failed = failed or result.returncode != 0
-        counts = Counter(state for state, _ in states.values())
+        counts = Counter(states[path][0] for path in records)
         if counts['none']:
             print(f"Not anchored: {counts['none']}")
         if failed:
@@ -2845,9 +3058,12 @@ def command_anchor(identifier: str = None, upgrade: bool = False, verify: bool =
                         backup.unlink()
                     else:
                         backup.replace(anchor_proof_path(path))
+        pending = [path for path in pending if path in records]
         completed = sum(1 for path in pending if anchor_state(path)[0] == 'complete')
         print(f"Completed: {completed}")
         print(f"Still pending: {len(pending) - completed}")
+        if not identifier:
+            snapshot_report()
         if report_broken():
             sys.exit(1)
         return
@@ -2860,16 +3076,17 @@ def command_anchor(identifier: str = None, upgrade: bool = False, verify: bool =
             anchor_relay(result)
             failed = True
             break
-    anchored = sum(1 for path in new if anchor_proof_path(path).exists())
+    anchored = sum(1 for path in new if path in records and anchor_proof_path(path).exists())
+    missed = sum(1 for path in new if not anchor_proof_path(path).exists())
     if anchored:
         print(f"Anchored: {anchored} file{'' if anchored == 1 else 's'}, pending until a Bitcoin block holds "
               f"{'it' if anchored == 1 else 'them'} (in a few hours: bb anchor --upgrade)")
-    elif not failed:
+    elif not failed and not any(path in taken for path in new):
         print("Nothing to anchor.")
+    sound = identifier is not None or snapshot_report()
     if failed:
-        print(f"Error: the OpenTimestamps client failed; {len(new) - anchored} file(s) not anchored.",
-              file=sys.stderr)
-    if report_broken() or failed:
+        print(f"Error: the OpenTimestamps client failed; {missed} file(s) not anchored.", file=sys.stderr)
+    if report_broken() or failed or not sound:
         sys.exit(1)
 
 
@@ -9894,6 +10111,8 @@ def _build_parser():
     anchor_mode.add_argument('--status', action='store_true', help='Count what is anchored, without the network')
     anchor_mode.add_argument('--verify', action='store_true',
                              help='Check each complete proof against Bitcoin (the client needs a Bitcoin node)')
+    anchor_mode.add_argument('--snapshots', action='store_true',
+                             help='List every snapshot of the pool and what each removed')
 
     reviews_parser = subparsers.add_parser('reviews', help='Show who reviewed a function, with signature status')
     reviews_parser.add_argument('identifier', help='Hash or name, with optional @lang')
@@ -10050,7 +10269,8 @@ def main():
     elif args.command == 'review':
         command_review(args.identifier, comment=args.comment)
     elif args.command == 'anchor':
-        command_anchor(args.identifier, upgrade=args.upgrade, verify=args.verify, status=args.status)
+        command_anchor(args.identifier, upgrade=args.upgrade, verify=args.verify, status=args.status,
+                       snapshots=args.snapshots)
     elif args.command == 'reviews':
         command_reviews(args.identifier, as_json=args.as_json, every=args.every)
     elif args.command == 'trust':

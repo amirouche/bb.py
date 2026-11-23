@@ -5,6 +5,7 @@ The proofs are read by bb itself (anchor_parse, anchor_state); the client
 that makes them is replaced here by a stand-in writing the same format.
 """
 import hashlib
+import json
 import sys
 
 import pytest
@@ -176,10 +177,10 @@ def test_anchor_verify_relays_the_client(mock_bb_dir, tmp_path, stand_in, capsys
     _add(tmp_path)
     bb.command_anchor()
     bb.command_anchor(verify=True)
-    assert capsys.readouterr().out.count(": pending") == 3
+    assert capsys.readouterr().out.count(": pending") == 4  # three records and the snapshot
     bb.command_anchor(upgrade=True)
     bb.command_anchor(verify=True)
-    assert capsys.readouterr().out.count("attests existence as of 2026-11-23") == 3
+    assert capsys.readouterr().out.count("attests existence as of 2026-11-23") == 4
 
     monkeypatch.setenv('STAND_IN_REFUSES', '1')
     with pytest.raises(SystemExit) as failure:
@@ -224,7 +225,7 @@ def test_anchor_client_failure_is_an_error(mock_bb_dir, tmp_path, monkeypatch, c
         bb.command_anchor()
     err = capsys.readouterr().err
     assert failure.value.code == 1
-    assert "ots: no calendar answered" in err and "3 file(s) not anchored" in err
+    assert "ots: no calendar answered" in err and "4 file(s) not anchored" in err  # the snapshot too
 
 
 def test_rm_takes_the_proofs_along(mock_bb_dir, tmp_path, stand_in):
@@ -232,3 +233,156 @@ def test_rm_takes_the_proofs_along(mock_bb_dir, tmp_path, stand_in):
     bb.command_anchor()
     bb.command_rm('one@eng')
     assert [path.name for path in bb.storage_get_pool_directory().rglob('*.ots')] == ['object.json.ots']
+
+
+# ----------------------------------------------------------------------------
+# Snapshots: the list of every anchored file, so that a removal is seen
+# ----------------------------------------------------------------------------
+
+def _snapshots():
+    snapshots, broken = bb.snapshot_scan()
+    assert broken == []
+    return snapshots
+
+
+def test_anchor_takes_a_snapshot_of_every_file(mock_bb_dir, tmp_path, stand_in, capsys):
+    _add(tmp_path)
+    bb.command_anchor(status=True)
+    assert "Snapshot: none" in capsys.readouterr().out
+    bb.command_anchor()
+    assert "of 3 files (+3 -0), pending" in capsys.readouterr().out
+    [(snapshot_id, record)] = _snapshots().items()
+    assert record['previous'] == [] and record['removed'] == [] and record['count'] == 3
+    assert record['added'] == bb.snapshot_current_listing()
+    assert all(path.startswith('pool/') for path in record['added'])
+    assert record['root'] == bb.snapshot_compute_root(record['added'])
+    assert bb.anchor_state(bb.snapshot_path(snapshot_id))[0] == 'pending'
+
+    bb.command_anchor()  # nothing changed: no second snapshot
+    assert "Nothing to anchor." in capsys.readouterr().out
+    assert len(_snapshots()) == 1
+
+
+def test_snapshot_holds_what_changed_since_the_one_before(mock_bb_dir, tmp_path, stand_in, capsys):
+    _add(tmp_path)
+    bb.command_anchor()
+    [first] = _snapshots()
+    _add(tmp_path, "def two():\n    return 2\n", 'two.py')
+    bb.command_anchor(status=True)
+    assert "Since then: 3 added, 0 changed, 0 removed" in capsys.readouterr().out
+    bb.command_anchor()
+    snapshots = _snapshots()
+    [second] = bb.snapshot_heads(snapshots)
+    assert snapshots[second]['previous'] == [first]
+    assert len(snapshots[second]['added']) == 3 and snapshots[second]['count'] == 6
+    assert bb.snapshot_listing(snapshots, second) == bb.snapshot_current_listing()
+    assert len(bb.snapshot_listing(snapshots, first)) == 3
+
+
+def test_a_removed_record_is_seen(mock_bb_dir, tmp_path, stand_in, capsys):
+    """Before the next snapshot --status lists it; after, the snapshot says 'removed' for good"""
+    _add(tmp_path)
+    bb.command_anchor()
+    step = next(bb.storage_get_lineage_directory().rglob('*.json'))
+    gone = step.relative_to(bb.storage_get_bb_directory()).as_posix()
+    step.unlink()
+    bb.anchor_proof_path(step).unlink()  # someone removes a record and its proof: nothing in the pool is stale
+    bb.storage_cache_clear()
+    capsys.readouterr()
+
+    bb.command_anchor(status=True)
+    out = capsys.readouterr().out
+    assert "Since then: 0 added, 0 changed, 1 removed" in out and f"  removed: {gone}" in out
+
+    bb.command_anchor()
+    snapshots = _snapshots()
+    [head] = bb.snapshot_heads(snapshots)
+    assert snapshots[head]['removed'] == [gone] and snapshots[head]['count'] == 2
+    capsys.readouterr()
+    bb.command_anchor(status=True)
+    assert "Since then" not in capsys.readouterr().out
+    bb.command_anchor(snapshots=True)
+    out = capsys.readouterr().out
+    assert out.index("(+3 -0)") < out.index("(+0 -1)") and f"  removed: {gone}" in out
+
+
+def test_a_changed_file_is_in_the_next_snapshot(mock_bb_dir, tmp_path, stand_in, capsys):
+    """A function removed and added again by someone else: the same path, another content"""
+    _add(tmp_path)
+    bb.command_anchor()
+    object_json = next(bb.storage_get_functions_directory().rglob('object.json'))
+    bb.anchor_proof_path(object_json).unlink()
+    object_json.write_text(object_json.read_text(encoding='utf-8').replace('"created": "2', '"created": "3'),
+                           encoding='utf-8')
+    capsys.readouterr()
+    bb.command_anchor(status=True)
+    assert "Since then: 0 added, 1 changed, 0 removed" in capsys.readouterr().out
+    bb.command_anchor()
+    snapshots = _snapshots()
+    [head] = bb.snapshot_heads(snapshots)
+    assert list(snapshots[head]['added']) == [object_json.relative_to(bb.storage_get_bb_directory()).as_posix()]
+    assert bb.snapshot_listing(snapshots, head) == bb.snapshot_current_listing()
+
+
+def test_an_altered_or_missing_snapshot_is_an_error(mock_bb_dir, tmp_path, stand_in, capsys):
+    _add(tmp_path)
+    bb.command_anchor()
+    _add(tmp_path, "def two():\n    return 2\n", 'two.py')
+    bb.command_anchor()
+    snapshots = _snapshots()
+    [head] = bb.snapshot_heads(snapshots)
+    [first] = snapshots[head]['previous']
+    path = bb.snapshot_path(first)
+    original = path.read_text(encoding='utf-8')
+    capsys.readouterr()
+
+    # Rewriting history: the first snapshot never listed that step
+    record = json.loads(original)
+    record['added'].pop(next(p for p in record['added'] if p.startswith('pool/lineage/')))
+    path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding='utf-8')
+    with pytest.raises(SystemExit):
+        bb.command_anchor(status=True)
+    err = capsys.readouterr().err
+    assert "not the snapshot its name says" in err and "cannot be told" in err
+    assert bb.snapshot_save() is None  # nothing is built on a history that cannot be read
+
+    path.unlink()
+    with pytest.raises(SystemExit):
+        bb.command_anchor(status=True)
+    assert "a snapshot before it is missing or was altered" in capsys.readouterr().err
+
+    path.write_text(original, encoding='utf-8')
+    bb.command_anchor(status=True)
+    assert capsys.readouterr().err == ""
+
+
+def test_snapshots_taken_apart_are_joined(mock_bb_dir, tmp_path, stand_in, capsys):
+    """Two people anchored before merging: the next snapshot names both ends and continues the first"""
+    _add(tmp_path)
+    bb.command_anchor()
+    [first] = _snapshots()
+    _add(tmp_path, "def two():\n    return 2\n", 'two.py')
+    bb.command_anchor()
+    [mine] = bb.snapshot_heads(_snapshots())
+    # Someone else's snapshot, also taken after the first: it arrives with a merge
+    other = {'schema_version': 1, 'previous': [first], 'added': {}, 'removed': [], 'count': 3,
+             'root': _snapshots()[first]['root'], 'metadata': {'created': '2026-01-01T00:00:00Z', 'name': 'bob'}}
+    other_id = bb.hash_compute(json.dumps(other, sort_keys=True, ensure_ascii=False))
+    bb.snapshot_path(other_id).write_text(json.dumps(other, indent=2), encoding='utf-8')
+    snapshots = _snapshots()
+    assert sorted(bb.snapshot_heads(snapshots)) == sorted([mine, other_id])
+    capsys.readouterr()
+    bb.command_anchor(status=True)
+    assert "Snapshots to join: 2" in capsys.readouterr().out
+
+    bb.command_anchor()
+    snapshots = _snapshots()
+    [head] = bb.snapshot_heads(snapshots)
+    assert snapshots[head]['previous'] == sorted([mine, other_id])
+    assert bb.snapshot_listing(snapshots, head) == bb.snapshot_current_listing()
+
+
+def test_anchoring_one_function_takes_no_snapshot(mock_bb_dir, tmp_path, stand_in):
+    _add(tmp_path)
+    bb.command_anchor('one@eng')
+    assert _snapshots() == {}

@@ -2,13 +2,13 @@
 
 ## Metadata
 - ID: 14
-- Feature: bb anchor, bb anchor --status/--upgrade/--verify, Anchored: in bb log, anchored: in bb show
+- Feature: bb anchor, bb anchor --status/--upgrade/--verify/--snapshots, Anchored: in bb log, anchored: in bb show
 - Date: 2026-11-23
 - Status: draft
 - Complexity: intermediate
 
 ## Overview
-The date of a record is what its author says. `bb anchor` has it attested: every JSON file of the pool, the worklogs and the reviews gets an OpenTimestamps proof next to it, `FILE.ots`, that these exact bytes existed when a given Bitcoin block was mined. The proofs are tracked with git like everything else, and `ots verify FILE.ots` checks one without bb.
+The date of a record is what its author says. `bb anchor` has it attested: every JSON file of the pool, the worklogs and the reviews gets an OpenTimestamps proof next to it, `FILE.ots`, that these exact bytes existed when a given Bitcoin block was mined. The proofs are tracked with git like everything else, and `ots verify FILE.ots` checks one without bb. Each `bb anchor` also anchors a snapshot, the list of every file with its hash, so that a record removed later is seen.
 
 bb runs the OpenTimestamps client for this: `ots`, or the command in `$BB_OTS`. So that this transcript needs neither the network nor a few hours of waiting, `$BB_OTS` names a stand-in that writes the same files as the client and answers at once.
 
@@ -80,15 +80,18 @@ $ bb anchor --status
 Complete: 0
 Pending: 0
 Not anchored: 3
+Snapshot: none (bb anchor takes one)
 ```
 
 ### Step 2: Anchor them
 One request to the calendars covers every file. Each gets its proof next
-to it (hashes left out here).
+to it (hashes left out here). The last line is the snapshot: the list of
+these three files and their hashes, anchored with them.
 
 ```bash
-$ env BB_OTS="python3 ots_stand_in.py" bb anchor
+$ env BB_OTS="python3 ots_stand_in.py" bb anchor | sed -E 's/[0-9a-f]{12}\.\.\./<id>/'
 Anchored: 3 files, pending until a Bitcoin block holds them (in a few hours: bb anchor --upgrade)
+Snapshot: <id> of 3 files (+3 -0), pending (bb anchor --upgrade)
 $ (cd $BB_DIRECTORY/pool && find . -name '*.ots' | sed -E 's/[0-9a-f]{2}\/[0-9a-f]{62}/<hash>/; s/[0-9a-f]{64}/<hash>/' | sort)
 ./functions/<hash>/object.json.ots
 ./lineage/<hash>.json.ots
@@ -100,13 +103,17 @@ A proof is made once. Later records are anchored when you next run
 `bb anchor`: here a worklog and its message.
 
 ```bash
-$ env BB_OTS="python3 ots_stand_in.py" bb anchor
+$ env BB_OTS="python3 ots_stand_in.py" bb anchor | head -1
 Nothing to anchor.
 $ bb worklog new greet@eng -m "Wrote a first greeting" | grep -c '^Worklog:'
 1
-$ env BB_OTS="python3 ots_stand_in.py" bb anchor
+$ env BB_OTS="python3 ots_stand_in.py" bb anchor | sed -E 's/[0-9a-f]{12}\.\.\./<id>/'
 Anchored: 2 files, pending until a Bitcoin block holds them (in a few hours: bb anchor --upgrade)
+Snapshot: <id> of 5 files (+2 -0), pending (bb anchor --upgrade)
 ```
+
+A snapshot holds what changed since the one before it: this second one
+lists two files and names the first.
 
 ---
 
@@ -122,7 +129,7 @@ The function, its lineage step and the worklog each carry an `Anchored:`
 line under their date.
 
 ```bash
-$ bb anchor --status
+$ bb anchor --status | head -3
 Complete: 0
 Pending: 5
 Not anchored: 0
@@ -132,10 +139,11 @@ $ bb log greet | grep -c '^Anchored: pending'
 
 ### Step 5: Complete the proofs
 ```bash
-$ env BB_OTS="python3 ots_stand_in.py" bb anchor --upgrade
+$ env BB_OTS="python3 ots_stand_in.py" bb anchor --upgrade | sed -E 's/[0-9a-f]{12}\.\.\./<id>/'
 Completed: 5
 Still pending: 0
-$ bb anchor --status
+Snapshot: <id> of 5 files (+2 -0), Bitcoin block 870000
+$ bb anchor --status | head -3
 Complete: 5 (Bitcoin block 870000)
 Pending: 0
 Not anchored: 0
@@ -185,14 +193,55 @@ exit status 1
 
 ---
 
+# Chapter 4: A Record Removed
+
+A proof says a file existed. It cannot say that a file is missing: remove
+a record with its proof and nothing in the pool is wrong. The snapshot is
+what remembers.
+
+## Workflow
+
+### Step 8: Remove the worklog and its proofs
+Whether by mistake or to hide it, by hand or through git: the pool holds
+no trace of the worklog, but the last snapshot listed it.
+
+```bash
+$ rm -r $BB_DIRECTORY/worklog/*
+$ (bb anchor --status 2>/dev/null || true) | grep -A3 '^Since then' | sed -E 's/[0-9a-f]{2}\/[0-9a-f]{62}/<hash>/; s/worklog\/[0-9a-f-]{36}/worklog\/<uuid>/'
+Since then: 0 added, 1 changed, 2 removed
+  changed: pool/mappings/<hash>/eng/0df0d09f8c9769983af92b4762bb81879d3c17e7ef3b08181073f6b43fc21fe2.json
+  removed: worklog/<uuid>/eng/<hash>/message.json
+  removed: worklog/<uuid>/worklog.json
+```
+
+The mapping edited in Chapter 3 is there too, as changed.
+
+### Step 9: The next snapshot says so for good
+Every snapshot names the one before it, so the removal is now part of
+what later snapshots are anchored with.
+
+```bash
+$ (env BB_OTS="python3 ots_stand_in.py" bb anchor 2>/dev/null || true) | sed -E 's/[0-9a-f]{12}\.\.\./<id>/'
+Snapshot: <id> of 3 files (+1 -2), pending (bb anchor --upgrade)
+$ (bb anchor --snapshots 2>/dev/null || true) | grep -v 'Date:' | sed -E 's/[0-9a-f]{12}\.\.\./<id>/; s/[0-9a-f]{2}\/[0-9a-f]{62}/<hash>/; s/worklog\/[0-9a-f-]{36}/worklog\/<uuid>/'
+Snapshot: <id> of 3 files (+3 -0), Bitcoin block 870000
+Snapshot: <id> of 5 files (+2 -0), Bitcoin block 870000
+Snapshot: <id> of 3 files (+1 -2), pending (bb anchor --upgrade)
+  removed: worklog/<uuid>/eng/<hash>/message.json
+  removed: worklog/<uuid>/worklog.json
+```
+
+---
+
 ## Summary
 
 | Command | Purpose |
 |---------|---------|
 | `bb anchor [X]` | Stamp every file with no proof yet (of function X only) |
-| `bb anchor --status` | Count complete, pending and missing proofs; no network |
+| `bb anchor --status` | Count complete, pending and missing proofs, and what changed since the last snapshot; no network |
 | `bb anchor --upgrade` | Complete the pending proofs once a block holds them |
 | `bb anchor --verify [X]` | Have the client check each complete proof against Bitcoin |
+| `bb anchor --snapshots` | Every snapshot of the pool, and what each removed |
 | `bb log` | `Anchored:` under the date of each anchored record |
 | `bb show X@lang` | `# bb:` lines above the code: what is anchored (and signed) |
 
@@ -204,4 +253,6 @@ exit status 1
 
 3. **Proofs are ordinary OpenTimestamps files**: `FILE.ots` next to `FILE`, kept in git with it, checked by `ots verify` without bb.
 
-4. **Records are written once, so a proof is forever**: a file that no longer matches its proof was changed after being anchored, and is reported rather than stamped again.
+4. **A snapshot says what else existed**: the list of every file, anchored with them, each naming the one before. A record removed since is listed by `bb anchor --status`, and the next snapshot records the removal.
+
+5. **Records are written once, so a proof is forever**: a file that no longer matches its proof was changed after being anchored, and is reported rather than stamped again.
