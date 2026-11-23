@@ -136,7 +136,6 @@ def test_a_chosen_fork_is_shown_by_name_and_followed_while_a_pin_is_no_debt(tmp_
     origin = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
     other = hash_of(fork(pool, tmp_path, 'is_weekend@eng', WEEKEND.format(days='(4, 5)'), 'Friday and Saturday'))
     add(pool, 'opening', BY_NAME.format(name='opening'), '--pick', f'is_weekend={other[:12]}')
-    # (other code than opening: two names of one code would share their pins)
     add(pool, 'closing', OPENING.format(ref=f'bb.ref("{other}")', name='closing').replace('not is_weekend', 'is_weekend'))
     # Choosing is not pinning: the chosen fork is shown by name, the pin as a hash
     assert "is_weekend = bb.resolve('is_weekend')" in pool.bb('show', 'opening@eng').stdout
@@ -306,3 +305,23 @@ def test_migrate_says_what_older_steps_follow_without_rewriting_them(tmp_path):
     assert saved.returncode == 0, saved.stderr
     assert f'Import: is_weekend -> {new} (was {old})' in saved.stdout
     assert outdated(pool) == []
+
+
+def test_a_pin_belongs_to_a_name_not_to_the_code_two_names_share(tmp_path):
+    pool = Pool(tmp_path)
+    old = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    # One code under two names: opening follows is_weekend, closing pins it
+    followed = pool.add('opening', BY_NAME.format(name='opening'))
+    pinned = pool.add('closing', OPENING.format(ref=f'bb.ref("{old}")', name='closing'))
+    assert hash_of(followed) == hash_of(pinned)
+    assert outdated(pool) == []
+    edit_by_hash(pool, tmp_path, old, WEEKEND.format(days='(6, 5)'))
+    # The name that follows is behind; the status says which, since the other is not
+    found = json.loads(pool.bb('search', '--outdated', '--json').stdout)
+    assert [r['hash'] for r in found] == [hash_of(followed)]
+    assert found[0]['outdated'] == [old] and found[0]['outdated_as'] == {old: ['opening@eng']}
+    assert 'out-of-date version(s): is_weekend (as opening@eng)' in pool.bb('search', '--outdated').stdout
+    assert '[out of date]' in pool.bb('tree', 'opening@eng').stdout
+    # Each draft still says its own: one out of date, the other pinned
+    assert 'out of date' in pool.bb('show', 'opening@eng').stdout
+    assert f"is_weekend = bb.ref('{old}')" in pool.bb('show', 'closing@eng').stdout

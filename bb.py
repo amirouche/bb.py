@@ -3582,52 +3582,86 @@ def search_uses_under_name(caller: Dict[str, Any], dep_hash: str, identifier: st
     return not aliases or name in aliases
 
 
-def search_pins(function: Dict[str, Any]) -> Set[str]:
-    """Every reference a function pins on purpose (bb.ref), in any language."""
-    return {pin for mapping in function['mappings'].values() for pin in (mapping.get('pinned') or [])}
-
-
-def search_outdated_refs(index: Dict[str, Any], func_hash: str) -> List[str]:
+def search_uses(function: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    The versions a function uses that are no longer current, pins excepted.
+    How each name of a function uses the pool: one entry per current step on it.
 
-    A use of D, under alias A in the caller's mapping in language L, is
-    out of date when D's lineage for A in L (D's own name there when A is
-    not one) went on to another function: the current version of that
-    name in L is not D. Languages where the caller is current are looked
-    at (all its languages when it is current nowhere). A D with no
-    lineage in L is followed in every language.
+    A function is its code; what a reference is to its author is not in
+    the code. Whether it is pinned (bb.ref), by which alias it is used
+    and which step of it is followed belong to a name: to its mapping and
+    its lineage step. Two names of one code, or two languages, may
+    differ, so what is asked about references is asked of each.
+
+    Returns:
+        [{'lang', 'name', 'pins' (set), 'aliases' ({hash: alias}),
+        'follows' ({hash: step})}], from the current steps on the
+        function (all its steps when none is current; its mappings, with
+        name None, when it has no step at all)
+    """
+    steps = lineage_index()['steps']
+    func_hash = function['hash']
+    uses = []
+    for step_id in lineage_current_steps(function=func_hash) or lineage_steps_on(func_hash):
+        record = steps[step_id]
+        data = mapping_load_json(func_hash, record['lang'], record['mapping']) or {}
+        uses.append({'lang': record['lang'], 'name': record['name'], 'pins': set(data.get('pinned') or []),
+                     'aliases': data.get('alias_mapping', {}), 'follows': record.get('follows') or {}})
+    if not uses:
+        for lang, mappings in sorted(function['all_mappings'].items()):
+            uses += [{'lang': lang, 'name': None, 'pins': set(m.get('pinned') or []),
+                      'aliases': m.get('alias_mapping', {}), 'follows': {}} for m in mappings]
+    return uses
+
+
+def search_pins(function: Dict[str, Any]) -> Set[str]:
+    """
+    The references a function pins on purpose (bb.ref) under every one of its names.
+
+    A pin belongs to a name (see search_uses): a reference one name pins
+    and another follows is not pinned for the function, the one that
+    follows it can be out of date.
+    """
+    uses = search_uses(function)
+    return set.intersection(*(use['pins'] for use in uses)) if uses else set()
+
+
+def search_outdated_names(index: Dict[str, Any], func_hash: str) -> Dict[str, List[str]]:
+    """
+    The versions a function uses that are no longer current, and the names of it that are behind.
+
+    A use of D by a name of the function (one of its current steps, in
+    language L, under alias A) is out of date when that name does not pin
+    D and D's lineage went on to another function: from the step of D
+    the name follows when its step says so, otherwise D's lineage for A
+    in L (D's own name there when A is not one; in every language when D
+    has no lineage in L). Each name is asked: two names of one code may
+    pin, call and follow D differently.
+
+    Returns:
+        {D: the names behind on it, sorted (name@lang)}
     """
     memo = index.setdefault('outdated_memo', {})
     if func_hash in memo:
         return memo[func_hash]
     functions = index['functions']
     function = functions[func_hash]
-    steps = index['lineage']['steps']
-    pins = search_pins(function)
-    langs = sorted(function['current_names']) or sorted(function['mappings'])
-    outdated = []
+    outdated: Dict[str, Set[str]] = {}
     for dep in code_extract_dependencies(function['normalized_code']):
-        if dep in pins or dep not in functions or dep in outdated:
+        if dep not in functions:
             continue
-        for lang in langs:
-            # Every name of the language: two names of one code may use dep by two names,
-            # and each of their steps says which step of dep it follows
-            mine = lineage_current_steps(lang, function=func_hash) or lineage_steps_on(func_hash, lang)
-            uses = {(mapping_load_json(func_hash, lang, steps[s]['mapping']).get('alias_mapping', {}).get(dep),
-                     lineage_step_follows(s).get(dep)) for s in mine}
-            if not uses:
-                mappings = function['all_mappings'].get(lang) or [function['mappings'].get(lang, {})]
-                uses = {(m.get('alias_mapping', {}).get(dep), None) for m in mappings}
-            for alias, followed in sorted(uses, key=repr):
-                heads = lineage_ends(dep, lang, alias, followed)
-                if heads and dep not in heads:
-                    outdated.append(dep)
-                    break
-            if dep in outdated:
-                break
-    memo[func_hash] = outdated
-    return outdated
+        for use in search_uses(function):
+            if dep in use['pins']:
+                continue
+            heads = lineage_ends(dep, use['lang'], use['aliases'].get(dep), use['follows'].get(dep))
+            if heads and dep not in heads:
+                outdated.setdefault(dep, set()).add(f"{use['name']}@{use['lang']}" if use['name'] else use['lang'])
+    memo[func_hash] = {dep: sorted(names) for dep, names in outdated.items()}
+    return memo[func_hash]
+
+
+def search_outdated_refs(index: Dict[str, Any], func_hash: str) -> List[str]:
+    """The versions a function uses that are no longer current for some name of it (see search_outdated_names)."""
+    return list(search_outdated_names(index, func_hash))
 
 
 def search_untranslated(func_hash: str) -> List[Tuple[str, str]]:
@@ -3743,6 +3777,9 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
         'current': is_current,
         'diverged': is_current and forks > 1,
         'outdated': search_outdated_refs(index, func_hash),
+        # When only some names of the function are behind on a version: which ones
+        'outdated_as': {dep: names for dep, names in search_outdated_names(index, func_hash).items()
+                        if len(names) < len({(use['lang'], use['name']) for use in search_uses(function)})},
         # The names this function calls them by (a hash may carry several names)
         'aliases': dict(mapping.get('alias_mapping') or {}),
         'behind': (behind or {}).get(func_hash, []),
@@ -3917,7 +3954,9 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
         if r['relatives']:
             status.append(f"one of {len(r['relatives']) + 1} called {r['name']}")
         if r['outdated']:
-            names = ', '.join(r['aliases'].get(dep) or helper_function_label(dep) for dep in r['outdated'])
+            names = ', '.join((r['aliases'].get(dep) or helper_function_label(dep))
+                              + (f" (as {', '.join(r['outdated_as'][dep])})" if dep in r['outdated_as'] else '')
+                              for dep in r['outdated'])
             status.append(f"uses {len(r['outdated'])} out-of-date version(s): {names}")
         if r['behind']:
             names = ', '.join(helper_function_label(dep) for dep in r['behind'])
