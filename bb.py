@@ -4968,7 +4968,7 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
                 functions = storage_scan_functions()
                 problems.append(f"  line {node.lineno}: the lineage of {followed[:12]}... has {len(ends)} ends; "
                                 f"follow one, or stay with bb.ref(\"{followed}\"):")
-                problems += [f"    bb.follow(\"{h}\")  # {helper_describe_function(functions[h], lang).split("  ", 1)[1]}"
+                problems += [f"    bb.follow(\"{h}\")  # {helper_describe_function(functions[h], lang).split('  ', 1)[1]}"
                              for h in ends if h in functions]
             else:
                 # No current version left: the one named is the one kept
@@ -4989,7 +4989,7 @@ def code_resolve_pool_names(source_code: str, lang: str, where: str = "source") 
         else:
             problems.append(f"  line {node.lineno}: '{name}' has {len(heads)} current versions; "
                             f"follow one (bb search {name} tells them apart):")
-            problems += [f"    {name} = bb.follow(\"{h}\")  # {helper_describe_function(functions[h], lang).split("  ", 1)[1]}"
+            problems += [f"    {name} = bb.follow(\"{h}\")  # {helper_describe_function(functions[h], lang).split('  ', 1)[1]}"
                          for h in heads]
     by_hash: Dict[str, List[str]] = {}
     for name, func_hash in sorted(resolved.items()):
