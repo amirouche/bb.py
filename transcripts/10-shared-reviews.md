@@ -2,7 +2,7 @@
 
 ## Metadata
 - ID: 10
-- Feature: bb whoami signing-key, bb review (signed), bb reviews, bb trust publish/import
+- Feature: bb whoami signing-key, bb review (signed), bb reviews, bb trust publish/import, Signed: in bb log
 - Date: 2026-11-05
 - Status: draft
 - Complexity: intermediate
@@ -76,6 +76,15 @@ $ (env BB_STATE_DIRECTORY=bob bb run show_double@eng 3 2>&1 || true) | head -1
 Error: Refusing to run code you have not reviewed (1 function(s) to approve).
 ```
 
+Alice had her key when she added the function, so the lineage step saying
+"Alice added `show_double`" is signed too. To Bob it is, for now, signed
+by a stranger.
+
+```bash
+$ env BB_STATE_DIRECTORY=bob bb log show_double | grep '^Signed'
+Signed: untrusted (not a peer you trust: bb trust)
+```
+
 ### Step 5: Bob imports Alice from the shared list
 `bb trust import` shows each entry and asks; here Bob answers `y`.
 
@@ -90,6 +99,8 @@ $ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -1 | awk '{print 
 trusted approve Alice
 $ env BB_STATE_DIRECTORY=bob bb run show_double@eng 3
 6
+$ env BB_STATE_DIRECTORY=bob bb log show_double | grep '^Signed'
+Signed: trusted
 ```
 
 ---
@@ -130,6 +141,8 @@ Error: Refusing to run code you have not reviewed (1 function(s) to approve).
 
 2. **Signatures, not files, carry trust**: a review counts when it is signed by a key you trust, for the function it names. An edited, moved or forged review is invalid.
 
-3. **A review is written once**: changing your mind writes another signed review that supersedes yours; the earlier one stays in `review/`, and only a signed review of the same key can retire it.
+3. **What you save is signed too**: with a signing key, each lineage step you save (add, edit, translate...) names your key and is signed. It says who vouches for a version; it never decides what may run, which stays with reviews.
 
-4. **Rejections count too**: a trusted peer's rejection cancels trusted approvals of that hash. Your own verdict always wins.
+4. **A review is written once**: changing your mind writes another signed review that supersedes yours; the earlier one stays in `review/`, and only a signed review of the same key can retire it.
+
+5. **Rejections count too**: a trusted peer's rejection cancels trusted approvals of that hash. Your own verdict always wins.

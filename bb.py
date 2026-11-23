@@ -1695,6 +1695,8 @@ def review_save_state(reviewed: set):
 # their validly signed reviews supersedes.
 
 REVIEW_SIGNATURE_NAMESPACE = 'bb-review'
+# A signature is made for one purpose: one on a lineage step cannot pass for a review
+LINEAGE_SIGNATURE_NAMESPACE = 'bb-lineage'
 REVIEW_VERDICTS = ('approve', 'reject')
 
 
@@ -2359,7 +2361,7 @@ def review_run_checks(func_hash: str, reviewed: set) -> bool:
 #
 # The 'created' of a record is what its author says. `bb anchor` has
 # OpenTimestamps attest it: each JSON file of the pool, the worklogs and the
-# reviews (and each review signature) gets a proof next to it, FILE.ots,
+# reviews (and each signature of a lineage step or review) gets a proof next to it, FILE.ots,
 # that these bytes existed when a given Bitcoin block was mined. Proofs are
 # plain OpenTimestamps files: `ots verify FILE.ots` checks one without bb.
 #
@@ -2393,7 +2395,7 @@ def anchor_unlink(path: Path):
 def anchor_list_files(func_hash: str = None) -> List[Path]:
     """
     The files bb anchor covers: every JSON file of the pool, the worklogs
-    and the reviews, and the review signatures.
+    and the reviews, and the signatures of lineage steps and reviews.
 
     Args:
         func_hash: Only this function's object, mappings, lineage steps and reviews
@@ -2401,11 +2403,13 @@ def anchor_list_files(func_hash: str = None) -> List[Path]:
     if func_hash:
         files = [storage_object_path(func_hash)]
         files += storage_mapping_directory(func_hash).rglob('*.json')
-        files += [storage_step_path(step_id) for step_id in lineage_index()['by_function'].get(func_hash, [])]
+        for step_id in lineage_index()['by_function'].get(func_hash, []):
+            files += [storage_step_path(step_id), lineage_signature_path(step_id)]
         review_dir = storage_get_review_directory() / func_hash[:2] / func_hash[2:]
         files += [*review_dir.rglob('*.json'), *review_dir.rglob('*.json.sig')]
     else:
         files = [*storage_get_pool_directory().rglob('*.json'),
+                 *storage_get_lineage_directory().rglob('*.json.sig'),
                  *storage_get_worklog_directory().rglob('*.json'),
                  *storage_get_review_directory().rglob('*.json'),
                  *storage_get_review_directory().rglob('*.json.sig')]
@@ -2654,7 +2658,10 @@ def command_log(identifier: str = None):
     Functions show their names, author and languages. Lineage steps show
     what happened to a name in a language (add, edit, document, rename,
     refactor, restore, translate, fork; follow is a --pick moving a
-    reference to another lineage of the same code), from which step, by whom, and their comment. Worklogs show their author, languages, attached translations
+    reference to another lineage of the same code), from which step, by whom, and their comment. A step
+    saved with a signing key (bb whoami signing-key) has a Signed: line:
+    trusted when its author is a peer you trust, untrusted otherwise,
+    INVALID when the step or its signature was tampered with. Worklogs show their author, languages, attached translations
     and message, in your preferred language when translated.
     """
     entries = []
@@ -2700,6 +2707,10 @@ def command_log(identifier: str = None):
         lines += [f"Date: {metadata.get('created', 'unknown')}",
                   *anchor_log_lines(storage_step_path(step_id)),
                   f"Author: {helper_format_author(metadata)}"]
+        signed = lineage_signature_status(step_id)
+        if signed != 'unsigned':
+            lines.append("Signed: " + {'trusted': "trusted", 'untrusted': "untrusted (not a peer you trust: bb trust)",
+                                       'invalid': "INVALID (altered, or not signed by the key it names)"}[signed])
         if record.get('comment'):
             lines += ['', f"    {record['comment']}"]
         entries.append((metadata.get('created', ''), step_id, lines))
@@ -3070,6 +3081,8 @@ def lineage_prune() -> int:
         if not gone:
             break
         for step_id in gone:
+            if lineage_signature_path(step_id).exists():
+                anchor_unlink(lineage_signature_path(step_id))
             anchor_unlink(storage_step_path(step_id))
             removed += 1
     storage_cache_clear()
@@ -3178,14 +3191,97 @@ def lineage_save(previous: Optional[str], func_hash: str, lang: str, mapping_has
         follows = lineage_follows_build(func_hash, lang, mapping_hash, previous or translates)
     if follows:
         record['follows'] = dict(sorted(follows.items()))
+    # Your own step, saved now, is signed when you have a signing key: a step given its metadata is not
+    identity = helper_signing_identity() if metadata is None else None
+    if identity and not identity[2]:
+        print("Warning: set your email (bb whoami email ...) to sign what you save; step not signed.",
+              file=sys.stderr)
+        identity = None
+    if identity:
+        signed = dict(record, public_key=identity[1])
+        step_id = lineage_step_id(signed)
+        if lineage_write(step_id, signed, identity[0]):
+            return step_id
     step_id = lineage_step_id(record)
-    path = storage_step_path(step_id)
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(record, f, indent=2, ensure_ascii=False)
-        storage_cache_clear()
+    lineage_write(step_id, record)
     return step_id
+
+
+def lineage_write(step_id: str, record: Dict[str, Any], key_path: str = None) -> bool:
+    """
+    Write a lineage step, once, and sign it when given a private key.
+
+    A signed step names its key ('public_key'), so its signature, next to
+    it (FILE.sig), is part of what it says: without one it is invalid, not
+    merely unsigned.
+
+    Returns:
+        False when it could not be signed: nothing is written then
+    """
+    path = storage_step_path(step_id)
+    if path.exists():
+        return True
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(record, f, indent=2, ensure_ascii=False)
+    if key_path:
+        try:
+            result = subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', key_path,
+                                     '-n', LINEAGE_SIGNATURE_NAMESPACE, str(path)],
+                                    capture_output=True, text=True)
+        except FileNotFoundError:
+            result = None
+        if result is None or result.returncode != 0:
+            path.unlink()
+            detail = "ssh-keygen not found" if result is None else result.stderr.strip()
+            print(f"Warning: could not sign the lineage step ({detail}); it is saved unsigned.", file=sys.stderr)
+            return False
+    storage_cache_clear()
+    return True
+
+
+def lineage_signature_path(step_id: str) -> Path:
+    """Where the signature of a signed step lives: next to it, FILE.sig."""
+    return Path(str(storage_step_path(step_id)) + '.sig')
+
+
+def lineage_signature_status(step_id: str) -> str:
+    """
+    Whether a lineage step is signed, and by whom.
+
+    Returns:
+        'unsigned' (it names no key), 'trusted' (signed by the key it
+        names, which is yours or in your private list, under its author's email),
+        'untrusted' (signed by the key it names, which you do not trust)
+        or 'invalid' (the step was altered, or it names a key and the
+        signature is missing or is not of this content by that key)
+    """
+    record = lineage_index()['steps'][step_id]
+    if lineage_step_id(record) != step_id:
+        # Not the step its id names: altered, whatever it now says about a key
+        return 'invalid'
+    public_key = record.get('public_key')
+    if public_key is None:
+        return 'unsigned'
+    email = (record.get('metadata') or {}).get('email') or ''
+    signature = lineage_signature_path(step_id)
+    if not isinstance(public_key, str) or len(public_key.split()) != 2 or not email or not signature.exists():
+        return 'invalid'
+    try:
+        with tempfile.TemporaryDirectory() as tmp, open(storage_step_path(step_id), 'rb') as data:
+            named = Path(tmp) / 'allowed_signers'
+            named.write_text(f"{email} {public_key}\n", encoding='utf-8')
+            result = subprocess.run(['ssh-keygen', '-Y', 'verify', '-f', str(named), '-I', email,
+                                     '-n', LINEAGE_SIGNATURE_NAMESPACE, '-s', str(signature)],
+                                    stdin=data, capture_output=True)
+    except (OSError, ValueError):
+        return 'invalid'
+    if result.returncode != 0:
+        return 'invalid'
+    if (email, public_key) in trust_parse(trust_private_path()):
+        return 'trusted'
+    yours = helper_signing_identity()
+    return 'trusted' if yours and (yours[2], yours[1]) == (email, public_key) else 'untrusted'
 
 
 def lineage_index() -> Dict[str, Any]:

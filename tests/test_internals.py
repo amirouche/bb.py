@@ -1387,6 +1387,127 @@ def test_trusted_rejection_blocks_and_own_verdict_wins(mock_bb_dir, monkeypatch,
     assert bb.review_approvals([func]) == set()
 
 
+def _only_step(func):
+    [step] = bb.lineage_index()['by_function'][func]
+    return step
+
+
+@needs_ssh_keygen
+def test_lineage_step_is_signed_when_you_have_a_key(mock_bb_dir, monkeypatch, tmp_path):
+    """A step saved with a signing key names it; it is untrusted until you trust its author"""
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    func = _pool_add("def one():\n    return 1\n")
+    step = _only_step(func)
+    record = bb.lineage_index()['steps'][step]
+    assert record['public_key'] == bb.helper_signing_identity()[1]
+    assert bb.lineage_step_id(record) == step
+    assert bb.lineage_signature_path(step).exists()
+    assert bb.lineage_signature_path(step) in bb.anchor_list_files()
+    assert bb.lineage_signature_path(step) in bb.anchor_list_files(func)
+
+    _become(monkeypatch, tmp_path, 'bob')
+    assert bb.lineage_signature_status(step) == 'untrusted'
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    assert bb.lineage_signature_status(step) == 'trusted'
+    # Trusting another email with her key does not make her steps trusted
+    bb.command_trust_remove('alice@example.org')
+    bb.command_trust_add('mallory@example.org', str(alice_key) + '.pub')
+    assert bb.lineage_signature_status(step) == 'untrusted'
+
+
+def test_lineage_step_without_a_key_is_unsigned(mock_bb_dir):
+    """No signing key: the step is what it always was"""
+    func = _pool_add("def one():\n    return 1\n")
+    step = _only_step(func)
+    assert 'public_key' not in bb.lineage_index()['steps'][step]
+    assert not bb.lineage_signature_path(step).exists()
+    assert bb.lineage_signature_status(step) == 'unsigned'
+
+
+@needs_ssh_keygen
+def test_lineage_step_given_its_metadata_is_not_signed(mock_bb_dir, monkeypatch, tmp_path):
+    """Only your own step, saved now, is signed: never one recorded for another author"""
+    _become(monkeypatch, tmp_path, 'alice')
+    func = _pool_add("def one():\n    return 1\n")
+    mapping = bb.lineage_index()['steps'][_only_step(func)]['mapping']
+    other = bb.lineage_save(_only_step(func), func, 'eng', mapping, 'document',
+                            metadata={'created': '2020-01-01T00:00:00Z', 'name': 'carol', 'email': 'c@example.org'})
+    assert bb.lineage_signature_status(other) == 'unsigned'
+
+
+@needs_ssh_keygen
+def test_lineage_signature_tampering_is_invalid(mock_bb_dir, monkeypatch, tmp_path):
+    """An altered step, a missing signature, a signature of something else: all invalid, never unsigned"""
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    func = _pool_add("def one():\n    return 1\n")
+    step = _only_step(func)
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    path, signature = bb.storage_step_path(step), bb.lineage_signature_path(step)
+    original, original_signature = path.read_text(encoding='utf-8'), signature.read_bytes()
+
+    def status():
+        bb.storage_cache_clear()
+        return bb.lineage_signature_status(step)
+
+    assert status() == 'trusted'
+    path.write_text(original.replace('"comment": ""', '"comment": "mine"'), encoding='utf-8')
+    assert status() == 'invalid'
+    path.write_text(original, encoding='utf-8')
+
+    signature.unlink()
+    assert status() == 'invalid'
+
+    # Stripping the key along with the signature does not make it an unsigned step
+    record = json.loads(original)
+    del record['public_key']
+    path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding='utf-8')
+    assert status() == 'invalid'
+    path.write_text(original, encoding='utf-8')
+
+    # A review signature by the same key is not a step signature
+    subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', str(alice_key), '-n', bb.REVIEW_SIGNATURE_NAMESPACE,
+                    str(path)], check=True, capture_output=True)
+    assert status() == 'invalid'
+    signature.write_bytes(original_signature)
+    assert status() == 'trusted'
+
+
+@needs_ssh_keygen
+def test_lineage_step_is_saved_unsigned_when_signing_fails(mock_bb_dir, monkeypatch, tmp_path, capsys):
+    """A save never fails because of signing"""
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    alice_key.write_text('not a key', encoding='utf-8')
+    func = _pool_add("def one():\n    return 1\n")
+    step = _only_step(func)
+    assert "could not sign the lineage step" in capsys.readouterr().err
+    assert bb.lineage_signature_status(step) == 'unsigned'
+    assert [p.name for p in bb.storage_get_lineage_directory().rglob('*') if p.is_file()] == [step[2:] + '.json']
+
+
+@needs_ssh_keygen
+def test_lineage_prune_takes_the_signature_along(mock_bb_dir, monkeypatch, tmp_path):
+    _become(monkeypatch, tmp_path, 'alice')
+    _pool_add("def one():\n    return 1\n")
+    bb.command_rm('one@eng')
+    assert [p for p in bb.storage_get_lineage_directory().rglob('*') if p.is_file()] == []
+
+
+@needs_ssh_keygen
+def test_log_says_who_signed(mock_bb_dir, monkeypatch, tmp_path, capsys):
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    _pool_add("def one():\n    return 1\n")
+    _become(monkeypatch, tmp_path, 'bob')
+    _pool_add("def two():\n    return 2\n")
+    bb.command_log('one')
+    assert "Signed: untrusted" in capsys.readouterr().out
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    capsys.readouterr()
+    bb.command_log('one')
+    assert "Signed: trusted" in capsys.readouterr().out
+    bb.command_log('two')
+    assert "Signed: trusted" in capsys.readouterr().out  # his own key
+
+
 @needs_ssh_keygen
 def test_trust_import_asks_for_each_peer(mock_bb_dir, monkeypatch, tmp_path):
     """The shared list is never trusted as a whole: each entry is accepted or not"""
