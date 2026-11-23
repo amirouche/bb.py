@@ -813,6 +813,32 @@ def code_compute_function_hash(normalized_code: str, checks: List[str] = None) -
     return hash_compute(canonical_json)
 
 
+def object_hash_matches(func_hash: str, data: Dict[str, Any]) -> bool:
+    """
+    Whether a stored object.json still hashes to the hash it is filed under.
+
+    A function is content-addressed: its hash is computed from its
+    normalized code and its checks (see code_compute_function_hash). The
+    pool is shared through git, so the bytes behind a hash can be swapped
+    by anyone able to commit. Approval and review bind to a hash string,
+    not to the bytes, so code that is run or compiled must be checked to
+    be the code the hash names, or an attacker could serve arbitrary code
+    under a hash a reviewer already approved.
+
+    Args:
+        func_hash: The hash the object is stored under
+        data: The parsed object.json (object_load)
+
+    Returns:
+        True when recomputing the hash from the stored code and checks
+        gives func_hash
+    """
+    code = data.get('normalized_code')
+    if not isinstance(code, str):
+        return False
+    return code_compute_function_hash(code, data.get('checks')) == func_hash
+
+
 def mapping_build(func_hash: str, lang: str, docstring: str, name_mapping: Dict[str, str],
                   alias_mapping: Dict[str, str], comment: str = "", markdown: str = "",
                   pinned: List[str] = None) -> Dict[str, Any]:
@@ -7124,6 +7150,9 @@ def schema_validate(func_hash: str) -> tuple:
         if func_data.get('schema_version') != 1:
             errors.append(f"Invalid schema version: {func_data.get('schema_version')}")
 
+        if 'normalized_code' in func_data and not object_hash_matches(func_hash, func_data):
+            errors.append("Stored code does not match its hash (the object was altered)")
+
     except (IOError, json.JSONDecodeError) as e:
         errors.append(f"Failed to parse object.json: {e}")
         return False, errors
@@ -7728,6 +7757,11 @@ def code_load_normalized(func_hash: str, cache: Dict[str, Callable] = None,
         if code_detect_schema(func_hash) is None:
             raise ValueError(f"Function not in the local pool: {func_hash}")
         data = object_load(func_hash)
+        # Run only the code the hash names: a git-shared object.json can be
+        # swapped under a hash you already approved (object_hash_matches).
+        if not object_hash_matches(func_hash, data):
+            raise ValueError(f"{func_hash[:12]}... does not match its stored code "
+                             f"(the object was altered); refusing to run it")
         source, like = data['normalized_code'], func_hash
     else:
         data = object_load(like)  # a version not saved yet, loaded like the one it rewrites

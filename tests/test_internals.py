@@ -1193,6 +1193,41 @@ def test_code_load_normalized_runs_the_hashed_code(mock_bb_dir):
     assert bb.code_load_normalized(func).__name__ == '_bb_v_0'
 
 
+def test_running_refuses_code_swapped_under_an_approved_hash(mock_bb_dir):
+    """object.json is git-shared; running it recomputes the hash, so a swapped body is caught"""
+    func = _pool_add("def double(x):\n    return x * 2\n")
+    assert bb.object_hash_matches(func, bb.object_load(func))
+
+    # An attacker rewrites the body in place, under the hash the reviewer approved
+    path = bb.storage_object_path(func)
+    data = json.loads(path.read_text(encoding='utf-8'))
+    data['normalized_code'] = normalize_code_for_test("def _bb_v_0(_bb_v_1):\n    return 'pwned'")
+    data.pop('public_key', None)
+    path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+    bb.storage_cache_clear()
+
+    assert not bb.object_hash_matches(func, bb.object_load(func))
+    # Approval binds to the hash, so the swap must be caught where the code runs
+    with pytest.raises(ValueError, match="does not match its stored code"):
+        bb.code_load_normalized(func)
+    is_valid, errors = bb.schema_validate(func)
+    assert not is_valid and any("does not match its hash" in e for e in errors)
+
+
+def test_running_refuses_tampered_checks_under_an_approved_hash(mock_bb_dir):
+    """Checks are part of the hash, so swapping the 'checks' list is caught too"""
+    func = _pool_add("def one():\n    return 1\n", checks=['a' * 64])
+    path = bb.storage_object_path(func)
+    data = json.loads(path.read_text(encoding='utf-8'))
+    data['checks'] = ['b' * 64]  # same code, different checks -> different hash
+    path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+    bb.storage_cache_clear()
+
+    assert not bb.object_hash_matches(func, bb.object_load(func))
+    with pytest.raises(ValueError, match="does not match its stored code"):
+        bb.code_load_normalized(func)
+
+
 def test_edit_runs_nothing_without_checks_and_checks_need_reviewed_imports(mock_bb_dir):
     """bb edit runs nothing without checks; with checks, not pool functions you have not reviewed"""
     helper = _pool_add("def six():\n    return 6\n")
@@ -1740,7 +1775,9 @@ def test_inner_imports_run_from_normalized_code(mock_bb_dir):
 def _save_legacy_inner_import(module_name):
     """Store a function the way older bb normalized inner imports: the use renamed, the import not."""
     code = normalize_code_for_test("def _bb_v_0(_bb_v_1):\n    import random\n    return _bb_v_2.randint(1, _bb_v_1)")
-    func = bb.hash_compute(code + module_name)
+    # Legacy objects were content-addressed too: store under the real hash of the
+    # code, so object_hash_matches (which guards execution) accepts it.
+    func = bb.code_compute_function_hash(code)
     bb.object_save(func, code, bb.code_create_metadata(), normalization=1)
     bb.mapping_save(func, 'eng', '', {'_bb_v_0': 'pick', '_bb_v_1': 'n', '_bb_v_2': module_name}, {})
     return func
