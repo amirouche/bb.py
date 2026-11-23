@@ -62,6 +62,7 @@ bb.py is a tool for sharing content-addressed knowledge that is verifiable, main
 - **Share across languages** — retrieve any function in any language with `bb show hash@lang`
 - **Verify identity** — same logic always produces the same hash, no matter who wrote it or in what language
 - **Preserve lineage** — every function is traceable; who made what, who built on whom
+- **Prove when** — `bb anchor` anchors every record in Bitcoin with OpenTimestamps: a date that is evidence, not a claim
 - **Compose and build** — functions import other pool functions; dependencies are tracked, compiled, and runnable
 - **Single file, zero dependencies** — the entire tool is one Python file
 

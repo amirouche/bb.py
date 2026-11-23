@@ -10,6 +10,16 @@ only, and definitions have no keyword-only parameters or `**kwargs`. `bb add` an
 `bb edit` refuse code that breaks this rule. Keywords passed indirectly (e.g.
 `functools.partial(helper, height=1)`) cannot be detected and fail at run time.
 
+## Anchoring proves a file existed, nothing more
+
+`bb anchor` proves that a file's bytes existed by the time of a Bitcoin block. It
+does not prove who wrote them, that they are not older, or that nothing was
+removed since: a deleted record leaves no trace but git's. The block height bb
+prints (`bb log`, `bb anchor --status`) is read from the proof and not checked
+against Bitcoin; `bb anchor --verify` asks the OpenTimestamps client, whose Python
+version needs a Bitcoin node for that. Proofs stay pending for a few hours, and a
+pending proof is a calendar's promise, not yet evidence.
+
 ## Potential Enhancements
 
 1. **Class support**: Would require normalizing method names, class hierarchy, etc.
