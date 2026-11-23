@@ -185,3 +185,32 @@ def test_two_forks_of_one_function_are_kin(tmp_path):
     found = {r['hash']: r for r in json.loads(pool.bb('search', 'double', '--json').stdout)}
     assert {r['hash']: r['relation'] for r in found[one]['relatives']} == {origin: 'fork', two: 'kin'}
     assert not found[one]['diverged']
+
+
+def test_a_fork_that_changes_a_check_leaves_the_origin_its_check(tmp_path):
+    pool = Pool(tmp_path)
+    draft = tmp_path / 'weekend.md'
+    pool.bb('edit', 'is_weekend@eng', str(draft))
+    set_code(draft, 'def is_weekend(day):\n    """A day of rest (0 is Monday)."""\n    return day in (5, 6)\n')
+    draft.write_text(draft.read_text() + '\n### saturday\n\n```python def\ndef saturday(f):\n'
+                     '    """Saturday rests."""\n    assert f(5)\n```\n')
+    origin = pool.bb('edit', 'is_weekend@eng', str(draft), '-m', 'with a check')
+    assert origin.returncode == 0, origin.stderr
+    check = pool.bb('latest', 'saturday@eng', '--hash').stdout.split()
+    stricter = tmp_path / 'stricter.md'
+    pool.bb('edit', 'is_weekend@eng', str(stricter))
+    stricter.write_text(stricter.read_text().replace('assert f(5)', 'assert f(5) is True'))
+    forked = pool.bb('edit', 'is_weekend@eng', str(stricter), '--fork', '-m', 'a stricter check')
+    assert forked.returncode == 0, forked.stderr
+    # The origin's check is still current beside the fork's, and neither is an undeclared split
+    both = pool.bb('latest', 'saturday@eng', '--hash').stdout.split()
+    assert len(both) == 2 and check[0] in both
+    assert 'No matches found' in pool.bb('search', '--diverged').stdout
+    # The origin goes on editing its check along its own lineage
+    again = tmp_path / 'again.md'
+    pool.bb('edit', f'{hash_of(origin)}@eng', str(again))
+    again.write_text(again.read_text().replace('assert f(5)', 'assert f(5) and f(6)'))
+    later = pool.bb('edit', f'{hash_of(origin)}@eng', str(again), '-m', 'Sunday too')
+    assert later.returncode == 0, later.stderr
+    assert len(pool.bb('latest', 'saturday@eng', '--hash').stdout.split()) == 2
+    assert 'No matches found' in pool.bb('search', '--diverged').stdout

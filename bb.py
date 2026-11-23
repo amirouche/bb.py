@@ -7058,7 +7058,8 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     date; the fork starts a lineage of its own, and its comment says why
     it left. Both then answer to the name when it is kept: `bb search
     NAME` shows how they relate, and commands take a hash. A fork changes
-    the code or the checks (they are part of the definition).
+    the code or the checks (they are part of the definition); a check it
+    changes is forked too, so the origin keeps its own.
 
     Examples:
 
@@ -7240,7 +7241,9 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     with contextlib.redirect_stdout(io.StringIO()):
         new_checks = []
         for check, prep in plan['checks']:
-            _, check_relation = edit_save_section(check, prep, lang, comment, unchanged=unchanged(check, prep))
+            # A fork leaves the origin's checks as they are: a check it changes is a fork too
+            _, check_relation = edit_save_section(check, prep, lang, comment, unchanged=unchanged(check, prep),
+                                                  fork=fork)
             if check_relation:
                 new_checks.append((prep['name_mapping']['_bb_v_0'], prep['hash']))
         saved_step, relation = edit_save_section(section, prepared, lang, comment, checks=check_hashes,
