@@ -104,6 +104,11 @@ def test_someone_at_the_terminal_is_asked_which_one(tmp_path):
     second = next(line for line in asked.stdout.splitlines() if line.startswith('  2. '))
     picked = next(h for h in hashes if h[:12] in second)
     assert f'Import: is_weekend -> {picked}' in asked.stdout
+    # --no-ask: a terminal with nobody at it (an agent's) gets the refusal, not the question
+    unasked = add(pool, 'closing', BY_NAME.format(name='closing'), '--no-ask', answer='2\n')
+    assert unasked.returncode == 1 and 'Which one?' not in unasked.stdout
+    assert all(f'--pick is_weekend={h[:12]}' in unasked.stderr for h in hashes)
+    assert pool.bb('latest', 'closing@eng').returncode == 1  # nothing saved
     # No answer: nothing is guessed
     silent = add(pool, 'closing', BY_NAME.format(name='closing'), answer='\n')
     assert silent.returncode == 1 and '--pick is_weekend=' in silent.stderr
@@ -124,6 +129,28 @@ def test_a_pick_moves_a_caller_to_another_fork(tmp_path):
     # And stays there
     again = reword(pool, tmp_path)
     assert again.returncode == 0 and pool.run(hash_of(again), 4) == 'False'
+
+
+def test_a_chosen_fork_is_shown_by_name_and_followed_while_a_pin_is_no_debt(tmp_path):
+    pool = Pool(tmp_path)
+    origin = hash_of(pool.add('is_weekend', WEEKEND.format(days='(5, 6)')))
+    other = hash_of(fork(pool, tmp_path, 'is_weekend@eng', WEEKEND.format(days='(4, 5)'), 'Friday and Saturday'))
+    add(pool, 'opening', BY_NAME.format(name='opening'), '--pick', f'is_weekend={other[:12]}')
+    # (other code than opening: two names of one code would share their pins)
+    add(pool, 'closing', OPENING.format(ref=f'bb.ref("{other}")', name='closing').replace('not is_weekend', 'is_weekend'))
+    # Choosing is not pinning: the chosen fork is shown by name, the pin as a hash
+    assert "is_weekend = bb.resolve('is_weekend')" in pool.bb('show', 'opening@eng').stdout
+    assert f"is_weekend = bb.ref('{other}')" in pool.bb('show', 'closing@eng').stdout
+    assert outdated(pool) == []
+    # The fork moves on: who chose it is behind, who pinned it is not
+    newer = hash_of(edit_by_hash(pool, tmp_path, other, WEEKEND.format(days='[4, 5]')))
+    assert outdated(pool) == ['opening']
+    assert f'saving picks {newer[:12]}' in pool.bb('show', 'opening@eng').stdout
+    pinned = pool.bb('show', 'closing@eng').stdout
+    assert f"is_weekend = bb.ref('{other}')" in pinned and 'out of date' not in pinned
+    found = {r['name']: r for r in json.loads(pool.bb('search', 'closing', '--json').stdout)}
+    assert found['closing']['pinned'] == [other] and found['closing']['outdated'] == []
+    assert origin not in pool.bb('show', 'opening@eng').stdout.split('def opening')[1]
 
 
 def test_a_lineage_with_two_ends_is_not_guessed(tmp_path):

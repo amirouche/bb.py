@@ -48,16 +48,24 @@ Writing functions for the pool:
     version called name (the end of that name's lineage of edits, never
     by date). Several functions may answer to a name (a fork that kept
     it, functions of another origin called alike). bb does not guess:
-    at a terminal it lists them and asks which; otherwise saving is
-    refused with a `--pick name=HASH` per candidate (the first
-    characters of the hash are enough; a fork says what it left and
-    why). `bb add`, `bb edit` and `bb scratchpad` take --pick.
+    at a terminal it lists them and asks which; with no terminal, or
+    with --no-ask (agents and scripts: use it, a terminal may be there
+    without anyone at it), nothing is saved, exit status 1, and stderr
+    lists a `--pick name=HASH` per candidate (the first characters of
+    the hash are enough; a fork says what it left and why). `bb add`,
+    `bb edit` and `bb scratchpad` take --pick; bb scratchpad never asks.
   - The choice is made once. The function's lineage step records which
     function each reference follows, so later saves ask nothing: the
     code keeps saying bb.resolve("name") and goes on along that
     function's lineage, through its edits and renames. `bb edit
-    app@lang --pick name=HASH` moves app to another one.
+    app@lang --pick name=HASH` moves app to another one; without
+    --pick a save never moves it. The reference is still shown as
+    bb.resolve("name"), never as bb.ref: choosing is not pinning, and
+    bb search --outdated goes on following the chosen function.
   - bb.ref("<hash>") is that version, kept: it stays pinned across edits.
+    A pin is not debt: bb search --outdated does not list it (the
+    function's status says "N pinned", and its draft notes
+    `# bb: pinned; the current name is ...` when the name moved on).
 
   bb show and bb edit display references by name (bb.resolve). When
   several functions answer to the name, `# bb:` comment lines above the
@@ -4912,7 +4920,7 @@ def command_migrate():
         print(f"Recorded what {followed} lineage step(s) follow.")
 
 
-def code_add(file_path_with_lang: str, comment: str = "", picks: Dict[str, str] = None):
+def code_add(file_path_with_lang: str, comment: str = "", picks: Dict[str, str] = None, ask: bool = True):
     """
     Add a function to the pool.
 
@@ -4943,7 +4951,7 @@ def code_add(file_path_with_lang: str, comment: str = "", picks: Dict[str, str] 
 
     try:
         pins = code_pinned_refs(source_code)
-        source_code, resolved = code_resolve_pool_names(source_code, lang, where=file_path, picks=picks)
+        source_code, resolved = code_resolve_pool_names(source_code, lang, where=file_path, picks=picks, ask=ask)
         prepared = code_prepare_source(source_code, lang, where=file_path)
         prepared['pinned'] = sorted(pins & set(code_extract_dependencies(prepared['normalized_code'])))
     except ValueError as e:
@@ -7368,6 +7376,13 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     needs none: its lineage step remembers which function it follows.
     With --pick it moves to another one, e.g. to a fork.
 
+    When several answer and nothing picks one: at a terminal bb lists
+    them and asks; with no terminal (a script, an agent), or with
+    --no-ask, nothing is saved, the candidates are listed on stderr with
+    the --pick for each, and the exit status is 1. Forgetting --pick
+    never saves a guess. It also never moves a function: without it, a
+    reference stays on the function it follows.
+
     Examples:
 
     ```
@@ -8971,6 +8986,8 @@ def _build_parser():
     add_parser = subparsers.add_parser('add', help='Add a function to the pool')
     add_parser.add_argument('file', help='Path to Python file with @lang suffix (e.g., file.py@eng)')
     add_parser.add_argument('--comment', default='', help='Optional comment explaining this mapping variant')
+    add_parser.add_argument('--no-ask', dest='no_ask', action='store_true',
+                            help='Never ask which function a name means, even at a terminal: refuse and list the --pick for each')
     add_parser.add_argument('--pick', metavar='NAME=HASH', action='append', default=[],
                             help='When several functions answer to NAME, the one meant (hash or its first characters); repeatable')
 
@@ -9023,6 +9040,8 @@ def _build_parser():
                              help='Then update ROOT (a function using it, e.g. app@eng) to the new version')
     edit_parser.add_argument('--fork', action='store_true',
                              help='Save another function on purpose: the edited one stays current')
+    edit_parser.add_argument('--no-ask', dest='no_ask', action='store_true',
+                             help='Never ask which function a name means, even at a terminal: refuse and list the --pick for each')
     edit_parser.add_argument('--pick', metavar='NAME=HASH', action='append', default=[],
                              help='When several functions answer to NAME, the one meant (hash or its first characters); repeatable')
     edit_parser.add_argument('--at', metavar='AT', default=None,
@@ -9170,7 +9189,7 @@ def main():
     elif args.command == 'whoami':
         command_whoami(args.subcommand, args.value)
     elif args.command == 'add':
-        code_add(args.file, args.comment, picks=helper_parse_picks(args.pick))
+        code_add(args.file, args.comment, picks=helper_parse_picks(args.pick), ask=not args.no_ask)
     elif args.command == 'show':
         code_show(args.identifier)
     elif args.command == 'translate':
@@ -9191,7 +9210,8 @@ def main():
                            refactor=args.refactor, picks=helper_parse_picks(args.pick))
     elif args.command == 'edit':
         command_edit(args.identifier, comment=args.comment, unreviewed=args.unreviewed, fork=args.fork,
-                     refactor=args.refactor, at=args.at, file=args.file, picks=helper_parse_picks(args.pick))
+                     refactor=args.refactor, at=args.at, file=args.file, picks=helper_parse_picks(args.pick),
+                     ask=not args.no_ask)
     elif args.command == 'review':
         command_review(args.identifier, comment=args.comment)
     elif args.command == 'reviews':
