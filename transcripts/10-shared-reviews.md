@@ -69,9 +69,14 @@ Published: alice@example.org
 ## Workflow
 
 ### Step 4: Bob sees the review, but does not trust Alice yet
+The review also says under which names Alice read the function: her
+verdict is on the logic, whatever the language, but what she saw was one
+mapping of it.
+
 ```bash
-$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -1 | awk '{print $1, $2, $3}'
+$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -2 | awk '{print $1, $2, $3}'
 untrusted approve Alice
+read as show_double@eng
 $ (env BB_STATE_DIRECTORY=bob bb run show_double@eng 3 2>&1 || true) | head -1
 Error: Refusing to run code you have not reviewed (1 function(s) to approve).
 ```
@@ -99,7 +104,7 @@ Trusted peers: 1
 
 ### Step 6: Alice's review now counts for Bob
 ```bash
-$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -1 | awk '{print $1, $2, $3}'
+$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -2 | head -1 | awk '{print $1, $2, $3}'
 trusted approve Alice
 $ env BB_STATE_DIRECTORY=bob bb run show_double@eng 3
 6
@@ -122,7 +127,7 @@ matches, so the review stops counting.
 ### Step 7: Change one word of the signed review
 ```bash
 $ sed -i 's/Read it/Never read it/' $BB_DIRECTORY/review/*/*/*/*.json
-$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -1 | awk '{print $1, $2, $3}'
+$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -2 | head -1 | awk '{print $1, $2, $3}'
 invalid approve Alice
 $ (env BB_STATE_DIRECTORY=bob bb run show_double@eng 3 2>&1 || true) | head -1
 Error: Refusing to run code you have not reviewed (1 function(s) to approve).

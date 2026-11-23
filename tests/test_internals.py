@@ -1319,6 +1319,41 @@ def test_your_own_signed_review_is_trusted(mock_bb_dir, monkeypatch, tmp_path):
 
 
 @needs_ssh_keygen
+def test_signed_review_names_the_mapping_read(mock_bb_dir, monkeypatch, tmp_path, capsys):
+    """bb review records under which names the function was read; the verdict is on the function"""
+    func = _pool_add("def one():\n    return 1\n")
+    _pool_add("def un():\n    return 1\n", lang='fra')
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    answers = iter(['y'])
+    monkeypatch.setattr('builtins.input', lambda *_: next(answers))
+    monkeypatch.setattr(sys.stdin, 'isatty', lambda: True, raising=False)
+    bb.command_review(func, 'fine')
+    [review] = bb.review_list_shared(func)
+    mapping = bb.mapping_select(func, 'eng')
+    assert (review['lang'], review['mapping']) == ('eng', mapping)
+    assert review['id'] == bb.review_compute_id({k: v for k, v in review.items()
+                                                 if k not in ('id', 'status', 'superseded')})
+    capsys.readouterr()
+    bb.command_reviews(func)
+    assert f"read as one@eng (mapping {mapping[:12]}...)" in capsys.readouterr().out
+
+    # The same verdict after reading it in French is another review; the approval covers both
+    french = bb.mapping_select(func, 'fra')
+    second = bb.review_publish(func, 'approve', 'fine', 'fra', french)
+    assert json.loads(second.read_text(encoding='utf-8'))['supersedes'] == [review['id']]
+    assert bb.review_publish(func, 'approve', 'fine', 'fra', french) == second
+    _become(monkeypatch, tmp_path, 'bob')
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    assert bb.review_approvals([func]) == {func}
+
+    # Naming another mapping in a signed review breaks its signature
+    text = second.read_text(encoding='utf-8')
+    second.write_text(text.replace(french, mapping), encoding='utf-8')
+    # ... and her earlier review, which it no longer supersedes, is current again
+    assert sorted(r['status'] for r in bb.review_list_shared(func)) == ['invalid', 'trusted']
+
+
+@needs_ssh_keygen
 def test_signed_review_cannot_be_moved_to_another_function(mock_bb_dir, monkeypatch, tmp_path):
     """Copying a valid review under another hash does not approve that hash"""
     good = _pool_add("def one():\n    return 1\n")

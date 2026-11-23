@@ -1998,13 +1998,20 @@ def review_compute_id(record: Dict[str, Any]) -> str:
     return hash_compute(json.dumps(record, sort_keys=True, ensure_ascii=False))
 
 
-def review_publish(func_hash: str, verdict: str, comment: str = "") -> Optional[Path]:
+def review_publish(func_hash: str, verdict: str, comment: str = "", lang: str = None,
+                   mapping_hash: str = None) -> Optional[Path]:
     """
     Write a signed review of a function into $BB_DIRECTORY/review/.
 
     Reviews are never rewritten: a new verdict is another review, which
     supersedes the current ones of yours. Giving the verdict and comment
-    your current review already holds writes nothing.
+    your current review already holds, of the same mapping, writes nothing.
+
+    Args:
+        lang, mapping_hash: What was read: the function is its logic, but
+            a reader saw it under the names and documentation of one
+            mapping, and the review says which. The verdict is on the
+            function all the same: what may run does not depend on it
 
     Returns:
         Path of the review, or None when you have no signing key or signing failed
@@ -2023,7 +2030,8 @@ def review_publish(func_hash: str, verdict: str, comment: str = "") -> Optional[
     review_dir = storage_get_review_directory() / func_hash[:2] / func_hash[2:] / key_id
     mine = [r for r in review_list_shared(func_hash)
             if r['status'] != 'invalid' and helper_key_id(r['public_key']) == key_id]
-    if len(mine) == 1 and mine[0]['verdict'] == verdict and mine[0].get('comment', '') == comment:
+    if (len(mine) == 1 and mine[0]['verdict'] == verdict and mine[0].get('comment', '') == comment
+            and (mine[0].get('lang'), mine[0].get('mapping')) == (lang, mapping_hash)):
         return review_dir / f"{mine[0]['id']}.json"
 
     user = storage_read_config()['user']
@@ -2037,6 +2045,8 @@ def review_publish(func_hash: str, verdict: str, comment: str = "") -> Optional[
         'comment': comment,
         'supersedes': sorted(r['id'] for r in mine),
     }
+    if lang and mapping_hash:
+        record.update(lang=lang, mapping=mapping_hash)
     review_dir.mkdir(parents=True, exist_ok=True)
     path = review_dir / f"{review_compute_id(record)}.json"
     path.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
@@ -2215,7 +2225,9 @@ def command_reviews(identifier: str, as_json: bool = False, every: bool = False)
     signed by someone you do not trust (yet); invalid: forged, altered or
     misplaced. Only trusted reviews count, and only current ones: with
     every, the reviews a reviewer replaced since are listed too, marked
-    'superseded'.
+    'superseded'. Under a review, 'read as NAME@lang' says under which
+    names and documentation its reviewer read the function; the verdict is
+    on the function, whatever the mapping.
     """
     func_hash = helper_resolve_to_hash(identifier)
     yours = ("approved" if func_hash in review_load_state() else
@@ -2235,6 +2247,10 @@ def command_reviews(identifier: str, as_json: bool = False, every: bool = False)
                 f"{record['status']}  {record.get('verdict', '?')}  "
                 f"{reviewer.get('name', '')} <{reviewer.get('email', '')}>  {record.get('created', '')}")
         print(line + (f"  {record['comment']}" if record.get('comment') else ""))
+        if isinstance(record.get('lang'), str) and isinstance(record.get('mapping'), str):
+            name = mapping_name(func_hash, record['lang'], record['mapping'])
+            print(f"    read as {name or '(a mapping no longer in the pool)'}@{record['lang']} "
+                  f"(mapping {record['mapping'][:12]}...)")
 
 
 def command_trust_add(email: str, key: str):
@@ -2373,21 +2389,23 @@ def review_order(func_hash: str) -> List[List[str]]:
     return levels
 
 
-def review_render(func_hash: str, preferred_langs: List[str]) -> Optional[Tuple[str, str, str]]:
+def review_render(func_hash: str, preferred_langs: List[str]) -> Optional[Tuple[str, str, str, str]]:
     """
     Render a function for reading, in the first preferred language it has,
     otherwise in the first language it has: the code is readable either way.
 
     Returns:
-        (name, lang, source), or None when the function has no mapping at all
+        (name, lang, source, hash of the mapping shown), or None when the
+        function has no mapping at all
     """
     available = storage_list_languages(func_hash)
     for lang in [l for l in preferred_langs if l in available] + available:
         if lang not in available:
             continue
-        normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, lang)
+        mapping_hash = mapping_select(func_hash, lang)
+        normalized_code, name_mapping, alias_mapping, docstring = code_load(func_hash, lang, mapping_hash)
         source = code_denormalize(code_replace_docstring(normalized_code, docstring), name_mapping, alias_mapping)
-        return name_mapping.get('_bb_v_0', 'unknown'), lang, source
+        return name_mapping.get('_bb_v_0', 'unknown'), lang, source, mapping_hash
     return None
 
 
@@ -2484,7 +2502,7 @@ def command_review(identifier: str, comment: str = ""):
             print(f"Warning: {current_hash} has no language mapping to show; skipped.", file=sys.stderr)
             print()
             continue
-        name, lang, source = rendered
+        name, lang, source, mapping_read = rendered
 
         print(f"[{i+1}/{len(to_review)}] Function: {name} ({lang})")
         print(f"Hash: {current_hash}")
@@ -2550,7 +2568,7 @@ def command_review(identifier: str, comment: str = ""):
             rejected.discard(current_hash)
             review_save_state(private)
             review_save_rejections(rejected)
-            published = review_publish(current_hash, 'approve', comment)
+            published = review_publish(current_hash, 'approve', comment, lang, mapping_read)
             print("✓ Function approved" + (" and signed review published." if published else "."))
         elif answer == 'r':
             reviewed.discard(current_hash)
@@ -2558,7 +2576,7 @@ def command_review(identifier: str, comment: str = ""):
             rejected.add(current_hash)
             review_save_state(private)
             review_save_rejections(rejected)
-            published = review_publish(current_hash, 'reject', comment)
+            published = review_publish(current_hash, 'reject', comment, lang, mapping_read)
             print("✗ Function rejected" + (" and signed review published." if published else "."))
         else:
             print("✗ Function not approved.")
