@@ -9138,16 +9138,15 @@ def refactor_save(old_hash: str, new_hash: str, new_code: str, checks: List[str]
 
 
 def code_hash_rewritten(new_code: str, checks: List[str]) -> str:
-    """The hash of rewritten normalized code: computed without its docstring, with its checks."""
-    tree = ast.parse(new_code)
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            _, func_without_docstring = code_extract_docstring(node)
-            imports = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
-            module_without_docstring = ast.Module(body=imports + [func_without_docstring], type_ignores=[])
-            ast.fix_missing_locations(module_without_docstring)
-            return code_compute_function_hash(ast.unparse(module_without_docstring), checks)
-    raise ValueError("no function in code")
+    """
+    The hash of rewritten normalized code, with its checks.
+
+    Stored code holds no docstring (it lives in the mappings), so it is
+    hashed as it is, as object_hash_matches will: taking a "docstring"
+    out first would drop a string the body starts with, and save a
+    version under a hash its stored code does not have.
+    """
+    return code_compute_function_hash(new_code, checks)
 
 
 def update_check_rewritten(base: str, new_hash: str, new_code: str, checks: List[str],
@@ -9479,20 +9478,9 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
 
             new_dep_code = ast.unparse(dep_tree)
 
-            # Compute new hash (without docstring)
-            new_dep_tree = ast.parse(new_dep_code)
-            for node in new_dep_tree.body:
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    _, func_without_docstring = code_extract_docstring(node)
-                    imports = [n for n in new_dep_tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
-                    module_without_docstring = ast.Module(body=imports + [func_without_docstring], type_ignores=[])
-                    ast.fix_missing_locations(module_without_docstring)
-                    code_without_docstring = ast.unparse(module_without_docstring)
-                    break
-
             # The rewritten function keeps its checks, which are part of its hash
             dep_checks = object_load_checks(dep_hash)
-            new_dep_hash = code_compute_function_hash(code_without_docstring, dep_checks)
+            new_dep_hash = code_hash_rewritten(new_dep_code, dep_checks)
 
             refactor_save(dep_hash, new_dep_hash, new_dep_code, dep_checks, comment, hash_map)
             rewritten.append((dep_hash, new_dep_hash))
@@ -9506,22 +9494,9 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
 
     new_normalized_code = ast.unparse(tree)
 
-    # Compute new hash (hash is computed on code without docstring)
-    # First, extract the code without docstring
-    new_tree = ast.parse(new_normalized_code)
-    for node in new_tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            _, func_without_docstring = code_extract_docstring(node)
-            # Rebuild module without docstring for hashing
-            imports = [n for n in new_tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
-            module_without_docstring = ast.Module(body=imports + [func_without_docstring], type_ignores=[])
-            ast.fix_missing_locations(module_without_docstring)
-            code_without_docstring = ast.unparse(module_without_docstring)
-            break
-
     # The rewritten function keeps its checks, which are part of its hash
     what_checks = object_load_checks(what_hash)
-    new_hash = code_compute_function_hash(code_without_docstring, what_checks)
+    new_hash = code_hash_rewritten(new_normalized_code, what_checks)
 
     saved = refactor_save(what_hash, new_hash, new_normalized_code, what_checks, comment, hash_map)
     if rewritten:

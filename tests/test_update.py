@@ -98,3 +98,36 @@ def test_rm_name_says_when_its_previous_version_is_current_again(tmp_path):
     again = pool.bb('rm', 'card@eng')
     assert again.returncode == 0 and 'current again' not in again.stdout
     assert 'Functions (0 current versions)' in pool.bb('search').stdout
+
+
+TWO_STRINGS = ('import bb\nqux = bb.latest("qux")\n\n\ndef noted(n):\n    """Noted."""\n'
+               '    "a string that is not the docstring"\n    return qux(n) * 2\n')
+
+
+def test_update_and_refactor_hash_the_code_they_store(tmp_path):
+    """A body that starts with a string after its docstring keeps it: the rewrite's hash is that of the stored code"""
+    import json
+    import bb
+    pool, _, v2 = chain(tmp_path)
+    assert pool.edit('noted', TWO_STRINGS).returncode == 0
+
+    def stored_matches(func_hash):
+        path = tmp_path / 'bb' / 'pool' / 'functions' / func_hash[:2] / func_hash[2:] / 'object.json'
+        data = json.loads(path.read_text())
+        assert 'not the docstring' in data['normalized_code']
+        # What bb run checks before executing: the stored code hashes to its name
+        return pool.run(func_hash, 1) != '' and bb.object_hash_matches(func_hash, data)
+
+    draft = tmp_path / 'qux.md'
+    set_code(draft, QUX.format(3))
+    assert pool.bb('edit', 'qux@eng', str(draft), '-m', 'v3').returncode == 0
+    updated = pool.bb('update', 'noted@eng', '-m', 'catch up')
+    assert 'Updated 1 function(s)' in updated.stdout, updated.stdout
+    assert updated.returncode == 0, updated.stderr
+    assert stored_matches(current(pool, 'noted')), updated.stdout + updated.stderr
+
+    # The same through bb edit --refactor
+    set_code(draft, QUX.format(4))
+    saved = pool.bb('edit', 'qux@eng', str(draft), '-m', 'v4', '--refactor', 'noted@eng')
+    assert saved.returncode == 0, saved.stderr
+    assert stored_matches(current(pool, 'noted'))
