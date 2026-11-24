@@ -2263,3 +2263,37 @@ def test_a_trusted_peer_cannot_supersede_another_peers_rejection(mock_bb_dir, mo
                     str(hers)], check=True, capture_output=True)
     assert ('approve', 'untrusted') in {(r['verdict'], r['status']) for r in bb.review_list_shared(func)}
     assert bb.review_approvals([func]) == set()
+
+
+def test_review_checks_every_hash_before_it_tells_or_asks_anything(mock_bb_dir, monkeypatch, capsys):
+    """An approved function swapped since, or a swapped check shown under its function, stops the review"""
+    check = _pool_add("def check_one(f):\n    assert f() == 1\n")
+    func = _pool_add("def one():\n    return 1\n", checks=[check])
+    monkeypatch.setattr('builtins.input', lambda *_: 'y')
+
+    # Everything approved, then the function swapped: not "already reviewed"
+    bb.review_save_state({check, func})
+    genuine = bb.storage_object_path(func).read_text(encoding='utf-8')
+    _swap_body(func, "def _bb_v_0():\n    return 'swapped'")
+    with pytest.raises(SystemExit) as exit_info:
+        bb.command_review(func, '')
+    captured = capsys.readouterr()
+    assert exit_info.value.code == 1 and 'already reviewed' not in captured.out
+    assert 'does not match its stored code' in captured.err and 'Nothing reviewed' in captured.err
+    bb.storage_object_path(func).write_text(genuine, encoding='utf-8')
+    bb.storage_cache_clear()
+
+    # An approved check swapped: its function is not shown with it, and not approved
+    bb.review_save_state({check})
+    _swap_body(check, "def _bb_v_0(_bb_v_1):\n    assert True, 'swapped'")
+    with pytest.raises(SystemExit) as exit_info:
+        bb.command_review(func, '')
+    captured = capsys.readouterr()
+    assert exit_info.value.code == 1 and 'swapped' not in captured.out
+    assert bb.review_load_state() == {check}
+    with pytest.raises(ValueError, match='does not match its stored code'):
+        bb.review_render(check, ['eng'])
+    # Nor is it handed to a translator
+    with pytest.raises(SystemExit):
+        bb.translate_render_file(check, 'eng', 'fra')
+    assert 'refusing to translate it' in capsys.readouterr().err

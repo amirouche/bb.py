@@ -2546,7 +2546,12 @@ def review_render(func_hash: str, preferred_langs: List[str]) -> Optional[Tuple[
     Returns:
         (name, lang, source, hash of the mapping shown), or None when the
         function has no mapping at all
+
+    Raises:
+        ValueError: when the stored code does not match func_hash: what a
+            reviewer reads must be the code the hash names
     """
+    object_check_hash(func_hash)
     available = storage_list_languages(func_hash)
     for lang in [l for l in preferred_langs if l in available] + available:
         if lang not in available:
@@ -2618,6 +2623,20 @@ def command_review(identifier: str, comment: str = ""):
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # Approval is of the code a hash names, not of whatever bytes sit under it: a
+    # git-shared object.json can be swapped under a hash (object_hash_matches).
+    # Every function reached is checked before anything is told or asked, the
+    # approved ones too ("already reviewed" would vouch for the swapped bytes) and
+    # the checks shown under a function. With one altered, nothing here is approved.
+    altered = [h for h in order if not object_hash_matches(h, object_load(h))]
+    if altered:
+        for current_hash in altered:
+            print(f"Error: {current_hash[:12]}... does not match its stored code "
+                  f"(the object was altered); refusing to show or approve it.", file=sys.stderr)
+        print(f"Nothing reviewed: {len(altered)} of {len(order)} function(s) here altered. "
+              f"Restore them (git), then review again.", file=sys.stderr)
+        sys.exit(1)
+
     # Approved by you or by trusted peers; your own verdicts are saved privately
     reviewed = review_approvals(order)
     private = review_load_state()
@@ -2650,17 +2669,6 @@ def command_review(identifier: str, comment: str = ""):
     print()
 
     for i, current_hash in enumerate(to_review):
-        # Approve the code the hash names, not whatever bytes sit under it: a
-        # git-shared object.json can be swapped under a hash (object_hash_matches,
-        # the guard bb run and bb validate already apply). Without this check a
-        # reviewer would read, and sign off on, code that is not the code the
-        # approved hash names, while the real body runs later.
-        if not object_hash_matches(current_hash, object_load(current_hash)):
-            print(f"Error: {current_hash[:12]}... does not match its stored code "
-                  f"(the object was altered); refusing to show or approve it.", file=sys.stderr)
-            print()
-            failed = True
-            continue
         rendered = review_render(current_hash, preferred_langs)
         if rendered is None:
             print(f"Warning: {current_hash} has no language mapping to show; skipped.", file=sys.stderr)
@@ -5268,6 +5276,8 @@ def translate_render_file(hash_value: str, source_lang: str, target_lang: str, n
     translation the file was made from (with name, the one called so:
     two names may share one code).
     """
+    # A translator reads this code and vouches for names that fit it: it must be the hash's
+    helper_require_hash(hash_value, "translate")
     mapping_hash = mapping_select(hash_value, source_lang, name)
     normalized_code, names, aliases, docstring = code_load(hash_value, source_lang, mapping_hash)
     markdown = mapping_load_markdown(hash_value, source_lang, mapping_hash)
