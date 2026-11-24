@@ -1973,22 +1973,33 @@ def signature_sign(path: Path, namespace: str, key_path: str) -> bool:
     """
     Sign a file: writes FILE.sig.
 
+    Whatever goes wrong is a signing failure, not an error of the save:
+    ssh-keygen missing, not executable or refusing the key, a key file
+    that cannot be read, output that is not text. An exception let
+    through here would leave a record naming its key ('public_key') with
+    no signature next to it: invalid for everyone, half a save.
+
     Returns:
         False, with a warning, when it could not be signed (a save never
-        fails because signing did)
+        fails because signing did): no FILE.sig is left then
     """
     signature = signature_path(path)
-    if signature.exists():
-        signature.unlink()
     try:
-        result = subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', key_path, '-n', namespace, str(path)],
-                                capture_output=True, text=True)
-    except FileNotFoundError:
-        result = None
-    if result is None or result.returncode != 0:
         if signature.exists():
             signature.unlink()
-        detail = "ssh-keygen not found" if result is None else result.stderr.strip()
+        result = subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', key_path, '-n', namespace, str(path)],
+                                capture_output=True)
+        detail = result.stderr.decode('utf-8', errors='replace').strip() if result.returncode != 0 else None
+        if detail is None and not signature.exists():
+            detail = "ssh-keygen wrote no signature"
+    except FileNotFoundError:
+        detail = "ssh-keygen not found"
+    except (OSError, ValueError) as e:
+        detail = f"{type(e).__name__}: {e}"
+    if detail is not None:
+        with contextlib.suppress(OSError):
+            if signature.exists():
+                signature.unlink()
         signature_warn(f"could not sign what you save ({detail}); it is saved unsigned.")
         return False
     return True

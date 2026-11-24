@@ -2359,3 +2359,30 @@ def test_a_lineage_step_whose_from_loops_back_does_not_hang(mock_bb_dir):
         assert bb.helper_previous_version(func, 'eng', 'one') is None
     finally:
         signal.alarm(0)
+
+
+@needs_ssh_keygen
+@pytest.mark.parametrize('error', [PermissionError(13, 'Permission denied'), OSError(8, 'Exec format error'),
+                                   UnicodeDecodeError('utf-8', b'\xff', 0, 1, 'invalid start byte')])
+def test_a_signing_error_saves_unsigned_never_half_a_save(mock_bb_dir, monkeypatch, tmp_path, capsys, error):
+    """Whatever ssh-keygen does, a save goes through: unsigned, naming no key"""
+    _become(monkeypatch, tmp_path, 'alice')
+    real_run = subprocess.run
+
+    def run(command, *args, **kwargs):
+        if command[:3] == ['ssh-keygen', '-Y', 'sign']:
+            raise error
+        return real_run(command, *args, **kwargs)
+    monkeypatch.setattr(bb.subprocess, 'run', run)
+    bb._SIGNATURE_WARNED.clear()
+
+    func = _pool_add("def one():\n    return 1\n")
+    assert 'could not sign what you save' in capsys.readouterr().err
+    path = bb.storage_object_path(func)
+    assert 'public_key' not in json.loads(path.read_text(encoding='utf-8'))
+    assert not bb.signature_path(path).exists()
+    assert bb.object_signature_status(func)[0] == 'unsigned'
+    step = _only_step(func)
+    assert 'public_key' not in bb.lineage_index()['steps'][step]
+    assert bb.lineage_signature_status(step) == 'unsigned'
+    assert not list(bb.storage_get_bb_directory().rglob('*.sig'))
