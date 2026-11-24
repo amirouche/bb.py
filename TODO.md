@@ -3,7 +3,6 @@
 <!-- Format: bullet list with topic, type names, intended feature - one sentence max -->
 <!-- Remove implemented entries in atomic commits (separate from feature commits) -->
 
-- `review`: validate key and email with `re.fullmatch` so the one-line invariant of allowed_signers also rejects newlines
 - `edit`: skip the "one name, one code" guard when `prep['hash']` is the edited function, so a doc-only edit of a name with two current steps is not refused
 - `helper_previous_version`: keep a `seen` set like the other lineage walks, so a step whose `from` loops back cannot hang `bb search` and `bb latest`
 - `signature_sign`: treat any `OSError` or decode error from `ssh-keygen` as a signing failure and save unsigned without `public_key`, never half a save
