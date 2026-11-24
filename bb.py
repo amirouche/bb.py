@@ -2183,19 +2183,10 @@ def review_publish(func_hash: str, verdict: str, comment: str = "", lang: str = 
     path = review_dir / f"{review_compute_id(record)}.json"
     path.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
-    signature = Path(str(path) + '.sig')
-    if signature.exists():
-        signature.unlink()
-    try:
-        result = subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', key_path,
-                                 '-n', REVIEW_SIGNATURE_NAMESPACE, str(path)],
-                                capture_output=True, text=True)
-    except FileNotFoundError:
-        result = None
-    if result is None or result.returncode != 0:
+    # A review counts through its signature alone: one that cannot be signed is not left there
+    if not signature_sign(path, REVIEW_SIGNATURE_NAMESPACE, key_path):
         path.unlink()
-        detail = "ssh-keygen not found" if result is None else result.stderr.strip()
-        print(f"Warning: could not sign the review ({detail}); it stays private.", file=sys.stderr)
+        print("Warning: the review is not published; your verdict stays private.", file=sys.stderr)
         return None
     return path
 
@@ -2206,26 +2197,6 @@ def review_acks(record: Dict[str, Any]) -> Optional[List[str]]:
     if not isinstance(ack, list) or not all(isinstance(a, str) and a in REVIEW_ACKS for a in ack):
         return None
     return ack
-
-
-def review_verify(path: Path, allowed_signers: Path) -> bool:
-    """True when the review at path is signed by its reviewer's email in allowed_signers."""
-    signature = Path(str(path) + '.sig')
-    if not signature.exists() or not allowed_signers.exists():
-        return False
-    try:
-        record = json.loads(path.read_text(encoding='utf-8'))
-        email = record['reviewer']['email']
-    except (OSError, json.JSONDecodeError, KeyError, TypeError):
-        return False
-    try:
-        with open(path, 'rb') as data:
-            result = subprocess.run(['ssh-keygen', '-Y', 'verify', '-f', str(allowed_signers),
-                                     '-I', email, '-n', REVIEW_SIGNATURE_NAMESPACE, '-s', str(signature)],
-                                    stdin=data, capture_output=True)
-    except FileNotFoundError:
-        return False
-    return result.returncode == 0
 
 
 def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, Any]]:
@@ -2248,8 +2219,6 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
         return []
     reviews = []
     superseded = set()
-    yours = helper_signing_identity()
-    trusted = set(trust_parse(trust_private_path()))
     for path in sorted(review_dir.glob('*/*.json')):
         try:
             record = json.loads(path.read_text(encoding='utf-8'))
@@ -2260,7 +2229,7 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
         key_id = path.parent.name
         reviewer = record.get('reviewer')
         email = reviewer.get('email') if isinstance(reviewer, dict) else None
-        # The key and email go into an allowed_signers file (review_verify), one
+        # The key and email go into an allowed_signers file (signature_verify), one
         # entry per line: a newline or an extra field in either would add a
         # second, attacker-chosen signer. A public key is exactly "type base64",
         # an email one token without whitespace. fullmatch, since split() and
@@ -2276,21 +2245,15 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
                         and review_acks(record) is not None
                         and key_id == helper_key_id(record['public_key'])
                         and path.stem == review_compute_id(record))
+        # The signature must be by the very key the review names, under the very
+        # email it names, and trust is that pair being yours or in your list
+        # (signature_status, the rules of every signed record). Checking against
+        # your whole list would accept any trusted peer's signature on a record
+        # naming someone else's key, filed in their directory, where it would
+        # supersede their reviews (a rejection, say).
         status = 'invalid'
         if placed_right:
-            # The signature must be by the very key the review names, under the
-            # very email it names: checked against a list holding that one entry.
-            # Checking against your whole list would accept any trusted peer's
-            # signature on a record naming someone else's key, filed in their
-            # directory, where it would supersede their reviews (a rejection, say).
-            signer = (email, ' '.join(record['public_key'].split()))
-            with tempfile.TemporaryDirectory() as tmp:
-                own = Path(tmp) / 'allowed_signers'
-                own.write_text(f"{signer[0]} {signer[1]}\n", encoding='utf-8')
-                if review_verify(path, own):
-                    # Your own key needs no entry in your list: its config is private state too
-                    mine = yours and (yours[2], ' '.join(yours[1].split()[:2])) == signer
-                    status = 'trusted' if mine or signer in trusted else 'untrusted'
+            status = signature_status(path, REVIEW_SIGNATURE_NAMESPACE, record['public_key'], email)[0]
         if status != 'invalid':
             superseded.update((key_id, old) for old in record.get('supersedes', []) if isinstance(old, str))
         record.update(id=path.stem, status=status)
