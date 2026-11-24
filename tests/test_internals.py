@@ -1348,7 +1348,7 @@ def test_signed_review_status(mock_bb_dir, monkeypatch, tmp_path):
     """A review is untrusted until you trust its key, and invalid once altered"""
     func = _pool_add("def one():\n    return 1\n")
     alice_key = _become(monkeypatch, tmp_path, 'alice')
-    path = bb.review_publish(func, 'approve', 'fine')
+    path = bb.review_publish(func, 'approve', 'fine', ack=bb.REVIEW_ACKS)
     assert path is not None and path.with_suffix('.json.sig').exists()
 
     _become(monkeypatch, tmp_path, 'bob')
@@ -1369,7 +1369,7 @@ def test_your_own_signed_review_is_trusted(mock_bb_dir, monkeypatch, tmp_path):
     """A review signed with your key counts without adding yourself to your peers: on your other machines too"""
     func = _pool_add("def one():\n    return 1\n")
     alice_key = _become(monkeypatch, tmp_path, 'alice')
-    bb.review_publish(func, 'approve')
+    bb.review_publish(func, 'approve', ack=bb.REVIEW_ACKS)
     assert bb.trust_parse(bb.trust_private_path()) == []
     assert [r['status'] for r in bb.review_list_shared(func)] == ['trusted']
 
@@ -1396,7 +1396,7 @@ def test_signed_review_names_the_mapping_read(mock_bb_dir, monkeypatch, tmp_path
     func = _pool_add("def one():\n    return 1\n")
     _pool_add("def un():\n    return 1\n", lang='fra')
     alice_key = _become(monkeypatch, tmp_path, 'alice')
-    answers = iter(['y'])
+    answers = iter(['y', 'y', 'y'])
     monkeypatch.setattr('builtins.input', lambda *_: next(answers))
     monkeypatch.setattr(sys.stdin, 'isatty', lambda: True, raising=False)
     bb.command_review(func, 'fine')
@@ -1411,9 +1411,9 @@ def test_signed_review_names_the_mapping_read(mock_bb_dir, monkeypatch, tmp_path
 
     # The same verdict after reading it in French is another review; the approval covers both
     french = bb.mapping_select(func, 'fra')
-    second = bb.review_publish(func, 'approve', 'fine', 'fra', french)
+    second = bb.review_publish(func, 'approve', 'fine', 'fra', french, ack=bb.REVIEW_ACKS)
     assert json.loads(second.read_text(encoding='utf-8'))['supersedes'] == [review['id']]
-    assert bb.review_publish(func, 'approve', 'fine', 'fra', french) == second
+    assert bb.review_publish(func, 'approve', 'fine', 'fra', french, ack=bb.REVIEW_ACKS) == second
     _become(monkeypatch, tmp_path, 'bob')
     bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
     assert bb.review_approvals([func]) == {func}
@@ -1464,7 +1464,7 @@ def test_signed_review_cannot_be_moved_to_another_function(mock_bb_dir, monkeypa
     good = _pool_add("def one():\n    return 1\n")
     evil = _pool_add("def two():\n    return 2\n")
     alice_key = _become(monkeypatch, tmp_path, 'alice')
-    path = bb.review_publish(good, 'approve')
+    path = bb.review_publish(good, 'approve', ack=bb.REVIEW_ACKS)
 
     target = bb.storage_get_review_directory() / evil[:2] / evil[2:] / path.parent.name
     target.mkdir(parents=True)
@@ -1481,9 +1481,9 @@ def test_review_changed_mind_is_another_review(mock_bb_dir, monkeypatch, tmp_pat
     """A new verdict supersedes the old review, which stays in the pool untouched"""
     func = _pool_add("def one():\n    return 1\n")
     alice_key = _become(monkeypatch, tmp_path, 'alice')
-    first = bb.review_publish(func, 'approve', 'fine')
+    first = bb.review_publish(func, 'approve', 'fine', ack=bb.REVIEW_ACKS)
     before = first.read_bytes()
-    assert bb.review_publish(func, 'approve', 'fine') == first
+    assert bb.review_publish(func, 'approve', 'fine', ack=bb.REVIEW_ACKS) == first
     second = bb.review_publish(func, 'reject', 'on second thought')
     assert second != first and second.parent == first.parent
     assert first.read_bytes() == before and Path(str(first) + '.sig').exists()
@@ -1496,6 +1496,66 @@ def test_review_changed_mind_is_another_review(mock_bb_dir, monkeypatch, tmp_pat
     assert sorted((r['verdict'], r['superseded']) for r in bb.review_list_shared(func, every=True)) == [
         ('approve', True), ('reject', False)]
     assert bb.review_approvals([func]) == set()
+
+
+@needs_ssh_keygen
+def test_review_asks_each_aspect_and_records_the_acknowledgements(mock_bb_dir, monkeypatch, tmp_path, capsys):
+    """bb review asks security, correctness and readability one by one; the review records the answers"""
+    func = _pool_add("def one():\n    return 1\n")
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    monkeypatch.setattr(sys.stdin, 'isatty', lambda: True, raising=False)
+
+    def review(*answers):
+        asked = []
+        answers = iter(answers)
+        monkeypatch.setattr('builtins.input', lambda prompt='': asked.append(prompt) or next(answers))
+        bb.command_review(func, '')
+        return asked
+
+    # A no, then skip: nothing is saved
+    asked = review('y', 'n', 's')
+    assert [q.split(':')[0] for q in asked] == ['Security', 'Correctness', 'Not acknowledged']
+    assert bb.review_load_state() == set() and bb.review_load_rejections() == set()
+    assert bb.review_list_shared(func) == []
+
+    # A no, then reject: the rejection records what did hold
+    review('y', 'y', 'n', 'r')
+    assert bb.review_load_rejections() == {func}
+    [rejection] = bb.review_list_shared(func)
+    assert (rejection['verdict'], rejection['ack']) == ('reject', ['correctness', 'security'])
+
+    # Yes to all three approves, with no further question
+    asked = review('y', 'y', 'y')
+    assert [q.split(':')[0] for q in asked] == ['Security', 'Correctness', 'Readability']
+    assert bb.review_load_state() == {func}
+    [approval] = bb.review_list_shared(func)
+    assert (approval['verdict'], approval['ack']) == ('approve', sorted(bb.REVIEW_ACKS))
+    capsys.readouterr()
+    bb.command_reviews(func)
+    assert "acknowledged: correctness, readability, security" in capsys.readouterr().out
+
+
+@needs_ssh_keygen
+def test_peer_approval_counts_only_with_every_acknowledgement(mock_bb_dir, monkeypatch, tmp_path):
+    """A trusted approval that does not acknowledge every aspect approves nothing"""
+    func = _pool_add("def one():\n    return 1\n")
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    partial = bb.review_publish(func, 'approve', ack=['security', 'correctness'])
+    _become(monkeypatch, tmp_path, 'bob')
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    assert [r['status'] for r in bb.review_list_shared(func)] == ['trusted']
+    assert bb.review_approvals([func]) == set()
+
+    _become(monkeypatch, tmp_path, 'alice')
+    full = bb.review_publish(func, 'approve', ack=bb.REVIEW_ACKS)
+    assert full != partial
+    _become(monkeypatch, tmp_path, 'bob')
+    assert bb.review_approvals([func]) == {func}
+
+    # An aspect bb does not know makes the review invalid, signed or not
+    record = json.loads(full.read_text(encoding='utf-8'))
+    assert bb.review_acks(dict(record, ack=['security', 'vibes'])) is None
+    assert bb.review_acks(dict(record, ack='security')) is None
 
 
 @needs_ssh_keygen
@@ -1535,7 +1595,7 @@ def test_trusted_rejection_blocks_and_own_verdict_wins(mock_bb_dir, monkeypatch,
     """A trusted peer's rejection cancels trusted approvals; your own verdict decides"""
     func = _pool_add("def one():\n    return 1\n")
     alice_key = _become(monkeypatch, tmp_path, 'alice')
-    bb.review_publish(func, 'approve')
+    bb.review_publish(func, 'approve', ack=bb.REVIEW_ACKS)
     carol_key = _become(monkeypatch, tmp_path, 'carol')
     bb.review_publish(func, 'reject', 'unsafe')
 

@@ -287,7 +287,7 @@ import uuid
 from collections import Counter, namedtuple
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Set, Tuple, List, Union, Any, Generator, Callable, Optional
+from typing import Dict, Set, Tuple, List, Union, Any, Generator, Callable, Optional, Iterable
 
 
 # Get all Python built-in names
@@ -1784,6 +1784,13 @@ REVIEW_SIGNATURE_NAMESPACE = 'bb-review'
 # A signature is made for one purpose: one on a lineage step cannot pass for a review
 LINEAGE_SIGNATURE_NAMESPACE = 'bb-lineage'
 REVIEW_VERDICTS = ('approve', 'reject')
+# What an approval acknowledges, each asked on its own in bb review and
+# recorded in the signed review ('ack'): an approval counts with all of them
+REVIEW_ACKS = {
+    'security': "Security: is it safe to run (no unexpected files, network, subprocess, eval)?",
+    'correctness': "Correctness: does it do what its name and documentation say?",
+    'readability': "Readability: can the next reader understand and maintain it?",
+}
 
 
 def storage_get_review_directory() -> Path:
@@ -2046,7 +2053,7 @@ def review_compute_id(record: Dict[str, Any]) -> str:
 
 
 def review_publish(func_hash: str, verdict: str, comment: str = "", lang: str = None,
-                   mapping_hash: str = None) -> Optional[Path]:
+                   mapping_hash: str = None, ack: Iterable[str] = ()) -> Optional[Path]:
     """
     Write a signed review of a function into $BB_DIRECTORY/review/.
 
@@ -2059,11 +2066,16 @@ def review_publish(func_hash: str, verdict: str, comment: str = "", lang: str = 
             a reader saw it under the names and documentation of one
             mapping, and the review says which. The verdict is on the
             function all the same: what may run does not depend on it
+        ack: The aspects (REVIEW_ACKS) the reviewer acknowledged one by one.
+            An approval counts for peers only when it names them all; a
+            rejection records those that held
 
     Returns:
         Path of the review, or None when you have no signing key or signing failed
     """
     assert verdict in REVIEW_VERDICTS
+    ack = sorted(set(ack))
+    assert all(aspect in REVIEW_ACKS for aspect in ack)
     identity = helper_signing_identity()
     if identity is None:
         return None
@@ -2078,14 +2090,16 @@ def review_publish(func_hash: str, verdict: str, comment: str = "", lang: str = 
     mine = [r for r in review_list_shared(func_hash)
             if r['status'] != 'invalid' and helper_key_id(r['public_key']) == key_id]
     if (len(mine) == 1 and mine[0]['verdict'] == verdict and mine[0].get('comment', '') == comment
-            and (mine[0].get('lang'), mine[0].get('mapping')) == (lang, mapping_hash)):
+            and (mine[0].get('lang'), mine[0].get('mapping')) == (lang, mapping_hash)
+            and mine[0].get('ack', []) == ack):
         return review_dir / f"{mine[0]['id']}.json"
 
     user = storage_read_config()['user']
     record = {
-        'schema_version': 2,
+        'schema_version': 3,
         'function': func_hash,
         'verdict': verdict,
+        'ack': ack,
         'reviewer': {'name': user.get('name', ''), 'email': email},
         'public_key': public_key,
         'created': code_create_metadata()['created'],
@@ -2113,6 +2127,14 @@ def review_publish(func_hash: str, verdict: str, comment: str = "", lang: str = 
         print(f"Warning: could not sign the review ({detail}); it stays private.", file=sys.stderr)
         return None
     return path
+
+
+def review_acks(record: Dict[str, Any]) -> Optional[List[str]]:
+    """The aspects a review acknowledges ([] when it names none), or None when 'ack' is malformed."""
+    ack = record.get('ack', [])
+    if not isinstance(ack, list) or not all(isinstance(a, str) and a in REVIEW_ACKS for a in ack):
+        return None
+    return ack
 
 
 def review_verify(path: Path, allowed_signers: Path) -> bool:
@@ -2176,6 +2198,7 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
         placed_right = (record.get('function') == func_hash and record.get('verdict') in REVIEW_VERDICTS
                         and well_formed
                         and isinstance(record.get('supersedes', []), list)
+                        and review_acks(record) is not None
                         and key_id == helper_key_id(record['public_key'])
                         and path.stem == review_compute_id(record))
         status = 'invalid'
@@ -2239,8 +2262,10 @@ def review_approvals(hashes: List[str]) -> Set[str]:
     The functions among hashes that count as approved for you.
 
     Approved means: you approved it yourself (here, or in a review signed
-    with your key), or a peer you trust approved it in a signed review, and
-    no trusted review rejects it. Your own rejection here always wins.
+    with your key), or a peer you trust approved it in a signed review
+    acknowledging every aspect (REVIEW_ACKS: security, correctness,
+    readability), and no trusted review rejects it. Your own rejection
+    here always wins.
     """
     private = review_load_state()
     rejected = review_load_rejections()
@@ -2251,7 +2276,9 @@ def review_approvals(hashes: List[str]) -> Set[str]:
         if func_hash in private:
             approved.add(func_hash)
             continue
-        verdicts = {r['verdict'] for r in review_list_shared(func_hash) if r['status'] == 'trusted'}
+        # An approval that does not acknowledge every aspect says too little to run on
+        verdicts = {r['verdict'] for r in review_list_shared(func_hash) if r['status'] == 'trusted'
+                    and (r['verdict'] != 'approve' or set(review_acks(r) or []) >= set(REVIEW_ACKS))}
         if 'approve' in verdicts and 'reject' not in verdicts:
             approved.add(func_hash)
     return approved
@@ -2284,6 +2311,9 @@ def command_reviews(identifier: str, as_json: bool = False, every: bool = False)
     'superseded'. Under a review, 'read as NAME@lang' says under which
     names and documentation its reviewer read the function; the verdict is
     on the function, whatever the mapping.
+    'acknowledged:' lists the aspects
+    (security, correctness, readability) its reviewer answered yes to: an
+    approval counts only with all of them.
     """
     func_hash = helper_resolve_to_hash(identifier)
     yours = ("approved" if func_hash in review_load_state() else
@@ -2303,6 +2333,8 @@ def command_reviews(identifier: str, as_json: bool = False, every: bool = False)
                 f"{record['status']}  {record.get('verdict', '?')}  "
                 f"{reviewer.get('name', '')} <{reviewer.get('email', '')}>  {record.get('created', '')}")
         print(line + (f"  {record['comment']}" if record.get('comment') else ""))
+        if record.get('verdict') == 'approve' or review_acks(record):
+            print(f"    acknowledged: {', '.join(review_acks(record) or []) or 'nothing'}")
         if isinstance(record.get('lang'), str) and isinstance(record.get('mapping'), str):
             name = mapping_name(func_hash, record['lang'], record['mapping'])
             print(f"    read as {name or '(a mapping no longer in the pool)'}@{record['lang']} "
@@ -2504,7 +2536,10 @@ def command_review(identifier: str, comment: str = ""):
 
     For each function: read its code and its checks' code, run the checks
     if you want to (once everything they run is approved, except the
-    function you are reading), then approve the hash, reject it, or skip.
+    function you are reading), then acknowledge each aspect on its own
+    (REVIEW_ACKS: security, correctness, readability). Yes to all approves
+    the hash; a no asks whether to reject it or skip it. The answers are
+    recorded in the signed review ('ack').
     Your verdicts are kept in a private state directory; with a signing key
     (bb whoami signing-key PATH) each one is also published as a signed
     review in $BB_DIRECTORY/review/, so peers who trust you can rely on it.
@@ -2547,8 +2582,9 @@ def command_review(identifier: str, comment: str = ""):
     print(f"Already reviewed: {len(order) - len(to_review)}")
     print()
     print("Dependencies and checks come first. For each function, read the code")
-    print("and its checks, run the checks if you want to, then approve or not.")
-    print("Press 'y' for yes, 'n' for no, 'r' to reject, 'q' to quit.")
+    print("and its checks, run the checks if you want to, then answer for its")
+    print(f"{', '.join(REVIEW_ACKS)}: yes to all approves it.")
+    print("Press 'y' for yes, 'n' for no, 'q' to quit; after a no, 'r' rejects, 's' skips.")
     print("=" * 80)
     print()
 
@@ -2621,7 +2657,16 @@ def command_review(identifier: str, comment: str = ""):
                         failed = True
             print()
 
-        answer = review_ask("Approve this function? (r to reject)", 'ynrq')
+        # One question per aspect: an approval is the three answers, not one keystroke
+        ack: List[str] = []
+        answer = 'y'
+        for aspect, question in REVIEW_ACKS.items():
+            answer = review_ask(question, 'ynq')
+            if answer != 'y':
+                break
+            ack.append(aspect)
+        if answer == 'n':
+            answer = review_ask(f"Not acknowledged: {aspect}. Reject this function, or skip it?", 'rsq')
         if answer is None:
             print("Non-interactive mode - stopping here. Approvals so far are saved.")
             return
@@ -2635,7 +2680,7 @@ def command_review(identifier: str, comment: str = ""):
             rejected.discard(current_hash)
             review_save_state(private)
             review_save_rejections(rejected)
-            published = review_publish(current_hash, 'approve', comment, lang, mapping_read)
+            published = review_publish(current_hash, 'approve', comment, lang, mapping_read, ack)
             print("✓ Function approved" + (" and signed review published." if published else "."))
         elif answer == 'r':
             reviewed.discard(current_hash)
@@ -2643,7 +2688,7 @@ def command_review(identifier: str, comment: str = ""):
             rejected.add(current_hash)
             review_save_state(private)
             review_save_rejections(rejected)
-            published = review_publish(current_hash, 'reject', comment, lang, mapping_read)
+            published = review_publish(current_hash, 'reject', comment, lang, mapping_read, ack)
             print("✗ Function rejected" + (" and signed review published." if published else "."))
         else:
             print("✗ Function not approved.")

@@ -50,7 +50,7 @@ $ env BB_STATE_DIRECTORY=alice bb add show_double_eng.py@eng
 Hash: 622a6c87530d8dac589db37c98dc6608cff82ae935ef0805d5d354ac4b731ee8
 Mapping hash: 53a63e33c5dfc91d5f7a1d4bc3bb10f0a9dec54b021510ee8ccb453e9481f92f
 $ yes | env BB_STATE_DIRECTORY=alice bb review show_double@eng -m "Read it" | grep "✓"
-Approve this function? (r to reject) [y/n/r/q]: ✓ Function approved and signed review published.
+Security: is it safe to run (no unexpected files, network, subprocess, eval)? [y/n/q]: Correctness: does it do what its name and documentation say? [y/n/q]: Readability: can the next reader understand and maintain it? [y/n/q]: ✓ Function approved and signed review published.
 ```
 
 ### Step 3: Alice adds herself to the shared list of peers
@@ -74,8 +74,9 @@ verdict is on the logic, whatever the language, but what she saw was one
 mapping of it.
 
 ```bash
-$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -2 | awk '{print $1, $2, $3}'
+$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -3 | awk '{print $1, $2, $3}'
 untrusted approve Alice
+acknowledged: correctness, readability,
 read as show_double@eng
 $ (env BB_STATE_DIRECTORY=bob bb run show_double@eng 3 2>&1 || true) | head -1
 Error: Refusing to run code you have not reviewed (1 function(s) to approve).
@@ -104,7 +105,7 @@ Trusted peers: 1
 
 ### Step 6: Alice's review now counts for Bob
 ```bash
-$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -2 | head -1 | awk '{print $1, $2, $3}'
+$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -3 | head -1 | awk '{print $1, $2, $3}'
 trusted approve Alice
 $ env BB_STATE_DIRECTORY=bob bb run show_double@eng 3
 6
@@ -127,7 +128,7 @@ matches, so the review stops counting.
 ### Step 7: Change one word of the signed review
 ```bash
 $ sed -i 's/Read it/Never read it/' $BB_DIRECTORY/review/*/*/*/*.json
-$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -2 | head -1 | awk '{print $1, $2, $3}'
+$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -3 | head -1 | awk '{print $1, $2, $3}'
 invalid approve Alice
 $ (env BB_STATE_DIRECTORY=bob bb run show_double@eng 3 2>&1 || true) | head -1
 Error: Refusing to run code you have not reviewed (1 function(s) to approve).
@@ -140,7 +141,7 @@ Error: Refusing to run code you have not reviewed (1 function(s) to approve).
 | Command | Purpose |
 |---------|---------|
 | `bb whoami signing-key PATH` | Sign your reviews with this SSH key (PATH.pub next to it) |
-| `bb review X -m COMMENT` | Approve (`y`) or reject (`r`); with a key, publishes a signed review |
+| `bb review X -m COMMENT` | Answer for security, correctness and readability: yes to all approves, a no rejects (`r`) or skips (`s`); with a key, publishes a signed review naming what was acknowledged |
 | `bb reviews X` | Who reviewed X: trusted, untrusted or invalid |
 | `bb reviews X --all` | Also the reviews their reviewer replaced since (superseded) |
 | `bb trust publish` | Add yourself to the shared list of peers |
@@ -157,4 +158,5 @@ Error: Refusing to run code you have not reviewed (1 function(s) to approve).
 
 4. **A review is written once**: changing your mind writes another signed review that supersedes yours; the earlier one stays in `review/`, and only a signed review of the same key can retire it.
 
-5. **Rejections count too**: a trusted peer's rejection cancels trusted approvals of that hash. Your own verdict always wins.
+5. **An approval is three answers**: security, correctness and readability are asked one by one and recorded in the review (`ack`); a peer's approval that does not name all three does not count.
+6. **Rejections count too**: a trusted peer's rejection cancels trusted approvals of that hash. Your own verdict always wins.
