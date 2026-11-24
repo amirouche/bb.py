@@ -3,7 +3,6 @@
 <!-- Format: bullet list with topic, type names, intended feature - one sentence max -->
 <!-- Remove implemented entries in atomic commits (separate from feature commits) -->
 
-- `update`, `refactor`, `code_load_normalized`: call `object_check_hash` on every base so swapped code never becomes a new, correctly hashed version
 - `review_approvals`: verify a review against an allowed-signers entry holding exactly its email and `public_key`, so one peer cannot supersede another's rejection (introduced on hello-beyonder: before, a reject always won)
 - `code_restore_inner_imports`: stop the unhashed `normalization` field and unverified mappings from changing how approved code behaves
 - `review`: verify every hash in `order` before partitioning, so an approved but swapped function exits 1 instead of "already reviewed"
