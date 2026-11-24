@@ -3,7 +3,6 @@
 <!-- Format: bullet list with topic, type names, intended feature - one sentence max -->
 <!-- Remove implemented entries in atomic commits (separate from feature commits) -->
 
-- `code_restore_inner_imports`: stop the unhashed `normalization` field and unverified mappings from changing how approved code behaves
 - `review`: verify every hash in `order` before partitioning, so an approved but swapped function exits 1 instead of "already reviewed"
 - `review_render`, `translate_render_file`: call `object_check_hash` on each check and translation source before showing it, and refuse approval of the parent on failure
 - `review`: validate key and email with `re.fullmatch` so the one-line invariant of allowed_signers also rejects newlines
