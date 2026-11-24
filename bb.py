@@ -4674,7 +4674,7 @@ def search_pins(function: Dict[str, Any]) -> Set[str]:
     return set.intersection(*(use['pins'] for use in uses)) if uses else set()
 
 
-def search_pinned_uses(function: Dict[str, Any]) -> List[Dict[str, Any]]:
+def search_pinned_uses(function: Dict[str, Any], uses: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
     The versions a function pins on purpose (bb.ref), under any of its names.
 
@@ -4684,8 +4684,12 @@ def search_pinned_uses(function: Dict[str, Any]) -> List[Dict[str, Any]]:
         all of them do; [] when all do), 'now' (where that version's
         lineage is now: the functions a caller following it would get;
         [hash] when the pinned version is still current)}], sorted by hash
+
+    Args:
+        uses: search_uses(function), when the caller has it already
     """
-    uses = search_uses(function)
+    if uses is None:
+        uses = search_uses(function)
     pinned: Dict[str, Dict[str, Any]] = {}
     for use in uses:
         for dep in sorted(use['pins']):
@@ -4719,10 +4723,11 @@ def search_outdated_names(index: Dict[str, Any], func_hash: str) -> Dict[str, Li
     functions = index['functions']
     function = functions[func_hash]
     outdated: Dict[str, Set[str]] = {}
+    uses = search_uses(function)  # once: each call reads the mapping of every name
     for dep in code_extract_dependencies(function['normalized_code']):
         if dep not in functions:
             continue
-        for use in search_uses(function):
+        for use in uses:
             if dep in use['pins']:
                 continue
             heads = lineage_ends(dep, use['lang'], use['aliases'].get(dep), use['follows'].get(dep))
@@ -4910,6 +4915,10 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
     root = lineage_root_step(on[0]) if on else None
     forks = len(head_counts.get((lang, name, root), ())) if root else 0
     relatives = search_relatives(index, func_hash, lang, name, compared) if on else []
+    # Asked once: each call reads the mapping of every name of the function
+    uses = search_uses(function)
+    named = len({(use['lang'], use['name']) for use in uses})
+    pins = search_pinned_uses(function, uses)
     return {
         'hash': func_hash,
         'name': name,
@@ -4923,14 +4932,14 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
         'outdated': search_outdated_refs(index, func_hash),
         # When only some names of the function are behind on a version: which ones
         'outdated_as': {dep: names for dep, names in search_outdated_names(index, func_hash).items()
-                        if len(names) < len({(use['lang'], use['name']) for use in search_uses(function)})},
+                        if len(names) < named},
         # The names this function calls them by (a hash may carry several names)
         'aliases': dict(mapping.get('alias_mapping') or {}),
         'behind': (behind or {}).get(func_hash, []),
         'untranslated': [list(pair) for pair in search_untranslated(func_hash)],
         # Under any name of the function; 'pins' says which names and whether the version is still current
-        'pinned': [pin['hash'] for pin in search_pinned_uses(function)],
-        'pins': search_pinned_uses(function),
+        'pinned': [pin['hash'] for pin in pins],
+        'pins': pins,
         'forks': forks,
         # The other functions answering to this name here, and how each relates to this one
         'relatives': relatives,

@@ -2386,3 +2386,20 @@ def test_a_signing_error_saves_unsigned_never_half_a_save(mock_bb_dir, monkeypat
     assert 'public_key' not in bb.lineage_index()['steps'][step]
     assert bb.lineage_signature_status(step) == 'unsigned'
     assert not list(bb.storage_get_bb_directory().rglob('*.sig'))
+
+
+def test_search_describe_asks_how_a_function_uses_the_pool_once(mock_bb_dir, monkeypatch, capsys):
+    """search_uses reads the mapping of every name: once per function, not per field and per dependency"""
+    first, second = _pool_add("def one():\n    return 1\n"), _pool_add("def two():\n    return 2\n")
+    caller = _pool_add(f"import bb\none = bb.ref('{first}')\ntwo = bb.ref('{second}')\n\n\n"
+                       "def both():\n    return one() + two()\n")
+    calls = []
+    real = bb.search_uses
+    monkeypatch.setattr(bb, 'search_uses', lambda function: calls.append(function['hash']) or real(function))
+    capsys.readouterr()
+    bb.command_search(['both'], as_json=True)
+    [found] = json.loads(capsys.readouterr().out)
+    assert found['hash'] == caller
+    # Once for what it shows, once for what is out of date and once for what is behind
+    # (each memoized apart); it was once per field, and again for every dependency
+    assert calls.count(caller) <= 3, calls
