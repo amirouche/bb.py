@@ -3,7 +3,6 @@
 <!-- Format: bullet list with topic, type names, intended feature - one sentence max -->
 <!-- Remove implemented entries in atomic commits (separate from feature commits) -->
 
-- `review`: make interactive, request explicit ack for security/correctness, one function at a time starting from lowest level, remember reviewed functions
 - `add`: support adding a module with several definitions
 - `search`: tell namesakes apart by running one against the other's checks (interchangeable, covers, incompatible)
 - `update`, `refactor`: hash exactly the stored `normalized_code` so a body with two leading strings does not save a version `object_hash_matches` refuses
