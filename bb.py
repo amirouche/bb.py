@@ -852,8 +852,9 @@ def object_check_hash(func_hash: str):
 
     The shared guard behind the commands that show or run stored code: bb
     run and bb validate (where it recomputes the hash before executing),
-    bb review (before a reviewer approves it) and bb show, bb edit and bb
-    compile (before the code is displayed or bundled). object.json is
+    bb review (before a reviewer approves it), bb show, bb edit and bb
+    compile (before the code is displayed or bundled) and bb update and bb
+    refactor (before it is rewritten into a new version). object.json is
     git-shared and can be swapped under a hash someone already read or
     approved, so every path that puts stored bytes in front of a human, or
     into a program, first confirms the bytes are the ones the hash names
@@ -865,6 +866,21 @@ def object_check_hash(func_hash: str):
     if not object_hash_matches(func_hash, object_load(func_hash)):
         raise ValueError(f"{func_hash[:12]}... does not match its stored code "
                          f"(the object was altered)")
+
+
+def helper_require_hash(func_hash: str, action: str):
+    """
+    Exit with an error unless a stored object's code hashes to its name.
+
+    For the commands that rewrite stored code (bb update, bb refactor, bb
+    edit --refactor): a rewrite of swapped code would be saved under a
+    new hash it matches, laundering the swap.
+    """
+    try:
+        object_check_hash(func_hash)
+    except ValueError as e:
+        print(f"Error: {e}; refusing to {action} it.", file=sys.stderr)
+        sys.exit(1)
 
 
 def mapping_build(func_hash: str, lang: str, docstring: str, name_mapping: Dict[str, str],
@@ -7985,7 +8001,10 @@ def code_load_normalized(func_hash: str, cache: Dict[str, Callable] = None,
                              f"(the object was altered); refusing to run it")
         source, like = data['normalized_code'], func_hash
     else:
-        data = object_load(like)  # a version not saved yet, loaded like the one it rewrites
+        # A version not saved yet, loaded like the one it rewrites: that one is read
+        # too (its 'normalization'), and a rewrite is its code with other references
+        object_check_hash(like)
+        data = object_load(like)
     tree = ast.parse(source)
     if data.get('normalization', 1) < 2:
         code_restore_inner_imports(tree, like)
@@ -9163,7 +9182,14 @@ def refactor_save(old_hash: str, new_hash: str, new_code: str, checks: List[str]
     is already in the pool keeps its hash: when the name's lineage went
     through it, it is restored (a 'restore' step); when another name has
     it, the two names now share it ('existing').
+
+    Raises:
+        ValueError: when the stored code of old_hash does not match its hash
     """
+    # A rewrite is the stored code of old_hash with other references: were that code
+    # swapped under its hash, saving would give it a new hash it does match, and the
+    # swap could no longer be told. Callers check first and report; this is the last guard.
+    object_check_hash(old_hash)
     if old_hash in review_load_authored():
         # A mechanical rewrite of your own function: only its references change
         review_approve_own([new_hash])
@@ -9276,6 +9302,7 @@ def command_update(identifier: str, comment: str = None, unreviewed: bool = Fals
         base = record['function']
         if record['lang'] != lang or base in stack or code_detect_schema(base) is None:
             return step_id
+        helper_require_hash(base, "update")
         data = mapping_load_json(base, lang, record['mapping']) or {}
         aliases, pins = data.get('alias_mapping', {}), set(data.get('pinned') or [])
         recorded = record.get('follows') or {}
@@ -9406,6 +9433,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
         sys.exit(1)
 
     # Load the function's normalized code (v1 only)
+    helper_require_hash(what_hash, "refactor")
     func_data = object_load(what_hash)
     normalized_code = func_data['normalized_code']
     # Check that the function actually depends on from_hash (direct or transitive)
@@ -9499,6 +9527,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
             continue  # what is being replaced (FROM), or already rewritten
         # Build on the function's current version when it was edited since the root saw it
         base = lineage_newer_version(dep_hash, step=followed.get(dep_hash)) or dep_hash
+        helper_require_hash(base, "refactor")
         dep_data = object_load(base)
         dep_code = dep_data['normalized_code']
 

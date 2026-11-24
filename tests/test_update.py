@@ -169,3 +169,42 @@ def test_update_runs_no_check_on_a_body_nobody_approved(tmp_path):
     # Its author may: the body is theirs
     updated = pool.bb('update', 'spy@eng', '-m', 'catch up')
     assert updated.returncode == 0 and marker.exists(), updated.stderr
+
+
+def test_update_and_refactor_refuse_to_rewrite_code_swapped_under_its_hash(tmp_path):
+    """A rewrite of swapped code would be saved under a new hash it matches: the swap could no longer be told"""
+    import json
+    pool, v1, v2 = chain(tmp_path)
+    mid = current(pool, 'mid')
+    path = tmp_path / 'bb' / 'pool' / 'functions' / mid[:2] / mid[2:] / 'object.json'
+    data = json.loads(path.read_text())
+    genuine = path.read_text()
+    data['normalized_code'] = data['normalized_code'].replace('* 2', '* 666')
+    data.pop('public_key', None)
+    path.write_text(json.dumps(data))
+    functions = lambda: sorted(p.parent.name for p in (tmp_path / 'bb' / 'pool' / 'functions').glob('*/*/object.json'))
+    before = functions()
+
+    refused = pool.bb('update', 'mid@eng', '-m', 'catch up')
+    assert refused.returncode == 1, refused.stdout
+    assert 'does not match its stored code' in refused.stderr and 'refusing to update it' in refused.stderr
+    refused = pool.bb('refactor', mid, v1, v2, '-m', 'by hand')
+    assert refused.returncode == 1, refused.stdout
+    assert 'refusing to refactor it' in refused.stderr
+    # ... also when it is on the way up to the function asked for
+    refused = pool.bb('update', 'top@eng', '-m', 'catch up')
+    assert refused.returncode == 1 and 'refusing to update it' in refused.stderr
+    assert functions() == before and current(pool, 'mid') == mid
+
+    # Code not saved yet is loaded like the version it rewrites: that one is checked too
+    code = ('import bb, sys\ntry:\n    bb.code_load_normalized("0" * 64, source=sys.argv[2], like=sys.argv[1])\n'
+            'except ValueError as e:\n    print(e)\n')
+    import subprocess
+    import sys
+    from tests.test_import_by_name import BB
+    loaded = subprocess.run([sys.executable, '-c', code, mid, json.loads(genuine)['normalized_code']],
+                            capture_output=True, text=True, env=pool.env, cwd=str(BB.parent))
+    assert 'does not match its stored code' in loaded.stdout, loaded.stderr
+
+    path.write_text(genuine)
+    assert pool.bb('update', 'top@eng', '-m', 'catch up').returncode == 0
