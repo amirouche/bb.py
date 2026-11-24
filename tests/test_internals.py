@@ -1966,15 +1966,28 @@ def _save_legacy_inner_import(module_name):
     return func
 
 
-def test_legacy_inner_imports_still_run(mock_bb_dir):
-    """Objects stored before the fix get the module name back from the mapping"""
-    assert 1 <= bb.code_load_normalized(_save_legacy_inner_import('random'))(6) <= 6
-
-
-def test_mapping_cannot_rename_to_names_the_code_does_not_import(mock_bb_dir):
-    """A hostile mapping pointing the module at another name is ignored"""
+@pytest.mark.parametrize('module_name', ['random', 'os'])
+def test_legacy_inner_imports_are_not_repaired_from_the_mapping(mock_bb_dir, module_name):
+    """Neither a mapping nor the 'normalization' field is hashed: neither changes what runs"""
+    func = _save_legacy_inner_import(module_name)
     with pytest.raises(NameError):
-        bb.code_load_normalized(_save_legacy_inner_import('os'))(6)
+        bb.code_load_normalized(func)(6)
+
+
+def test_normalization_field_cannot_change_what_approved_code_does(mock_bb_dir):
+    """Marking a function as old and mapping a variable to a module it imports renames nothing"""
+    func = _pool_add("def pick(n):\n    import os\n    low = 1\n    return low + n\n")
+    path = bb.storage_object_path(func)
+    data = json.loads(path.read_text(encoding='utf-8'))
+    data['normalization'] = 1
+    path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+    [mapping] = bb.storage_mapping_directory(func).glob('eng/*.json')
+    names = json.loads(mapping.read_text(encoding='utf-8'))
+    names['name_mapping'] = {norm: ('os' if name == 'low' else name) for norm, name in names['name_mapping'].items()}
+    mapping.write_text(json.dumps(names), encoding='utf-8')
+    bb.storage_cache_clear()
+    assert bb.object_hash_matches(func, bb.object_load(func))  # neither is in the hash
+    assert bb.code_load_normalized(func)(6) == 7
 
 
 def test_find_similar_reports_near_copies_only(mock_bb_dir):

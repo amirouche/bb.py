@@ -302,7 +302,9 @@ BB_IMPORT_PREFIX = "object_"
 # hash. An identity holds under one normalization: the same source can hash
 # differently under another. Stored in object.json as 'normalization';
 # objects without it were produced by version 1.
-#   1: names bound by imports inside a function body were renamed
+#   1: names bound by imports inside a function body were renamed (such
+#      functions no longer run: the repair read the mapping, which is not
+#      hashed, and so let it change what approved code does)
 #   2: they are kept, like top-level imports
 #   3: `import a.b` binds `a`, which is kept too (version 2 renamed it, so
 #      such functions failed at run time: there is nothing to repair)
@@ -7928,38 +7930,6 @@ def check_report(results: List[Tuple[str, str, str]], indent: str = "") -> bool:
     return counts['PASS'] == len(results)
 
 
-def code_restore_inner_imports(tree: ast.Module, func_hash: str):
-    """
-    Give back their real names to modules imported inside a function body.
-
-    Before the normalizer was fixed, it kept `import random` inside a
-    function as written but renamed its uses (`_bb_v_2.randint`), so
-    objects stored then cannot run as is. The mapping knows that _bb_v_2
-    is `random`. To keep mappings from
-    changing what runs, a normalized name is restored only to a name that
-    an import statement in this very code binds.
-
-    Modifies tree in place.
-    """
-    bound = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            bound.update((alias.asname or alias.name).split('.')[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module != 'bb.pool':
-            bound.update(alias.asname or alias.name for alias in node.names)
-    if not bound:
-        return
-
-    lang = helper_pick_language(func_hash)
-    if lang is None:
-        return
-    mapping = mapping_load_json(func_hash, lang, mapping_select(func_hash, lang))
-    rename = {norm: name for norm, name in mapping.get('name_mapping', {}).items()
-              if norm.startswith('_bb_v_') and norm != '_bb_v_0' and name in bound}
-    if rename:
-        ASTNormalizer(rename).visit(tree)
-
-
 def code_load_refs(tree: ast.AST, cache: Dict[str, Callable]) -> types.SimpleNamespace:
     """
     The `bb` a function runs with: bb.ref("<hash>") gives the pool function.
@@ -8003,15 +7973,14 @@ def code_load_normalized(func_hash: str, cache: Dict[str, Callable] = None,
         if not object_hash_matches(func_hash, data):
             raise ValueError(f"{func_hash[:12]}... does not match its stored code "
                              f"(the object was altered); refusing to run it")
-        source, like = data['normalized_code'], func_hash
+        source = data['normalized_code']
     else:
-        # A version not saved yet, loaded like the one it rewrites: that one is read
-        # too (its 'normalization'), and a rewrite is its code with other references
+        # A version not saved yet: a rewrite is the code of the one it rewrites
+        # with other references, so that one must be what its hash names
         object_check_hash(like)
-        data = object_load(like)
+    # Nothing but the code decides what runs: no mapping is read, and no field of
+    # object.json outside the hash ('normalization' once repaired old objects here)
     tree = ast.parse(source)
-    if data.get('normalization', 1) < 2:
-        code_restore_inner_imports(tree, like)
 
     namespace: Dict[str, Any] = {'bb': code_load_refs(tree, cache)}
     body = []
