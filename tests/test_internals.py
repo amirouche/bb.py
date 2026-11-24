@@ -2113,3 +2113,50 @@ def test_a_class_defined_inside_a_function_is_renamed_with_its_uses(mock_bb_dir)
     assert 'class Member' not in prepared['normalized_code']
     shown = bb.code_denormalize(prepared['normalized_code'], prepared['name_mapping'], prepared['alias_mapping'])
     assert 'class Member:' in shown and 'return Member(name).label()' in shown
+
+
+def test_search_compare_tells_namesakes_apart_by_their_checks(mock_bb_dir, capsys):
+    """bb search --compare runs functions sharing a name against each other's checks, approved code only"""
+    def check(name, body):
+        return _pool_add(f"def {name}(f):\n    assert {body}\n")
+
+    twice, sum_ = check('twice_two', 'f(2) == 4'), check('twice_three', 'f(3) == 6')
+    product = _pool_add("def double(x):\n    return x * 2\n", checks=[twice])
+    added = _pool_add("def double(x):\n    return x + x\n", checks=[sum_])
+    partial = _pool_add("def double(x):\n    return 0 if x == 3 else x * 2\n", checks=[check('zero', 'f(0) == 0')])
+    text = _pool_add("def double(x):\n    return str(x) * 2\n", checks=[check('text', "f(1) == '11'")])
+    bare = _pool_add("def double(x):\n    return 2 * x\n")
+
+    def search(*flags):
+        capsys.readouterr()
+        bb.command_search(['double'], as_json=True, compare='--compare' in flags)
+        found = json.loads(capsys.readouterr().out)
+        return {r['hash']: {o['hash']: o for o in r['relatives']} for r in found}
+
+    # Without --compare nothing runs and nothing is said
+    assert 'behaviour' not in search()[product][added]
+
+    # Nothing runs unread: both functions and their checks are to approve
+    unread = search('--compare')[product][added]
+    assert (unread['behaviour'], unread['missing']) == (None, 4)
+
+    bb.review_save_state(set(bb.storage_pool_index()['functions']))
+    told = search('--compare')
+    behaviour = lambda a, b: told[a][b]['behaviour']
+    assert behaviour(product, added) == behaviour(added, product) == 'interchangeable'
+    # partial passes the check of product, not that of added; both pass its own
+    assert behaviour(partial, product) == 'interchangeable'
+    assert (behaviour(added, partial), behaviour(partial, added)) == ('covers', 'covered')
+    assert told[partial][added]['failed'] == ['twice_three']
+    # Another kind of function altogether: each fails the other's check
+    assert behaviour(text, product) == behaviour(product, text) == 'incompatible'
+    # A function without checks claims nothing: passing the other's checks, it covers it
+    assert (behaviour(bare, product), behaviour(product, bare)) == ('covers', 'covered')
+    assert (behaviour(bare, text), behaviour(text, bare)) == ('covered', 'covers')
+
+    capsys.readouterr()
+    bb.command_search(['double'], compare=True)
+    shown = capsys.readouterr().out
+    assert f"Also double: {added}, another origin" in shown
+    assert "interchangeable (each passes the other's checks)" in shown
+    assert "incompatible (each fails a check of the other)" in shown

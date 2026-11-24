@@ -2,7 +2,7 @@
 
 ## Metadata
 - ID: 13
-- Feature: bb edit --fork, --pick, relations in bb search
+- Feature: bb edit --fork, --pick, relations in bb search, bb search --compare
 - Date: 2026-11-21
 - Status: draft
 - Complexity: intermediate
@@ -241,6 +241,18 @@ $ bb run ouvert_alger@fra 6
 ouvert
 ```
 
+### Step 14: What would tell the two weekends apart
+`bb search --compare` runs functions that share a name against each
+other's checks, once you approved them: each passing the other's checks
+makes them interchangeable, one passing while the other fails covers
+it, both failing are incompatible. Neither weekend has a check here, so
+there is nothing to run: their premises are only in the fork's comment.
+
+```bash
+$ bb search est_weekend --compare | grep '^Also' | sed 's/.*alike, //' | sort -u
+not compared (no checks)
+```
+
 ---
 
 1. **A fork is another function, not a newer one**: `bb edit --fork` leaves the function it forks current. Nothing that uses it becomes out of date, and the fork starts a lineage of its own. An edit without `--fork` is a newer version: it replaces.
@@ -252,3 +264,5 @@ ouvert
 4. **The choice is made once, and the lineage keeps it**: a new reference to a shared name is settled by an answer at the terminal or by `--pick NAME=HASH`. The code keeps saying `bb.resolve("name")`; the caller's lineage step records which function it follows, and later saves ask nothing. `--pick` on `bb edit` moves a caller to another fork. `bb.ref("<hash>")` stays on one version.
 
 5. **Callers never lose their way**: `bb show` and `bb edit` list, in `# bb:` comments, the function followed and the others with their `--pick` and the reason each fork gave, and `bb search --outdated` and `bb update` keep following the right lineage.
+
+6. **Checks say what a name means**: `bb search NAME --compare` runs approved namesakes against each other's checks (interchangeable, covers, incompatible); without checks, only the comments tell them apart.

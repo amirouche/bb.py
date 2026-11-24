@@ -252,6 +252,8 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
    it already used: same function, same mapping, another `follows`).
    One name may hold several functions: `bb search NAME` says how they
    relate (fork, same lineage, another origin, code alike, shared checks).
+   `bb search NAME --compare` also runs each against the other's checks
+   (approved code only): interchangeable, covers, covered by, incompatible.
    Two names may share one code; an edit in one language leaves the others
    on their version, waiting for a translation ("not yet translated").
    One name on one code is one function: an edit (fork or not) landing a

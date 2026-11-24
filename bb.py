@@ -4737,7 +4737,73 @@ SEARCH_RELATIONS = {
 }
 
 
-def search_relatives(index: Dict[str, Any], func_hash: str, lang: str, name: str) -> List[Dict[str, Any]]:
+# What running two namesakes against each other's checks says of the first (search_compare)
+SEARCH_BEHAVIOURS = {
+    'interchangeable': "interchangeable (each passes the other's checks)",
+    'covers': "covers it (passes its checks)",
+    'covered': "covered by it (it passes this one's checks)",
+    'incompatible': "incompatible (each fails a check of the other)",
+}
+
+
+def search_compare(func_hash: str, other: str, compared: Dict[Tuple[str, str], Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Tell two functions apart by behaviour: run each against the other's checks.
+
+    A check is a claim; a function passing every check of another does
+    all the other claims to do. Checks both carry are left out: each is
+    held to them already. Each passing the other's: interchangeable; one
+    passing while the other fails: it covers the other; both failing:
+    incompatible. A function without any check claims nothing, so one
+    passing the checks of the other covers it. Anything but PASS is a
+    failure (namesakes with other signatures raise: incompatible).
+
+    Nothing runs unread: unless both functions, their checks and all
+    they use are approved, nothing runs and 'missing' counts what is not.
+
+    Args:
+        compared: Results so far, by (hash, other hash): a pair is run once per command
+
+    Returns:
+        {'behaviour': a key of SEARCH_BEHAVIOURS, or None when not compared,
+         'missing': functions to approve first, 'failed': names of the checks
+         of other that func_hash fails}
+    """
+    if (func_hash, other) in compared:
+        return compared[(func_hash, other)]
+    mine, theirs = object_load_checks(func_hash), object_load_checks(other)
+    closure = set(review_closure(func_hash)) | set(review_closure(other))
+    missing = len(closure - review_approvals(sorted(closure)))
+    result = {'behaviour': None, 'missing': missing, 'failed': []}
+    reverse = dict(result)
+    if not missing and set(mine) != set(theirs):
+        def failures(implementation: str, checks: List[str], held: List[str]) -> List[str]:
+            return [check for status, check, _ in
+                    check_run_all(implementation, [c for c in checks if c not in held]) if status != 'PASS']
+        failed, reverse_failed = failures(func_hash, theirs, mine), failures(other, mine, theirs)
+        if failed and reverse_failed:
+            behaviour = 'incompatible'
+        elif failed:
+            behaviour = 'covered'
+        elif reverse_failed:
+            behaviour = 'covers'
+        elif not mine or not theirs:
+            # One side claims nothing: the other is not known to do less
+            behaviour = 'covers' if not mine else 'covered'
+        else:
+            behaviour = 'interchangeable'
+        result = {'behaviour': behaviour, 'missing': 0, 'failed': failed}
+        reverse = {'behaviour': {'covers': 'covered', 'covered': 'covers'}.get(behaviour, behaviour),
+                   'missing': 0, 'failed': reverse_failed}
+    elif not missing and mine:
+        # The same checks on both: the same claims, and each is held to them
+        result = reverse = {'behaviour': 'interchangeable', 'missing': 0, 'failed': []}
+    compared[(func_hash, other)], compared[(other, func_hash)] = result, reverse
+    return result
+
+
+def search_relatives(index: Dict[str, Any], func_hash: str, lang: str, name: str,
+                     compared: Dict[Tuple[str, str], Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
     The other current functions called name in lang, and how each relates to func_hash.
 
@@ -4745,7 +4811,9 @@ def search_relatives(index: Dict[str, Any], func_hash: str, lang: str, name: str
     premises. Nothing here ranks them; it says what is known: their
     history (see lineage_relation; a fork's comment says why it left),
     how alike their code is in shape (code_similarity) and how many
-    checks they share (the same check on both: the same claim).
+    checks they share (the same check on both: the same claim). With
+    compared (bb search --compare), also what running each against the
+    other's checks says: 'behaviour', 'missing', 'failed' (search_compare).
 
     Returns:
         [{'hash', 'relation', 'comment', 'similarity', 'shared_checks'}], sorted by hash
@@ -4766,12 +4834,15 @@ def search_relatives(index: Dict[str, Any], func_hash: str, lang: str, name: str
                                                 functions[other]['normalized_code']), 2),
             'shared_checks': len(set(functions[func_hash]['checks']) & set(functions[other]['checks'])),
         }
+        if compared is not None:
+            relatives[other].update(search_compare(func_hash, other, compared))
     return [relatives[h] for h in sorted(relatives)]
 
 
 def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
                     head_counts: Dict[Tuple[str, str, str], Set[str]], match: List[str] = None,
-                    prefer: List[str] = None, behind: Dict[str, List[str]] = None) -> Dict[str, Any]:
+                    prefer: List[str] = None, behind: Dict[str, List[str]] = None,
+                    compared: Dict[Tuple[str, str], Dict[str, Any]] = None) -> Dict[str, Any]:
     """Everything search shows about one function, as a dict (also the --json form)."""
     function = index['functions'][func_hash]
     lang = helper_display_language(function, prefer)
@@ -4787,7 +4858,7 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
     on = lineage_current_steps(lang, name, func_hash) if lang else []
     root = lineage_root_step(on[0]) if on else None
     forks = len(head_counts.get((lang, name, root), ())) if root else 0
-    relatives = search_relatives(index, func_hash, lang, name) if on else []
+    relatives = search_relatives(index, func_hash, lang, name, compared) if on else []
     return {
         'hash': func_hash,
         'name': name,
@@ -4825,7 +4896,7 @@ def search_describe(index: Dict[str, Any], func_hash: str, approved: Set[str],
 def command_search(query: List[str], all_versions: bool = False, as_json: bool = False,
                    untested: bool = False, unreviewed: bool = False, diverged: bool = False,
                    unused: bool = False, uses: str = None, outdated: bool = False, similar: bool = False,
-                   pinned: bool = False):
+                   pinned: bool = False, compare: bool = False):
     """
     Search the pool by words, by status, and by architecture.
 
@@ -4842,6 +4913,14 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     end of the same lineage (two edits of one version, nobody said they
     part), or another origin; then how alike their code is in shape and
     how many checks they share. bb does not rank them: pick by hash.
+
+    With --compare, they are also told apart by behaviour: each is run
+    against the other's checks (those they do not share). Each passing
+    the other's: interchangeable; one passing while the other fails: it
+    covers the other; both failing: incompatible. A function without
+    checks claims nothing: one that passes the other's checks covers it.
+    This runs pool code, so only what you approved (bb review): a pair
+    with anything unread is `not compared (N to approve)`.
 
     With no words and no filter, every current function is listed.
 
@@ -4870,6 +4949,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
                   or that one code carries under several names
                   (the comparison behind the note after a save): to read
                   side by side, then share, fork or leave apart
+    --compare     run functions sharing a name against each other's checks
+                  (approved code only) and say what it shows
     --json        machine-readable output
     ```
     """
@@ -4917,7 +4998,8 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
 
     approved = review_approvals([h for h, _, _ in candidates])
     behind = search_behind(index)
-    results = [search_describe(index, h, approved, head_counts, match, langs, behind)
+    compared: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = {} if compare else None
+    results = [search_describe(index, h, approved, head_counts, match, langs, behind, compared)
                for h, match, langs in candidates]
 
     if untested:
@@ -4959,7 +5041,7 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
     asked = ' '.join(query + [flag for flag, on in (('--untested', untested), ('--unreviewed', unreviewed),
                                                     ('--diverged', diverged), ('--unused', unused),
                                                     ('--outdated', outdated), ('--similar', similar),
-                                                    ('--pinned', pinned)) if on]
+                                                    ('--pinned', pinned), ('--compare', compare)) if on]
                      + ([f"--uses {uses}"] if uses else []))
     if asked:
         print(f"Search Results ({len(results)} matches for: {asked})")
@@ -5015,6 +5097,12 @@ def command_search(query: List[str], all_versions: bool = False, as_json: bool =
                     f"code {other['similarity']:.0%} alike"]
             if other['shared_checks']:
                 told.append(f"{other['shared_checks']} shared check{'' if other['shared_checks'] == 1 else 's'}")
+            if other.get('behaviour'):
+                told.append(SEARCH_BEHAVIOURS[other['behaviour']])
+            elif other.get('missing'):
+                told.append(f"not compared ({other['missing']} to approve)")
+            elif compare:
+                told.append("not compared (no checks)")
             print(f"Also {r['name']}: {other['hash']}, {', '.join(told)}")
         if r['match']:
             print(f"Match: {', '.join(r['match'])}")
@@ -10319,6 +10407,9 @@ def _build_parser():
     search_parser.add_argument('--similar', action='store_true',
                                help='Only functions whose code looks like another current function, '
                                     'or one code saved under several names')
+    search_parser.add_argument('--compare', action='store_true',
+                               help="Run functions sharing a name against each other's checks "
+                                    "(approved code only): interchangeable, covers, incompatible")
     search_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
 
     # Latest command
@@ -10457,7 +10548,7 @@ def main():
         command_search(args.query, all_versions=args.all_versions, as_json=args.as_json,
                        untested=args.untested, unreviewed=args.unreviewed, diverged=args.diverged,
                        unused=args.unused, uses=args.uses, outdated=args.outdated,
-                       similar=args.similar, pinned=args.pinned)
+                       similar=args.similar, pinned=args.pinned, compare=args.compare)
     elif args.command == 'latest':
         name, lang = args.name, args.lang
         if '@' in name and not lang:
