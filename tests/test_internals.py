@@ -2330,3 +2330,32 @@ def test_a_review_whose_email_ends_with_a_newline_is_invalid(mock_bb_dir, monkey
     subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', str(key),
                     '-n', bb.REVIEW_SIGNATURE_NAMESPACE, str(path)], check=True, capture_output=True)
     assert [r['status'] for r in bb.review_list_shared(func)] == ['invalid']
+
+
+def test_a_lineage_step_whose_from_loops_back_does_not_hang(mock_bb_dir):
+    """Steps written by hand can name each other; walking back from one must end"""
+    func = _pool_add("def one():\n    return 1\n")
+    step = _only_step(func)
+    record = dict(bb.lineage_index()['steps'][step])
+    directory = bb.storage_get_bb_directory() / 'pool' / 'lineage'
+    first, second, end = 'a' * 64, 'b' * 64, 'c' * 64
+    # The end of the name's lineage comes from a step that comes from a step that comes from it
+    for step_id, previous in ((first, second), (second, first), (end, first)):
+        path = directory / step_id[:2] / f"{step_id[2:]}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(dict(record, **{'from': previous, 'relation': 'document'})), encoding='utf-8')
+    bb.storage_cache_clear()
+    steps = bb.lineage_index()['steps']
+    if first not in steps:
+        pytest.skip("steps whose id is not their hash are not loaded: no loop can be built")
+    import signal
+
+    def too_long(*_):
+        raise AssertionError("helper_previous_version did not return")
+    signal.signal(signal.SIGALRM, too_long)
+    signal.alarm(5)
+    try:
+        assert end in bb.lineage_current_steps('eng', 'one', func)
+        assert bb.helper_previous_version(func, 'eng', 'one') is None
+    finally:
+        signal.alarm(0)
