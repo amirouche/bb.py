@@ -1170,6 +1170,7 @@ def storage_write_config(config: Dict[str, any]):
     try:
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
+        _SIGNATURE_SIGNERS.clear()  # your identity may have changed
     except IOError as e:
         print(f"Error: Failed to write config file: {e}", file=sys.stderr)
         sys.exit(1)
@@ -1890,6 +1891,7 @@ def trust_write(path: Path, entries: List[Tuple[str, str]]):
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"{email} {key}" for email, key in sorted(set(entries))]
     path.write_text(''.join(f"{line}\n" for line in lines), encoding='utf-8')
+    _SIGNATURE_SIGNERS.clear()  # who you trust just changed
 
 
 def helper_key_id(public_key: str) -> str:
@@ -2030,8 +2032,68 @@ def signature_read_key(signature: Path) -> Optional[str]:
         return None
 
 
+# Signatures already verified, by signature_verified_key, for each private state
+# directory read in this process. The file behind it, verified.txt, is private
+# state like your approvals: in the shared directory anyone able to commit could
+# write "verified" next to a forged signature.
+_SIGNATURE_VERIFIED: Dict[str, Set[str]] = {}
+# Who you trust (signature_trusted_signers), by the files it was read from
+_SIGNATURE_SIGNERS: Dict[Tuple, Tuple[Path, Tuple, List[Tuple[str, str]]]] = {}
+
+
+def signature_verified_path() -> Path:
+    """Path of the list of signatures you verified already (private state)."""
+    return storage_get_state_directory() / 'verified.txt'
+
+
+def signature_verified_key(path: Path, namespace: str, public_key: str) -> Optional[str]:
+    """
+    What a verification is of: these bytes, this signature, this namespace, this key.
+
+    A hash of the four, each with its length so that none can run into
+    the next. Any change to the file, to its signature or to the key it
+    names is another key, never verified. None when a file cannot be read.
+    """
+    try:
+        parts = [path.read_bytes(), signature_path(path).read_bytes(),
+                 namespace.encode('utf-8'), public_key.encode('utf-8')]
+    except OSError:
+        return None
+    digest = hashlib.sha256()
+    for part in parts:
+        digest.update(struct.pack('>Q', len(part)))
+        digest.update(part)
+    return digest.hexdigest()
+
+
+def signature_verified_load() -> Set[str]:
+    """The signatures verified so far, read once per command."""
+    where = str(signature_verified_path())
+    if where not in _SIGNATURE_VERIFIED:
+        try:
+            lines = signature_verified_path().read_text(encoding='ascii').split()
+        except (OSError, ValueError):
+            lines = []
+        _SIGNATURE_VERIFIED[where] = {line for line in lines if re.fullmatch(r'[0-9a-f]{64}', line)}
+    return _SIGNATURE_VERIFIED[where]
+
+
 def signature_verify(path: Path, namespace: str, public_key: str) -> bool:
-    """True when FILE.sig is a signature of the file, in namespace, by public_key."""
+    """
+    True when FILE.sig is a signature of the file, in namespace, by public_key.
+
+    ssh-keygen checks it, once: a signature found valid is remembered in
+    your private state (signature_verified_key), so that bb log, which
+    says of every signed record whether its signature holds, starts one
+    process per record the first time and none afterwards. Only valid
+    ones are remembered; a failure is checked again each time.
+    """
+    known = signature_verified_key(path, namespace, public_key)
+    if known is None:
+        return False
+    verified = signature_verified_load()
+    if known in verified:
+        return True
     try:
         with tempfile.TemporaryDirectory() as tmp, open(path, 'rb') as data:
             named = Path(tmp) / 'allowed_signers'
@@ -2041,7 +2103,44 @@ def signature_verify(path: Path, namespace: str, public_key: str) -> bool:
                                     stdin=data, capture_output=True)
     except (OSError, ValueError):
         return False
-    return result.returncode == 0
+    if result.returncode != 0:
+        return False
+    # The bytes may have changed while ssh-keygen ran: remember only what it was given
+    if signature_verified_key(path, namespace, public_key) == known:
+        verified.add(known)
+        with contextlib.suppress(OSError):
+            signature_verified_path().parent.mkdir(parents=True, exist_ok=True)
+            with open(signature_verified_path(), 'a', encoding='ascii') as f:
+                f.write(known + '\n')
+    return True
+
+
+def signature_trusted_signers() -> List[Tuple[str, str]]:
+    """
+    The (email, key) pairs whose signatures you trust: your private list, and you.
+
+    Read once per command, not once per record shown: the result is kept
+    for as long as the files it comes from (your list, your config, your
+    public key) are the ones it was read from.
+    """
+    def stamp(path: Path) -> Tuple:
+        try:
+            stat = path.stat()
+            return str(path), stat.st_mtime_ns, stat.st_size, stat.st_ino
+        except OSError:
+            return str(path), None
+    key = (stamp(trust_private_path()), stamp(storage_get_config_path()))
+    known = _SIGNATURE_SIGNERS.get(key)
+    if known is None or stamp(known[0]) != known[1]:
+        key_path = os.path.expanduser(storage_read_config()['user'].get('signing_key') or '')
+        public = Path(key_path + '.pub') if key_path else storage_get_config_path()
+        peers = trust_parse(trust_private_path())
+        yours = helper_signing_identity(warn=False)
+        if yours:
+            peers.append((yours[2], yours[1]))
+        _SIGNATURE_SIGNERS.clear()  # one command, one identity: nothing older is asked for again
+        known = _SIGNATURE_SIGNERS[key] = (public, stamp(public), peers)
+    return known[2]
 
 
 def signature_status(path: Path, namespace: str, public_key: Optional[str] = None, email: str = '',
@@ -2076,10 +2175,7 @@ def signature_status(path: Path, namespace: str, public_key: Optional[str] = Non
             return 'invalid', ''
     if not signature_verify(path, namespace, public_key):
         return 'invalid', ''
-    peers = trust_parse(trust_private_path())
-    yours = helper_signing_identity(warn=False)
-    if yours:
-        peers.append((yours[2], yours[1]))
+    peers = signature_trusted_signers()
     if named:
         return ('trusted' if (email, public_key) in peers else 'untrusted'), email
     emails = sorted((e for e, k in peers if k == public_key), reverse=True)

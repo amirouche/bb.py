@@ -2403,3 +2403,54 @@ def test_search_describe_asks_how_a_function_uses_the_pool_once(mock_bb_dir, mon
     # Once for what it shows, once for what is out of date and once for what is behind
     # (each memoized apart); it was once per field, and again for every dependency
     assert calls.count(caller) <= 3, calls
+
+
+@needs_ssh_keygen
+def test_a_signature_is_verified_by_ssh_keygen_once(mock_bb_dir, monkeypatch, tmp_path, capsys):
+    """bb log says of every signed record whether its signature holds: one process each the first time, none after"""
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    funcs = [_pool_add(f"def f{n}():\n    return {n}\n") for n in range(3)]
+    verifications, reads = [], []
+    real_run, real_parse = subprocess.run, bb.trust_parse
+
+    def run(command, *args, **kwargs):
+        if command[:3] == ['ssh-keygen', '-Y', 'verify']:
+            verifications.append(command)
+        return real_run(command, *args, **kwargs)
+    monkeypatch.setattr(bb.subprocess, 'run', run)
+    monkeypatch.setattr(bb, 'trust_parse', lambda path: reads.append(path) or real_parse(path))
+
+    def log():
+        verifications.clear(), reads.clear(), capsys.readouterr()
+        bb.command_log()
+        return capsys.readouterr().out
+
+    first = log()
+    assert first.count('Signed: trusted') == 6 and len(verifications) == 6  # three objects, three steps
+    assert len(reads) == 1  # who you trust is read once, not once per record
+    assert log() == first and verifications == []
+
+    # What was verified is private state: nobody can commit "verified" next to a forgery
+    assert bb.signature_verified_path().parent == bb.storage_get_state_directory()
+    assert not list(bb.storage_get_bb_directory().rglob('verified*'))
+    # ... and another process starts from the file
+    bb._SIGNATURE_VERIFIED.clear()
+    assert log() == first and verifications == []
+
+    # A record altered since is another content: checked again, and found out
+    path = bb.storage_object_path(funcs[0])
+    data = json.loads(path.read_text(encoding='utf-8'))
+    data['metadata']['name'] = 'mallory'
+    path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+    bb.storage_cache_clear()
+    altered = log()
+    assert altered.count('Signed: INVALID') == 1 and len(verifications) == 1
+    log()
+    assert len(verifications) == 1  # a failure is never remembered
+
+    # Someone else verifies for themselves, and trusts whom they trust
+    _become(monkeypatch, tmp_path, 'bob')
+    theirs = log()
+    assert theirs.count('Signed: untrusted') == 5 and len(verifications) == 6
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    assert log().count('Signed: trusted') == 5 and len(verifications) == 1
