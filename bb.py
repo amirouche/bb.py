@@ -839,6 +839,27 @@ def object_hash_matches(func_hash: str, data: Dict[str, Any]) -> bool:
     return code_compute_function_hash(code, data.get('checks')) == func_hash
 
 
+def object_check_hash(func_hash: str):
+    """
+    Raise ValueError when a stored object's code does not hash to its name.
+
+    The shared guard behind the commands that show or run stored code: bb
+    run and bb validate (where it recomputes the hash before executing),
+    bb review (before a reviewer approves it) and bb show, bb edit and bb
+    compile (before the code is displayed or bundled). object.json is
+    git-shared and can be swapped under a hash someone already read or
+    approved, so every path that puts stored bytes in front of a human, or
+    into a program, first confirms the bytes are the ones the hash names
+    (object_hash_matches).
+
+    Raises:
+        ValueError: when the stored code does not match func_hash
+    """
+    if not object_hash_matches(func_hash, object_load(func_hash)):
+        raise ValueError(f"{func_hash[:12]}... does not match its stored code "
+                         f"(the object was altered)")
+
+
 def mapping_build(func_hash: str, lang: str, docstring: str, name_mapping: Dict[str, str],
                   alias_mapping: Dict[str, str], comment: str = "", markdown: str = "",
                   pinned: List[str] = None) -> Dict[str, Any]:
@@ -7078,6 +7099,14 @@ def code_show(identifier: str):
                 print(f"  {l} - {len(mappings)} mapping(s)")
             return
 
+    # Show the code the hash names, not whatever bytes were swapped under it:
+    # the '# bb:' notes below frame this output as what is signed and anchored.
+    try:
+        object_check_hash(hash_value)
+    except ValueError as e:
+        print(f"Error: {e}; refusing to show it.", file=sys.stderr)
+        sys.exit(1)
+
     # Get available mappings for the language
     mappings = mappings_list(hash_value, lang)
 
@@ -7943,6 +7972,14 @@ def edit_load_section(func_hash: str, lang: str, name: str = None) -> Dict[str, 
     section_lang = helper_pick_language(func_hash, lang)
     if section_lang is None:
         print(f"Error: Function not found in the local pool: {func_hash}", file=sys.stderr)
+        sys.exit(1)
+
+    # Edit the code the hash names: a draft opens on the reviewed bytes, not
+    # on whatever was swapped under them in the git-shared object.json.
+    try:
+        object_check_hash(func_hash)
+    except ValueError as e:
+        print(f"Error: {e}; refusing to open it for editing.", file=sys.stderr)
         sys.exit(1)
 
     mapping_hash = mapping_select(func_hash, section_lang, name)
@@ -9843,6 +9880,15 @@ def command_compile(identifier: str, debug_mode: bool = False, output_path: Opti
         sys.exit(1)
 
     print(f"  Found {len(deps)} function(s) to bundle")
+
+    # Bundle the code each hash names: the compiled file embeds these bytes
+    # and runs them, so a swapped object.json must not be baked in.
+    for dep in deps:
+        try:
+            object_check_hash(dep)
+        except ValueError as e:
+            print(f"Error: {e}; refusing to compile.", file=sys.stderr)
+            sys.exit(1)
 
     # Generate single Python file
     print("Generating Python file...")

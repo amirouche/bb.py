@@ -1228,6 +1228,43 @@ def test_running_refuses_tampered_checks_under_an_approved_hash(mock_bb_dir):
         bb.code_load_normalized(func)
 
 
+def _swap_body(func_hash, body="def _bb_v_0(_bb_v_1):\n    return 'swapped'"):
+    """Rewrite a stored object's code in place so it no longer hashes to its name."""
+    path = bb.storage_object_path(func_hash)
+    data = json.loads(path.read_text(encoding='utf-8'))
+    data['normalized_code'] = normalize_code_for_test(body)
+    data.pop('public_key', None)
+    path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+    bb.storage_cache_clear()
+    assert not bb.object_hash_matches(func_hash, bb.object_load(func_hash))
+
+
+def test_show_edit_and_compile_refuse_code_that_does_not_match_its_hash(mock_bb_dir, tmp_path, capsys):
+    """bb show, bb edit and bb compile display or bundle stored code, so each binds to the hash.
+
+    object.json is git-shared and can be swapped under a hash; these paths
+    put the stored bytes in front of a human (show, edit) or into a program
+    (compile), so they refuse bytes that are not the ones the hash names,
+    the same guard bb run, bb validate and bb review apply.
+    """
+    func = _pool_add("def double(x):\n    return x * 2\n")
+    _swap_body(func)
+
+    with pytest.raises(SystemExit):
+        bb.code_show(f"{func}@eng")
+    out = capsys.readouterr()
+    assert "does not match its stored code" in out.err and "swapped" not in out.out
+
+    with pytest.raises(SystemExit):
+        bb.edit_load_section(func, 'eng')
+    assert "does not match its stored code" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit):
+        bb.command_compile(f"{func}@eng", output_path=str(tmp_path / 'out.py'))
+    assert "does not match its stored code" in capsys.readouterr().err
+    assert not (tmp_path / 'out.py').exists()  # nothing was written
+
+
 def test_edit_runs_nothing_without_checks_and_checks_need_reviewed_imports(mock_bb_dir):
     """bb edit runs nothing without checks; with checks, not pool functions you have not reviewed"""
     helper = _pool_add("def six():\n    return 6\n")
