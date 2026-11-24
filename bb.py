@@ -3398,12 +3398,16 @@ def helper_previous_version(func_hash: str, lang: str = None, name: str = None) 
     """The function the current step of func_hash (in lang, called name) came from, when another one."""
     steps = lineage_index()['steps']
     for step_id in lineage_current_steps(lang, name, func_hash):
-        previous = steps.get(steps[step_id].get('from') or '')
-        while previous and previous['function'] == func_hash:
+        # A step is named by its hash, so its 'from' cannot lead back to it; files
+        # written by hand can, and must not hang the commands that walk back
+        seen = {step_id}
+        previous_id = steps[step_id].get('from') or ''
+        while previous_id in steps and previous_id not in seen and steps[previous_id]['function'] == func_hash:
             # Steps that left the code as it was: documentation, a rename, a follow
-            previous = steps.get(previous.get('from') or '')
-        if previous:
-            return previous['function']
+            seen.add(previous_id)
+            previous_id = steps[previous_id].get('from') or ''
+        if previous_id in steps and previous_id not in seen:
+            return steps[previous_id]['function']
     return None
 
 
@@ -8821,6 +8825,10 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
     for sec, prep in [(section, prepared)] + plan['checks']:
         left = lineage_index()['steps'].get(sec.get('parent') or '')
         if left is None or left['lang'] != lang or unchanged(sec, prep) or id(sec) in remains:
+            continue
+        if prep['hash'] == left['function']:
+            # The code stays what it was (documentation, names): the edit lands the name
+            # nowhere new. Another end of its lineage on this code is not this edit's doing
             continue
         called = prep['name_mapping'].get('_bb_v_0')
         taken = [s for s in lineage_current_steps(lang, called, prep['hash']) if s != sec['parent']]

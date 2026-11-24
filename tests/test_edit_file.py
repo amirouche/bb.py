@@ -276,3 +276,31 @@ def test_a_fork_that_renames_a_check_leaves_the_origin_its_name(tmp_path):
     assert pool.bb('latest', 'saturday@eng', '--hash').stdout.split() == check
     assert 'Saturday rests.' in pool.bb('show', 'saturday@eng').stdout
     assert 'is valid' in pool.bb('validate').stdout
+
+
+def test_a_doc_only_edit_of_a_name_with_two_ends_on_one_code_is_not_refused(tmp_path):
+    """The 'one name, one code' guard is about code a name lands on, not code it stays on"""
+    import subprocess
+    import sys
+    from tests.test_import_by_name import BB
+    pool = Pool(tmp_path)
+    code = 'def double(n):\n    """{}"""\n    return 2 * n\n'
+    origin = hash_of(pool.edit('double', code.format('Twice n.')))
+    # Two people document the same version, each in their clone, then merge: one code, two ends
+    merge = ('import bb, sys\n'
+             'func = sys.argv[1]\n'
+             '[step] = bb.lineage_current_steps("eng", "double", func)\n'
+             'for doc in ("Two times n.", "The double of n."):\n'
+             '    mapping = bb.mapping_save(func, "eng", doc, {"_bb_v_0": "double", "_bb_v_1": "n"}, {})\n'
+             '    bb.lineage_save(step, func, "eng", mapping, "document", doc)\n'
+             'print(len(bb.lineage_current_steps("eng", "double", func)))\n')
+    merged = subprocess.run([sys.executable, '-c', merge, origin], capture_output=True, text=True, env=pool.env,
+                            cwd=str(BB.parent))
+    assert merged.stdout.split()[-1] == '2', merged.stderr
+    # One of them goes on documenting
+    draft = tmp_path / 'double.md'
+    assert pool.bb('edit', 'double@eng', str(draft)).returncode == 0
+    set_code(draft, code.format('Two times n, exactly.'))
+    again = pool.bb('edit', 'double@eng', str(draft), '-m', 'more')
+    assert again.returncode == 0, again.stderr
+    assert 'is already this code' not in again.stderr
