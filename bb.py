@@ -9195,9 +9195,12 @@ def update_check_rewritten(base: str, new_hash: str, new_code: str, checks: List
 
     Like bb edit, nothing runs that you have not approved: the rewrite
     imports pool functions and so do its checks. Those not approved are
-    reported as failures (bb review them), unless unreviewed.
+    reported as failures (bb review them), unless unreviewed. The rewrite
+    is the body of base with other references, and the checks call it:
+    base must be approved or yours as well. The versions it leaves do not
+    run and need no approval.
     """
-    needed = set()
+    needed = {base}
     for dep in code_extract_dependencies(new_code):
         needed.update(code_resolve_dependencies(dep))
     for check_hash in checks:

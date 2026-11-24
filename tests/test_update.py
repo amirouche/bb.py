@@ -131,3 +131,41 @@ def test_update_and_refactor_hash_the_code_they_store(tmp_path):
     saved = pool.bb('edit', 'qux@eng', str(draft), '-m', 'v4', '--refactor', 'noted@eng')
     assert saved.returncode == 0, saved.stderr
     assert stored_matches(current(pool, 'noted'))
+
+
+
+def test_update_runs_no_check_on_a_body_nobody_approved(tmp_path):
+    """The checks of a rewrite call the body of the function rewritten: it is approved or yours, or nothing runs"""
+    import subprocess
+    import sys
+    from tests.test_import_by_name import BB
+    pool, _, _ = chain(tmp_path)
+    marker = tmp_path / 'ran'
+    draft = tmp_path / 'spy.md'
+    pool.bb('edit', 'spy@eng', str(draft))
+    set_code(draft, 'import bb\nqux = bb.latest("qux")\n\n\ndef spy(n):\n    """Spy."""\n'
+                    f'    open({str(marker)!r}, "w").close()\n    return qux(n)\n')
+    draft.write_text(draft.read_text().rstrip('\n') + '\n\n### spy_returns\n\n```python def\n'
+                     'def spy_returns(spy):\n    """It answers."""\n    assert spy(1) is not None\n```\n')
+    saved = pool.bb('edit', 'spy@eng', str(draft), '-m', 'spy')
+    assert saved.returncode == 0 and 'PASS spy_returns' in saved.stdout, saved.stderr
+    spy = hash_of(saved)
+    marker.unlink()  # its author ran it; from here on nobody should
+    qux = tmp_path / 'qux.md'
+    set_code(qux, QUX.format(5))
+    assert pool.bb('edit', 'qux@eng', str(qux), '-m', 'v5').returncode == 0
+
+    # Someone else approved the new qux and the check, but never read spy
+    other = Pool(tmp_path)
+    other.env = {**pool.env, 'BB_STATE_DIRECTORY': str(tmp_path / 'other-state')}
+    for name in ('qux', 'spy_returns'):
+        subprocess.run([sys.executable, str(BB), 'review', f'{name}@eng'], input='y\n' * 9, text=True,
+                       capture_output=True, env=other.env, check=True)
+    refused = other.bb('update', 'spy@eng', '-m', 'catch up')
+    assert refused.returncode == 1 and f'not run, review first: bb review {spy}' in refused.stderr, refused.stderr
+    assert not marker.exists()
+    assert current(other, 'spy') == spy
+
+    # Its author may: the body is theirs
+    updated = pool.bb('update', 'spy@eng', '-m', 'catch up')
+    assert updated.returncode == 0 and marker.exists(), updated.stderr
