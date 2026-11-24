@@ -1841,6 +1841,9 @@ REVIEW_SIGNATURE_NAMESPACE = 'bb-review'
 # A signature is made for one purpose: one on a lineage step cannot pass for a review
 LINEAGE_SIGNATURE_NAMESPACE = 'bb-lineage'
 REVIEW_VERDICTS = ('approve', 'reject')
+# What a review may name as its signer: both go into one line of an allowed_signers file
+REVIEW_KEY_FORMAT = re.compile(r'[A-Za-z0-9@._+-]+ [A-Za-z0-9+/=]+')
+REVIEW_EMAIL_FORMAT = re.compile(r'[^\s#,"*?!]+')
 # What an approval acknowledges, each asked on its own in bb review and
 # recorded in the signed review ('ack'): an approval counts with all of them
 REVIEW_ACKS = {
@@ -2247,13 +2250,14 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
         reviewer = record.get('reviewer')
         email = reviewer.get('email') if isinstance(reviewer, dict) else None
         # The key and email go into an allowed_signers file (review_verify), one
-        # per line: a newline or extra field in either would inject a second,
-        # attacker-chosen signer. A public key is exactly "type base64", an
-        # email a single whitespace-free token (helper_key_id reads only the
-        # first two tokens, so a longer key must be rejected, not truncated).
+        # entry per line: a newline or an extra field in either would add a
+        # second, attacker-chosen signer. A public key is exactly "type base64",
+        # an email one token without whitespace. fullmatch, since split() and
+        # `$` both let a trailing newline through, and a longer key must be
+        # refused, not truncated (helper_key_id reads its first two tokens).
         well_formed = (isinstance(record.get('public_key'), str)
-                       and len(record['public_key'].split()) == 2
-                       and isinstance(email, str) and email and len(email.split()) == 1)
+                       and REVIEW_KEY_FORMAT.fullmatch(record['public_key']) is not None
+                       and isinstance(email, str) and REVIEW_EMAIL_FORMAT.fullmatch(email) is not None)
         # The signed content must be about this function, under its own key and id
         placed_right = (record.get('function') == func_hash and record.get('verdict') in REVIEW_VERDICTS
                         and well_formed

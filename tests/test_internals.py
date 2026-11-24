@@ -2297,3 +2297,36 @@ def test_review_checks_every_hash_before_it_tells_or_asks_anything(mock_bb_dir, 
     with pytest.raises(SystemExit):
         bb.translate_render_file(check, 'eng', 'fra')
     assert 'refusing to translate it' in capsys.readouterr().err
+
+
+def test_review_signer_formats_refuse_what_allowed_signers_would_read_otherwise():
+    """One signer, one line: no newline (trailing ones too), no extra field, no pattern or list of principals"""
+    key = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7+abc/def='
+    assert bb.REVIEW_KEY_FORMAT.fullmatch(key) and bb.REVIEW_KEY_FORMAT.fullmatch('sk-ssh-ed25519@openssh.com AAAA')
+    for bad in (key + '\n', '\n' + key, key + ' comment', key.replace(' ', '\t'), key.replace(' ', '  '),
+                key + '\nvictim@example.org ' + key, 'ssh-ed25519', ''):
+        assert not bb.REVIEW_KEY_FORMAT.fullmatch(bad), repr(bad)
+    assert bb.REVIEW_EMAIL_FORMAT.fullmatch('alice+bb@example.org')
+    for bad in ('alice@example.org\n', '\nalice@example.org', 'a b', '', '*', '*@example.org', 'a@x,b@y',
+                '!alice@example.org', '#alice@example.org', '"alice"@example.org', 'a?ice@example.org'):
+        assert not bb.REVIEW_EMAIL_FORMAT.fullmatch(bad), repr(bad)
+
+
+@needs_ssh_keygen
+def test_a_review_whose_email_ends_with_a_newline_is_invalid(mock_bb_dir, monkeypatch, tmp_path):
+    """split() counted one token and let it through to the allowed_signers line"""
+    func = _pool_add("def two():\n    return 2\n")
+    key = _become(monkeypatch, tmp_path, 'mallory')
+    record = {
+        'schema_version': 3, 'function': func, 'verdict': 'approve', 'ack': sorted(bb.REVIEW_ACKS),
+        'reviewer': {'name': 'mallory', 'email': 'mallory@example.org\n'},
+        'public_key': bb.helper_signing_identity()[1],
+        'created': '2026-11-24T00:00:00Z', 'comment': '', 'supersedes': [],
+    }
+    directory = bb.storage_get_review_directory() / func[:2] / func[2:] / bb.helper_key_id(record['public_key'])
+    directory.mkdir(parents=True)
+    path = directory / f"{bb.review_compute_id(record)}.json"
+    path.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', str(key),
+                    '-n', bb.REVIEW_SIGNATURE_NAMESPACE, str(path)], check=True, capture_output=True)
+    assert [r['status'] for r in bb.review_list_shared(func)] == ['invalid']
