@@ -2177,3 +2177,40 @@ def test_search_compare_tells_namesakes_apart_by_their_checks(mock_bb_dir, capsy
     assert f"Also double: {added}, another origin" in shown
     assert "interchangeable (each passes the other's checks)" in shown
     assert "incompatible (each fails a check of the other)" in shown
+
+
+@pytest.mark.parametrize('name', ["x):\n    import os\n    return (0", "x; import os", "a.b", "class", "", "1x", 7, None])
+def test_denormalize_refuses_mapping_names_that_are_not_identifiers(name):
+    """ast.unparse writes names verbatim: a mapping's name must not be able to become code"""
+    code = normalize_code_for_test("def _bb_v_0(_bb_v_1):\n    return bb.ref('" + 'a' * 64 + "')(_bb_v_1)")
+    with pytest.raises(bb.MappingAlteredError, match="Mapping altered"):
+        bb.code_denormalize(code, {'_bb_v_0': 'double', '_bb_v_1': name}, {'a' * 64: 'helper'})
+    with pytest.raises(bb.MappingAlteredError, match="Mapping altered"):
+        bb.code_denormalize(code, {'_bb_v_0': 'double', '_bb_v_1': 'x'}, {'a' * 64: name})
+    # Names in any script are identifiers all the same
+    assert 'def 二倍(数):' in bb.code_denormalize(code, {'_bb_v_0': '二倍', '_bb_v_1': '数'}, {'a' * 64: 'aide'})
+
+
+def test_an_altered_mapping_is_not_shown_reviewed_or_compiled(mock_bb_dir, monkeypatch, capsys):
+    """A mapping is not hashed with the code: one written by hand cannot put code in what is read or bundled"""
+    func = _pool_add("def double(x):\n    return x * 2\n")
+    [path] = bb.storage_mapping_directory(func).glob('eng/*.json')
+    data = json.loads(path.read_text(encoding='utf-8'))
+    data['name_mapping']['_bb_v_1'] = "x):\n    import os; os.system('echo pwned')\n    return (0"
+    path.write_text(json.dumps(data), encoding='utf-8')
+    bb.storage_cache_clear()
+
+    monkeypatch.setattr('builtins.input', lambda *_: 'y')
+    with pytest.raises(bb.MappingAlteredError):
+        bb.command_review(func, '')
+    assert bb.review_load_state() == set()
+    with pytest.raises(SystemExit):
+        bb.code_show(f'{func}@eng')
+    captured = capsys.readouterr()
+    assert 'os.system' not in captured.out and 'Mapping altered' in captured.err
+    # The command line reports it instead of a traceback
+    monkeypatch.setattr(sys, 'argv', ['bb', 'edit', f'{func}@eng', str(path.parent / 'draft.md')])
+    with pytest.raises(SystemExit) as exit_info:
+        bb.main()
+    assert exit_info.value.code == 1
+    assert 'Error: Mapping altered' in capsys.readouterr().err

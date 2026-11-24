@@ -1472,6 +1472,33 @@ def code_unparse_readable(tree: ast.AST) -> str:
     return ast.unparse(tree)
 
 
+class MappingAlteredError(ValueError):
+    """A mapping holds what bb never writes (see code_check_mapping_names): nothing is shown from it."""
+
+
+def code_check_mapping_names(name_mapping: Dict[str, str], alias_mapping: Dict[str, str]):
+    """
+    Raise ValueError unless every name of a mapping is a plain identifier.
+
+    Mappings are not hashed with the code and anyone able to commit can
+    write one. Their names are put into the AST as they are, and
+    ast.unparse writes them out verbatim: a "name" like `x): import os`
+    would become code in what bb show displays, bb review approves and
+    bb compile --debug bundles. A name is an identifier and not a keyword.
+
+    Raises:
+        MappingAlteredError: naming the offending entry (a ValueError; the
+            command line reports it and exits with status 1)
+    """
+    for kind, mapping in (('name', name_mapping), ('alias', alias_mapping)):
+        if not isinstance(mapping, dict):
+            raise MappingAlteredError(f"Mapping altered: its {kind} mapping is not an object")
+        for key, name in mapping.items():
+            if not (isinstance(name, str) and name.isidentifier() and not keyword.iskeyword(name)):
+                raise MappingAlteredError(f"Mapping altered: {kind} {name!r} (for {str(key)[:12]}) "
+                                          f"is not an identifier; refusing to show or use it")
+
+
 def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_mapping: Dict[str, str]) -> str:
     """
     Denormalize code by applying reverse name mappings.
@@ -1482,7 +1509,12 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
     (normalization 4) or object_<hash>._bb_v_0 with an import (before).
     Uses become the alias again; for bb.ref, each one used is bound once
     after the imports, as `alias = bb.ref("<hash>")`.
+
+    Raises:
+        ValueError: when a mapping holds a name that is not an identifier
+            (see code_check_mapping_names)
     """
+    code_check_mapping_names(name_mapping, alias_mapping)
     tree = ast.parse(normalized_code)
 
     # Create reverse alias mapping: actual_hash -> alias
@@ -9542,6 +9574,7 @@ BB Runtime - Minimal runtime for compiled functions
 """
 import ast
 import json
+import keyword
 import os
 import sys
 from pathlib import Path
@@ -9631,6 +9664,10 @@ def code_load(hash_value: str, lang: str, mapping_hash: str = None):
 
 def code_denormalize(normalized_code: str, name_mapping: dict, alias_mapping: dict) -> str:
     """Denormalize code by applying reverse name mappings."""
+    # Names are written out verbatim by ast.unparse: only identifiers, or a name becomes code
+    for name in list(name_mapping.values()) + list(alias_mapping.values()):
+        if not (isinstance(name, str) and name.isidentifier() and not keyword.iskeyword(name)):
+            raise ValueError(f"Mapping altered: {name!r} is not an identifier")
     tree = ast.parse(normalized_code)
 
     hash_to_alias = dict(alias_mapping)
@@ -10473,6 +10510,16 @@ def _build_parser():
 
 
 def main():
+    """Run the command line; a mapping altered in the pool is an error, not a traceback."""
+    try:
+        main_dispatch()
+    except MappingAlteredError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def main_dispatch():
+    """Parse the command line and run the command it names."""
     parser = _build_parser()
     args = parser.parse_args()
 
