@@ -2219,8 +2219,10 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
     Each entry is the review record plus 'id', 'superseded' and 'status':
     'trusted' (valid signature by your key or a key in your private list), 'untrusted'
     (valid signature by a key you do not trust) or 'invalid' (bad, missing,
-    altered or misplaced). Only a validly signed review supersedes, and only
-    reviews of its own key.
+    altered or misplaced). The signature is checked against the email and
+    key the review names, and trust is that pair being in your list: a
+    peer cannot sign a review naming another's key. Only a validly signed
+    review supersedes, and only reviews of its own key.
 
     Args:
         every: Also return the superseded reviews (default: current ones only)
@@ -2231,6 +2233,7 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
     reviews = []
     superseded = set()
     yours = helper_signing_identity()
+    trusted = set(trust_parse(trust_private_path()))
     for path in sorted(review_dir.glob('*/*.json')):
         try:
             record = json.loads(path.read_text(encoding='utf-8'))
@@ -2257,19 +2260,20 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
                         and key_id == helper_key_id(record['public_key'])
                         and path.stem == review_compute_id(record))
         status = 'invalid'
-        if placed_right and review_verify(path, trust_private_path()):
-            status = 'trusted'
-        elif placed_right:
-            # Check the signature against the key it claims, to tell bad from untrusted
+        if placed_right:
+            # The signature must be by the very key the review names, under the
+            # very email it names: checked against a list holding that one entry.
+            # Checking against your whole list would accept any trusted peer's
+            # signature on a record naming someone else's key, filed in their
+            # directory, where it would supersede their reviews (a rejection, say).
+            signer = (email, ' '.join(record['public_key'].split()))
             with tempfile.TemporaryDirectory() as tmp:
                 own = Path(tmp) / 'allowed_signers'
-                own.write_text(f"{record['reviewer'].get('email', '')} {record['public_key']}\n",
-                               encoding='utf-8')
+                own.write_text(f"{signer[0]} {signer[1]}\n", encoding='utf-8')
                 if review_verify(path, own):
                     # Your own key needs no entry in your list: its config is private state too
-                    mine = yours and (yours[2], yours[1]) == (record['reviewer'].get('email'),
-                                                              ' '.join(record['public_key'].split()[:2]))
-                    status = 'trusted' if mine else 'untrusted'
+                    mine = yours and (yours[2], ' '.join(yours[1].split()[:2])) == signer
+                    status = 'trusted' if mine or signer in trusted else 'untrusted'
         if status != 'invalid':
             superseded.update((key_id, old) for old in record.get('supersedes', []) if isinstance(old, str))
         record.update(id=path.stem, status=status)

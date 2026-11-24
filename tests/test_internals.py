@@ -2214,3 +2214,39 @@ def test_an_altered_mapping_is_not_shown_reviewed_or_compiled(mock_bb_dir, monke
         bb.main()
     assert exit_info.value.code == 1
     assert 'Error: Mapping altered' in capsys.readouterr().err
+
+
+@needs_ssh_keygen
+def test_a_trusted_peer_cannot_supersede_another_peers_rejection(mock_bb_dir, monkeypatch, tmp_path):
+    """A review is verified against the key it names: a peer's signature on a record naming another's key is invalid"""
+    func = _pool_add("def one():\n    return 1\n")
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    rejection = bb.review_publish(func, 'reject', 'unsafe')
+
+    # Eve, trusted too, files an approval in Alice's directory, naming Alice's key, signed with her own
+    eve_key = _become(monkeypatch, tmp_path, 'eve')
+    record = json.loads(rejection.read_text(encoding='utf-8'))
+    record.update(verdict='approve', ack=sorted(bb.REVIEW_ACKS), comment='', supersedes=[rejection.stem],
+                  reviewer={'name': 'eve', 'email': 'eve@example.org'})
+    forged = rejection.parent / f"{bb.review_compute_id(record)}.json"
+    forged.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', str(eve_key), '-n', bb.REVIEW_SIGNATURE_NAMESPACE,
+                    str(forged)], check=True, capture_output=True)
+
+    _become(monkeypatch, tmp_path, 'bob')
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    bb.command_trust_add('eve@example.org', str(eve_key) + '.pub')
+    current = {(r['verdict'], r['status']) for r in bb.review_list_shared(func)}
+    assert current == {('reject', 'trusted'), ('approve', 'invalid')}
+    assert bb.review_approvals([func]) == set()
+
+    # Nor can she borrow Alice's email with her own key: the pair is not in Bob's list
+    record.update(public_key=' '.join(Path(str(eve_key) + '.pub').read_text().split()[:2]),
+                  reviewer={'name': 'alice', 'email': 'alice@example.org'}, supersedes=[])
+    hers = rejection.parent.parent / bb.helper_key_id(record['public_key']) / f"{bb.review_compute_id(record)}.json"
+    hers.parent.mkdir()
+    hers.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', str(eve_key), '-n', bb.REVIEW_SIGNATURE_NAMESPACE,
+                    str(hers)], check=True, capture_output=True)
+    assert ('approve', 'untrusted') in {(r['verdict'], r['status']) for r in bb.review_list_shared(func)}
+    assert bb.review_approvals([func]) == set()
