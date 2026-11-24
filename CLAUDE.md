@@ -85,7 +85,7 @@ Store in $HOME/.local/bb/pool/ (or $BB_DIRECTORY/pool/) with:
 1. **Function name always `_bb_v_0`**: First entry in name mapping
 2. **Built-ins never renamed**: `len`, `sum`, `print`, etc. preserved
 3. **Imported names never renamed**: `math`, `Counter`, etc. preserved
-4. **Imports sorted**: Lexicographically by module name
+4. **Imports sorted**: Lexicographically by module name; a source whose top level binds one name to two things (two imports, an import and a pool function, an import and the function) is refused (`code_check_bindings`), and so is a scratchpad whose sections give a top-level name two meanings (`scratchpad_clashes`)
 5. **Hash on logic only**: Docstrings and documentation excluded from hash computation; attached checks included
 6. **Language codes**: Always 3 characters (ISO 639-3: eng, fra, spa, etc.)
 7. **Hash format**: 64 lowercase hex characters (SHA256)

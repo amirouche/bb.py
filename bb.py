@@ -6625,6 +6625,65 @@ def code_check_positional(source_code: str, tree: ast.Module, where: str):
 MODULE_GLOBALS = {'__name__', '__file__', '__doc__', '__builtins__', '__spec__', '__loader__', '__package__'}
 
 
+def code_top_bindings(source_code: str, tree: ast.Module) -> List[Tuple[str, Tuple, str]]:
+    """
+    What the top level of a function's source binds: its imports, its pool names and the function.
+
+    Returns:
+        (name, what it is, the line that binds it), in source order. What
+        it is compares equal for two lines binding the same thing
+        (`import os` and `import os.path` both bind the module os), and
+        starts with its kind: 'import', 'pool' or 'def'. `import bb` is
+        left out (bb is reserved and never stored), and so is `import *`.
+    """
+    def line(node):
+        return (ast.get_source_segment(source_code, node) or ast.unparse(node)).split('\n')[0]
+
+    bindings = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    bindings.append((alias.asname, ('import', alias.name), line(node)))
+                elif alias.name != 'bb':
+                    bindings.append((alias.name.split('.')[0], ('import', alias.name.split('.')[0]), line(node)))
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name != '*':
+                    bindings.append((alias.asname or alias.name,
+                                     ('import', node.level, node.module, alias.name), line(node)))
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            bindings.append((node.targets[0].id, ('pool', ast.dump(node.value)), line(node)))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            bindings.append((node.name, ('def',), line(node)))
+    return bindings
+
+
+def code_check_bindings(source_code: str, tree: ast.Module, where: str):
+    """
+    Refuse a source whose top level binds one name to two things.
+
+    Two imports of one name, an import and a pool function, an import and
+    the function itself: the later line shadows the earlier, silently.
+    Worse, imports are stored sorted, so which of two imports wins may
+    not be the one that won when the author ran the code.
+
+    Raises:
+        ValueError: naming each clash, with the lines involved
+    """
+    first: Dict[str, Tuple[Tuple, str]] = {}
+    lines = []
+    for name, what, text in code_top_bindings(source_code, tree):
+        # Two pool functions under one name have their own refusal, where references are read
+        if name in first and first[name][0] != what and 'import' in (what[0], first[name][0][0]):
+            lines.append(f"  {name}: `{first[name][1]}` and `{text}`")
+        first.setdefault(name, (what, text))
+    if lines:
+        raise ValueError('\n'.join(
+            [f"{where} binds a name to two things at its top level (one would shadow the other):"] + lines
+            + ["Import one of them under another name (import ... as ...), or rename the function."]))
+
+
 def code_check_defined(source_code: str, tree: ast.Module, where: str):
     """
     Refuse a function that reads a name defined nowhere.
@@ -6722,6 +6781,7 @@ def code_prepare_source(source_code: str, lang: str, where: str = None) -> Dict[
         lines.append("or into functions of their own.")
         raise ValueError('\n'.join(lines))
 
+    code_check_bindings(source_code, tree, where)
     code_check_positional(source_code, tree, where)
     code_check_defined(source_code, tree, where)
 
@@ -8870,6 +8930,50 @@ def scratchpad_split(text: str) -> List[Tuple[str, str]]:
     return [(name, '\n'.join(lines).rstrip('\n') + '\n') for name, lines in sections]
 
 
+def scratchpad_clashes(sections: List[Tuple[str, str]]) -> List[str]:
+    """
+    The names that mean two things across the sections of a scratchpad, one line each.
+
+    Each section is saved as a function of its own, but the file is read
+    as one text: a name imported in one section must not be another
+    module, a pool function or another section's function elsewhere
+    (`from os import path` here, `from sys import path` there). The same
+    import in several sections is fine, and so is a function with the
+    sections that use it from the pool (NAME = bb.resolve("NAME")).
+    Sections that cannot be parsed are left to the save, which reports them.
+    """
+    seen: Dict[str, List[Tuple[Tuple, str, str]]] = {}
+    for name, text in sections:
+        try:
+            parsed = markdown_parse_edit(text)
+        except EditFormatError:
+            continue
+        blocks = [(name, parsed['implementation'])] + [
+            (f"{name}, check {check['title']}", check) for check in parsed['checks']]
+        for where, block in blocks:
+            try:
+                source = block['source']
+                bindings = code_top_bindings(source, ast.parse(source))
+            except (SyntaxError, KeyError, TypeError):
+                continue
+            for bound, what, line in bindings:
+                seen.setdefault(bound, []).append((what, where, line))
+    clashes = []
+    for bound in sorted(seen):
+        kinds = {what for what, _, _ in seen[bound]}
+        imports = {what for what in kinds if what[0] == 'import'}
+        pools = {what for what in kinds if what[0] == 'pool'}
+        # A function and the pool references to it are one thing; an import is another
+        if len(imports) > 1 or len(pools) > 1 or (imports and len(kinds) > 1):
+            told, lines = set(), []
+            for what, where, line in seen[bound]:
+                if what not in told:
+                    told.add(what)
+                    lines.append(f"`{line}` (section {where})")
+            clashes.append(f"{bound} means {len(lines)} things: {', '.join(lines)}")
+    return clashes
+
+
 def scratchpad_tree_names(identifier: str) -> List[str]:
     """NAME@lang and everything it uses, top down as bb tree shows them, as names in lang."""
     func_hash, lang = helper_parse_identifier(identifier)
@@ -8936,6 +9040,12 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
     section that cannot be saved (a stale draft, a failing check), saying
     what was saved and what was not. bb then rewrites FILE: saved sections
     in stored form, the others as they were. One language per scratchpad.
+
+    The file reads as one text, so a name bound at the top level of a
+    section means one thing in all of them: importing `path` from os in
+    one section and from sys in another, or importing a module under the
+    name of a function of the file, is refused before anything is saved
+    (and no single section may bind a name twice either, see bb edit).
 
     --show saves nothing, writes nothing and runs nothing: it prints the
     scratchpad as a save would read it, to prepare one. Before FILE
@@ -9068,6 +9178,15 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
             placed.add(ready[0])
 
         helper_refuse_unused_picks(picks, {ref for _, text in sections for ref in SCRATCHPAD_REF.findall(text)}, file)
+        clashes = scratchpad_clashes(sections)
+        if clashes and not show:
+            print(f"Error: {file} gives a name two meanings at the top level of its sections; nothing saved:",
+                  file=sys.stderr)
+            for clash in clashes:
+                print(f"  {clash}", file=sys.stderr)
+            print("Import one of them under another name (import ... as ...), or rename the function.",
+                  file=sys.stderr)
+            sys.exit(1)
         if show:
             # Section by section, as bb edit --show; a name another section creates will be there when it is needed
             in_pool = {n for n in titles if helper_resolve_heads(n, lang)[0]}
@@ -9087,6 +9206,8 @@ def command_scratchpad(identifiers: List[str], file: str, comment: str = None, t
                     stale[name] = shown['stale'].replace(str(draft), f"{file} (section {name})")
             print('\n'.join(parts), end='')
             helper_report_show(report, file, stale)
+            for clash in clashes:
+                print(f"Not ready: {clash}. Saving is refused: import one under another name.", file=sys.stderr)
             return
         if comment is None:
             try:

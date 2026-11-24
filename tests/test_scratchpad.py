@@ -185,3 +185,71 @@ def test_a_check_also_written_as_its_own_section_is_saved_once(tmp_path):
     refused = pool.bb('scratchpad', 'money@eng', str(pad), '-m', 'two copies')
     assert refused.returncode == 1 and 'the two differ' in refused.stderr
     assert 'Cents shown as dollars' in pool.bb('show', 'money@eng').stdout  # nothing saved
+
+
+CLASHES = {
+    'two imports': 'from os import path\nfrom sys import path\n\n\ndef where():\n    """W."""\n    return path\n',
+    'import and function': 'import json\n\n\ndef json():\n    """J."""\n    return 1\n',
+    'import and pool function': 'import bb\nimport helper\nhelper = bb.resolve("helper")\n\n\ndef user():\n'
+                                '    """U."""\n    return helper()\n',
+    'import as': 'import os\nimport sys as os\n\n\ndef where():\n    """W."""\n    return os\n',
+}
+
+
+def test_a_function_whose_top_level_binds_a_name_twice_is_refused(tmp_path):
+    """Imports are stored sorted: of two that bind one name, the one that wins could change"""
+    from tests.test_import_by_name import Pool
+    pool = Pool(tmp_path)
+    assert pool.add('helper', 'def helper():\n    """H."""\n    return 1\n').returncode == 0
+    for name, source in CLASHES.items():
+        refused = pool.add(name.replace(' ', '_'), source)
+        assert refused.returncode == 1 and 'binds a name to two things' in refused.stderr, (name, refused.stderr)
+        assert 'Hash:' not in refused.stdout
+    assert '`from os import path` and `from sys import path`' in pool.add('again', CLASHES['two imports']).stderr
+    # The same thing twice is no clash: one module, whatever submodules are named
+    fine = pool.add('fine', 'import os\nimport os.path\nimport json\nimport json\nfrom os import path\n\n\n'
+                            'def fine():\n    """F."""\n    return os, json, path\n')
+    assert fine.returncode == 0, fine.stderr
+
+
+def section(name, code, check=''):
+    return f'# {name}\n\n## Implementation\n\n```python def\n{code}```\n' + check
+
+
+def test_a_scratchpad_whose_sections_give_a_name_two_meanings_is_refused(tmp_path):
+    """The file reads as one text: a top-level name means one thing in every section"""
+    pool = Pool(tmp_path)
+    pad = tmp_path / 'pad.md'
+    here = 'from os import path\n\n\ndef here():\n    """H."""\n    return path.sep\n'
+    there = 'from sys import path\n\n\ndef there():\n    """T."""\n    return path[0]\n'
+    pad.write_text(section('here', here) + '\n' + section('there', there))
+    refused = pool.bb('scratchpad', 'here@eng', str(pad), '-m', 'new')
+    assert refused.returncode == 1, refused.stdout
+    assert 'path means 2 things: `from os import path` (section here), `from sys import path` (section there)' \
+        in refused.stderr
+    assert not latest(pool, 'here') and not latest(pool, 'there')  # nothing saved, not even the first
+    # --show says so without refusing to show
+    shown = pool.bb('scratchpad', 'here@eng', str(pad), '--show')
+    assert shown.returncode == 0 and 'Not ready: path means 2 things' in shown.stderr
+
+    # An import under the name of a function of the file, or of a pool name another section uses
+    pad.write_text(section('money', MONEY) + '\n' + section('label', LABEL) + '\n'
+                   + section('rich', 'import money\n\n\ndef rich():\n    """R."""\n    return money\n'))
+    refused = pool.bb('scratchpad', 'money@eng', str(pad), '-m', 'new')
+    assert refused.returncode == 1 and 'money means' in refused.stderr and '`import money` (section rich)' in refused.stderr
+    assert not latest(pool, 'money')
+
+    # A check's imports count too
+    check = ('\n## Checks\n\n### here_is_a_separator\n\n```python def\nfrom sys import path\n\n\n'
+             'def here_is_a_separator(here):\n    """It is one character."""\n    assert len(here()) == 1 and path\n```\n')
+    pad.write_text(section('here', here, check))
+    refused = pool.bb('scratchpad', 'here@eng', str(pad), '-m', 'new')
+    assert refused.returncode == 1 and '(section here, check here_is_a_separator)' in refused.stderr
+
+    # The same import everywhere, and a function used from the pool by its neighbours, are one meaning each
+    both = 'import os\n\n\ndef {0}():\n    """D."""\n    return os.sep\n'
+    pad.write_text(section('money', MONEY) + '\n' + section('label', LABEL) + '\n'
+                   + section('one', both.format('one')) + '\n' + section('two', both.format('two')))
+    saved = pool.bb('scratchpad', 'money@eng', str(pad), '-m', 'new')
+    assert saved.returncode == 0, saved.stderr
+    assert 'saved money, label, one, two' in saved.stdout
