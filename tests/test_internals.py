@@ -1421,7 +1421,7 @@ def test_signed_review_names_the_mapping_read(mock_bb_dir, monkeypatch, tmp_path
     mapping = bb.mapping_select(func, 'eng')
     assert (review['lang'], review['mapping']) == ('eng', mapping)
     assert review['id'] == bb.review_compute_id({k: v for k, v in review.items()
-                                                 if k not in ('id', 'status', 'superseded')})
+                                                 if k not in ('id', 'status', 'current')})
     capsys.readouterr()
     bb.command_reviews(func)
     assert f"read as one@eng (mapping {mapping[:12]}...)" in capsys.readouterr().out
@@ -1429,7 +1429,7 @@ def test_signed_review_names_the_mapping_read(mock_bb_dir, monkeypatch, tmp_path
     # The same verdict after reading it in French is another review; the approval covers both
     french = bb.mapping_select(func, 'fra')
     second = bb.review_publish(func, 'approve', 'fine', 'fra', french, ack=bb.REVIEW_ACKS)
-    assert json.loads(second.read_text(encoding='utf-8'))['supersedes'] == [review['id']]
+    assert 'supersedes' not in json.loads(second.read_text(encoding='utf-8'))
     assert bb.review_publish(func, 'approve', 'fine', 'fra', french, ack=bb.REVIEW_ACKS) == second
     _become(monkeypatch, tmp_path, 'bob')
     bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
@@ -1438,8 +1438,9 @@ def test_signed_review_names_the_mapping_read(mock_bb_dir, monkeypatch, tmp_path
     # Naming another mapping in a signed review breaks its signature
     text = second.read_text(encoding='utf-8')
     second.write_text(text.replace(french, mapping), encoding='utf-8')
-    # ... and her earlier review, which it no longer supersedes, is current again
-    assert sorted(r['status'] for r in bb.review_list_shared(func)) == ['invalid', 'trusted']
+    # ... and her earlier review is the one that counts again
+    assert sorted((r['status'], r['current']) for r in bb.review_list_shared(func)) == [
+        ('invalid', False), ('trusted', True)]
 
 
 @needs_ssh_keygen
@@ -1494,8 +1495,8 @@ def test_signed_review_cannot_be_moved_to_another_function(mock_bb_dir, monkeypa
 
 
 @needs_ssh_keygen
-def test_review_changed_mind_is_another_review(mock_bb_dir, monkeypatch, tmp_path):
-    """A new verdict supersedes the old review, which stays in the pool untouched"""
+def test_review_changed_mind_is_another_review(mock_bb_dir, monkeypatch, tmp_path, capsys):
+    """A new verdict is another review naming no other: both stay, the latest of the key counts"""
     func = _pool_add("def one():\n    return 1\n")
     alice_key = _become(monkeypatch, tmp_path, 'alice')
     first = bb.review_publish(func, 'approve', 'fine', ack=bb.REVIEW_ACKS)
@@ -1504,15 +1505,45 @@ def test_review_changed_mind_is_another_review(mock_bb_dir, monkeypatch, tmp_pat
     second = bb.review_publish(func, 'reject', 'on second thought')
     assert second != first and second.parent == first.parent
     assert first.read_bytes() == before and Path(str(first) + '.sig').exists()
-    assert json.loads(second.read_text(encoding='utf-8'))['supersedes'] == [first.stem]
+    assert 'supersedes' not in json.loads(second.read_text(encoding='utf-8'))
     assert second.stem == bb.review_compute_id(json.loads(second.read_text(encoding='utf-8')))
 
     _become(monkeypatch, tmp_path, 'bob')
     bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
-    assert [(r['verdict'], r['superseded']) for r in bb.review_list_shared(func)] == [('reject', False)]
-    assert sorted((r['verdict'], r['superseded']) for r in bb.review_list_shared(func, every=True)) == [
-        ('approve', True), ('reject', False)]
+    assert sorted((r['verdict'], r['current']) for r in bb.review_list_shared(func)) == [
+        ('approve', False), ('reject', True)]
     assert bb.review_approvals([func]) == set()
+    capsys.readouterr()
+    bb.command_reviews(func)
+    out = capsys.readouterr().out
+    assert out.index('current') < out.index('earlier')
+    assert "superseded" not in out
+
+    # Changing her mind again, within the same second: the approval counts, being her latest
+    _become(monkeypatch, tmp_path, 'alice')
+    third = bb.review_publish(func, 'approve', 'fine after all', ack=bb.REVIEW_ACKS)
+    _become(monkeypatch, tmp_path, 'bob')
+    assert [r['id'] for r in bb.review_list_shared(func) if r['current']] == [third.stem]
+    assert bb.review_approvals([func]) == {func}
+
+
+def test_review_pick_current_reads_the_latest_trusted_review_of_each_key():
+    """Latest 'created' of a key counts, a tie goes to a rejection, and only trusted reviews count"""
+    def review(id, key, verdict, created, status='trusted'):
+        return {'id': id, 'public_key': f'ssh-ed25519 {key}', 'verdict': verdict, 'created': created,
+                'status': status}
+
+    reviews = [review('a1', 'AAAA', 'approve', '2026-01-01T00:00:00Z'),
+               review('a2', 'AAAA', 'reject', '2026-01-02T00:00:00Z'),
+               review('a3', 'AAAA', 'approve', '2026-01-03T00:00:00Z'),
+               review('b1', 'BBBB', 'approve', '2026-01-04T00:00:00Z'),
+               review('b2', 'BBBB', 'reject', '2026-01-04T00:00:00Z'),
+               review('c1', 'CCCC', 'reject', '2026-01-05T00:00:00Z', status='untrusted'),
+               review('d1', 'DDDD', 'reject', '2026-01-05T00:00:00Z', status='invalid')]
+    # an untrusted or invalid review never counts, nor hides a trusted one of its own key
+    assert bb.review_pick_current(reviews) == {'a3', 'b2'}
+    assert bb.review_pick_current(reviews + [review('a4', 'AAAA', 'reject', '2026-01-09T00:00:00Z', 'untrusted')]
+                                  ) == {'a3', 'b2'}
 
 
 @needs_ssh_keygen
@@ -1545,8 +1576,9 @@ def test_review_asks_each_aspect_and_records_the_acknowledgements(mock_bb_dir, m
     asked = review('y', 'y', 'y')
     assert [q.split(':')[0] for q in asked] == ['Security', 'Correctness', 'Readability']
     assert bb.review_load_state() == {func}
-    [approval] = bb.review_list_shared(func)
+    [approval] = [r for r in bb.review_list_shared(func) if r['current']]
     assert (approval['verdict'], approval['ack']) == ('approve', sorted(bb.REVIEW_ACKS))
+    assert sorted(r['verdict'] for r in bb.review_list_shared(func)) == ['approve', 'reject']
     capsys.readouterr()
     bb.command_reviews(func)
     assert "acknowledged: correctness, readability, security" in capsys.readouterr().out
@@ -1576,15 +1608,35 @@ def test_peer_approval_counts_only_with_every_acknowledgement(mock_bb_dir, monke
 
 
 @needs_ssh_keygen
-def test_review_is_superseded_only_by_a_signed_review_of_its_key(mock_bb_dir, monkeypatch, tmp_path):
-    """Neither a forged file nor another reviewer can retire someone's review"""
+def test_a_supersedes_field_of_an_older_review_retires_nothing(mock_bb_dir, monkeypatch, tmp_path):
+    """A signed review still carrying 'supersedes' loads; the field is ignored, the latest review counts"""
+    func = _pool_add("def one():\n    return 1\n")
+    alice_key = _become(monkeypatch, tmp_path, 'alice')
+    rejection = bb.review_publish(func, 'reject', 'unsafe')
+    record = json.loads(rejection.read_text(encoding='utf-8'))
+    record.update(verdict='approve', ack=sorted(bb.REVIEW_ACKS), comment='', created='2000-01-01T00:00:00Z',
+                  supersedes=[rejection.stem])
+    old = rejection.parent / f"{bb.review_compute_id(record)}.json"
+    old.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    subprocess.run(['ssh-keygen', '-Y', 'sign', '-q', '-f', str(alice_key), '-n', bb.REVIEW_SIGNATURE_NAMESPACE,
+                    str(old)], check=True, capture_output=True)
+    _become(monkeypatch, tmp_path, 'bob')
+    bb.command_trust_add('alice@example.org', str(alice_key) + '.pub')
+    assert sorted((r['verdict'], r['status'], r['current']) for r in bb.review_list_shared(func)) == [
+        ('approve', 'trusted', False), ('reject', 'trusted', True)]
+    assert bb.review_approvals([func]) == set()
+
+
+@needs_ssh_keygen
+def test_a_forged_or_foreign_review_never_replaces_anyones_verdict(mock_bb_dir, monkeypatch, tmp_path):
+    """Neither a forged file nor another reviewer can take the place of someone's review"""
     func = _pool_add("def one():\n    return 1\n")
     alice_key = _become(monkeypatch, tmp_path, 'alice')
     rejection = bb.review_publish(func, 'reject', 'unsafe')
 
-    # Forged: an unsigned approval in Alice's directory claiming to replace her rejection
+    # Forged: an unsigned, later approval in Alice's directory
     record = json.loads(rejection.read_text(encoding='utf-8'))
-    record.update(verdict='approve', comment='', supersedes=[rejection.stem])
+    record.update(verdict='approve', comment='', created='2999-01-01T00:00:00Z')
     forged = rejection.parent / f"{bb.review_compute_id(record)}.json"
     forged.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
@@ -1604,6 +1656,7 @@ def test_review_is_superseded_only_by_a_signed_review_of_its_key(mock_bb_dir, mo
     assert ('alice', 'reject', 'trusted') in current
     assert ('alice', 'approve', 'invalid') in current
     assert ('eve', 'approve', 'untrusted') in current
+    assert [r['verdict'] for r in bb.review_list_shared(func) if r['current']] == ['reject']
     assert bb.review_approvals([func]) == set()
 
 
@@ -2230,7 +2283,7 @@ def test_an_altered_mapping_is_not_shown_reviewed_or_compiled(mock_bb_dir, monke
 
 
 @needs_ssh_keygen
-def test_a_trusted_peer_cannot_supersede_another_peers_rejection(mock_bb_dir, monkeypatch, tmp_path):
+def test_a_trusted_peer_cannot_speak_for_another_peers_key(mock_bb_dir, monkeypatch, tmp_path):
     """A review is verified against the key it names: a peer's signature on a record naming another's key is invalid"""
     func = _pool_add("def one():\n    return 1\n")
     alice_key = _become(monkeypatch, tmp_path, 'alice')
@@ -2239,7 +2292,7 @@ def test_a_trusted_peer_cannot_supersede_another_peers_rejection(mock_bb_dir, mo
     # Eve, trusted too, files an approval in Alice's directory, naming Alice's key, signed with her own
     eve_key = _become(monkeypatch, tmp_path, 'eve')
     record = json.loads(rejection.read_text(encoding='utf-8'))
-    record.update(verdict='approve', ack=sorted(bb.REVIEW_ACKS), comment='', supersedes=[rejection.stem],
+    record.update(verdict='approve', ack=sorted(bb.REVIEW_ACKS), comment='', created='2999-01-01T00:00:00Z',
                   reviewer={'name': 'eve', 'email': 'eve@example.org'})
     forged = rejection.parent / f"{bb.review_compute_id(record)}.json"
     forged.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
@@ -2255,7 +2308,7 @@ def test_a_trusted_peer_cannot_supersede_another_peers_rejection(mock_bb_dir, mo
 
     # Nor can she borrow Alice's email with her own key: the pair is not in Bob's list
     record.update(public_key=' '.join(Path(str(eve_key) + '.pub').read_text().split()[:2]),
-                  reviewer={'name': 'alice', 'email': 'alice@example.org'}, supersedes=[])
+                  reviewer={'name': 'alice', 'email': 'alice@example.org'})
     hers = rejection.parent.parent / bb.helper_key_id(record['public_key']) / f"{bb.review_compute_id(record)}.json"
     hers.parent.mkdir()
     hers.write_text(json.dumps(record, sort_keys=True, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')

@@ -74,7 +74,7 @@ verdict is on the logic, whatever the language, but what she saw was one
 mapping of it.
 
 ```bash
-$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -3 | awk '{print $1, $2, $3}'
+$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -3 | awk 'NR==1 {print $2, $3, $4} NR>1 {print $1, $2, $3}'
 untrusted approve Alice
 acknowledged: correctness, readability,
 read as show_double@eng
@@ -105,7 +105,7 @@ Trusted peers: 1
 
 ### Step 6: Alice's review now counts for Bob
 ```bash
-$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -3 | head -1 | awk '{print $1, $2, $3}'
+$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -3 | head -1 | awk '{print $2, $3, $4}'
 trusted approve Alice
 $ env BB_STATE_DIRECTORY=bob bb run show_double@eng 3
 6
@@ -128,7 +128,7 @@ matches, so the review stops counting.
 ### Step 7: Change one word of the signed review
 ```bash
 $ sed -i 's/Read it/Never read it/' $BB_DIRECTORY/review/*/*/*/*.json
-$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -3 | head -1 | awk '{print $1, $2, $3}'
+$ env BB_STATE_DIRECTORY=bob bb reviews show_double@eng | tail -3 | head -1 | awk '{print $2, $3, $4}'
 invalid approve Alice
 $ (env BB_STATE_DIRECTORY=bob bb run show_double@eng 3 2>&1 || true) | head -1
 Error: Refusing to run code you have not reviewed (1 function(s) to approve).
@@ -142,8 +142,7 @@ Error: Refusing to run code you have not reviewed (1 function(s) to approve).
 |---------|---------|
 | `bb whoami signing-key PATH` | Sign your reviews with this SSH key (PATH.pub next to it) |
 | `bb review X -m COMMENT` | Answer for security, correctness and readability: yes to all approves, a no rejects (`r`) or skips (`s`); with a key, publishes a signed review naming what was acknowledged |
-| `bb reviews X` | Who reviewed X: trusted, untrusted or invalid |
-| `bb reviews X --all` | Also the reviews their reviewer replaced since (superseded) |
+| `bb reviews X` | Every review of X, newest first: `current` (the latest of a trusted key, which counts), `earlier` (a trusted key's older one), or `hint` (untrusted or invalid, never counts) |
 | `bb trust publish` | Add yourself to the shared list of peers |
 | `bb trust import` | Copy peers from the shared list into yours, one by one |
 | `bb trust add/remove/list` | Manage your trusted peers directly |
@@ -156,7 +155,7 @@ Error: Refusing to run code you have not reviewed (1 function(s) to approve).
 
 3. **What you save is signed too**: with a signing key, each function, mapping, lineage step and worklog you save is signed. It says who vouches for a version; it never decides what may run, which stays with reviews.
 
-4. **A review is written once**: changing your mind writes another signed review that supersedes yours; the earlier one stays in `review/`, and only a signed review of the same key can retire it.
+4. **A review is written once and names no other**: changing your mind writes another signed review and the earlier one stays in `review/`. Which one counts is read, not recorded: the latest of each trusted key. A review by a key you do not trust is a hint, listed and never counted.
 
 5. **An approval is three answers**: security, correctness and readability are asked one by one and recorded in the review (`ack`); a peer's approval that does not name all three does not count.
-6. **Rejections count too**: a trusted peer's rejection cancels trusted approvals of that hash. Your own verdict always wins.
+6. **Rejections count too**: while a trusted peer's latest verdict is a rejection, it cancels trusted approvals of that hash. Your own verdict always wins.

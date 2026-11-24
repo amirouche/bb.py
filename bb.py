@@ -1834,9 +1834,11 @@ def review_save_state(reviewed: set):
 # OpenSSH allowed_signers format: "email key-type base64 [comment]".
 #
 # Reviews are written once, like the pool: a review's id is the hash of its
-# record, and changing your mind writes another review whose 'supersedes'
-# lists the ones it replaces. A reviewer's current reviews are those none of
-# their validly signed reviews supersedes.
+# record, and no review names another. Changing your mind writes another
+# review; which one counts is read, not recorded: of the trusted reviews of
+# one key on a function, the latest 'created' is that key's verdict (a tie
+# goes to a rejection). Reviews by keys you do not trust are hints: they
+# are listed and never count.
 
 REVIEW_SIGNATURE_NAMESPACE = 'bb-review'
 # A signature is made for one purpose: one on a lineage step cannot pass for a review
@@ -2219,14 +2221,36 @@ def review_compute_id(record: Dict[str, Any]) -> str:
     return hash_compute(json.dumps(record, sort_keys=True, ensure_ascii=False))
 
 
+def review_next_created(latest: Optional[Dict[str, Any]]) -> str:
+    """
+    The 'created' of a review you write now: after your latest review of the function.
+
+    The latest review of a key counts and 'created' has a resolution of one
+    second, so a verdict given within the second of the one before it would
+    tie with it, and a tie goes to a rejection: an approval after a
+    rejection would not count. The new review is dated one second after
+    your latest when the clock does not say so.
+    """
+    from datetime import datetime, timedelta
+    created = code_create_metadata()['created']
+    try:
+        previous = datetime.strptime(str(latest['created']), '%Y-%m-%dT%H:%M:%SZ') if latest else None
+    except ValueError:
+        previous = None
+    if previous is not None and created <= previous.strftime('%Y-%m-%dT%H:%M:%SZ'):
+        created = (previous + timedelta(seconds=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return created
+
+
 def review_publish(func_hash: str, verdict: str, comment: str = "", lang: str = None,
                    mapping_hash: str = None, ack: Iterable[str] = ()) -> Optional[Path]:
     """
     Write a signed review of a function into $BB_DIRECTORY/review/.
 
-    Reviews are never rewritten: a new verdict is another review, which
-    supersedes the current ones of yours. Giving the verdict and comment
-    your current review already holds, of the same mapping, writes nothing.
+    Reviews are never rewritten and name no other review: a new verdict is
+    another review, and the latest of your key is the one that counts
+    (review_pick_current). Giving the verdict, comment, mapping and
+    acknowledgements your current review already holds writes nothing.
 
     Args:
         lang, mapping_hash: What was read: the function is its logic, but
@@ -2256,10 +2280,11 @@ def review_publish(func_hash: str, verdict: str, comment: str = "", lang: str = 
     review_dir = storage_get_review_directory() / func_hash[:2] / func_hash[2:] / key_id
     mine = [r for r in review_list_shared(func_hash)
             if r['status'] != 'invalid' and helper_key_id(r['public_key']) == key_id]
-    if (len(mine) == 1 and mine[0]['verdict'] == verdict and mine[0].get('comment', '') == comment
-            and (mine[0].get('lang'), mine[0].get('mapping')) == (lang, mapping_hash)
-            and mine[0].get('ack', []) == ack):
-        return review_dir / f"{mine[0]['id']}.json"
+    latest = max(mine, key=review_order_key) if mine else None
+    if (latest is not None and latest['verdict'] == verdict and latest.get('comment', '') == comment
+            and (latest.get('lang'), latest.get('mapping')) == (lang, mapping_hash)
+            and latest.get('ack', []) == ack):
+        return review_dir / f"{latest['id']}.json"
 
     user = storage_read_config()['user']
     record = {
@@ -2269,9 +2294,8 @@ def review_publish(func_hash: str, verdict: str, comment: str = "", lang: str = 
         'ack': ack,
         'reviewer': {'name': user.get('name', ''), 'email': email},
         'public_key': public_key,
-        'created': code_create_metadata()['created'],
+        'created': review_next_created(latest),
         'comment': comment,
-        'supersedes': sorted(r['id'] for r in mine),
     }
     if lang and mapping_hash:
         record.update(lang=lang, mapping=mapping_hash)
@@ -2295,26 +2319,54 @@ def review_acks(record: Dict[str, Any]) -> Optional[List[str]]:
     return ack
 
 
-def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, Any]]:
+def review_order_key(record: Dict[str, Any]) -> tuple:
+    """
+    How a key's reviews of one function are ordered: the greatest counts.
+
+    The latest 'created' (what the author says; bb anchor attests it), a
+    rejection before an approval of the same instant, then the id, so that
+    the order is total and every reader agrees.
+    """
+    return (str(record.get('created', '')), record.get('verdict') == 'reject', record['id'])
+
+
+def review_pick_current(reviews: List[Dict[str, Any]]) -> Set[str]:
+    """
+    The ids of the reviews that count: the latest trusted review of each key.
+
+    Only trusted reviews count. A review by a key you do not trust, or an
+    invalid one, is a hint: it never counts and never hides another.
+    No review names another, so nothing retires a review but a later
+    review of its own key (review_order_key).
+    """
+    latest: Dict[str, Dict[str, Any]] = {}
+    for record in reviews:
+        if record['status'] != 'trusted':
+            continue
+        key_id = helper_key_id(record['public_key'])
+        if key_id not in latest or review_order_key(record) > review_order_key(latest[key_id]):
+            latest[key_id] = record
+    return {record['id'] for record in latest.values()}
+
+
+def review_list_shared(func_hash: str) -> List[Dict[str, Any]]:
     """
     The shared reviews of a function, with their signature status.
 
-    Each entry is the review record plus 'id', 'superseded' and 'status':
-    'trusted' (valid signature by your key or a key in your private list), 'untrusted'
-    (valid signature by a key you do not trust) or 'invalid' (bad, missing,
-    altered or misplaced). The signature is checked against the email and
-    key the review names, and trust is that pair being in your list: a
-    peer cannot sign a review naming another's key. Only a validly signed
-    review supersedes, and only reviews of its own key.
-
-    Args:
-        every: Also return the superseded reviews (default: current ones only)
+    Each entry is the review record plus 'id', 'status' and 'current'.
+    'status' is 'trusted' (valid signature by your key or a key in your
+    private list), 'untrusted' (valid signature by a key you do not trust)
+    or 'invalid' (bad, missing, altered or misplaced). The signature is
+    checked against the email and key the review names, and trust is that
+    pair being in your list: a peer cannot sign a review naming another's
+    key. 'current' says the review counts: the latest trusted review of
+    its key (review_pick_current). A 'supersedes' field written by an
+    earlier version is ignored.
     """
     review_dir = storage_get_review_directory() / func_hash[:2] / func_hash[2:]
     if not review_dir.exists():
         return []
     reviews = []
-    superseded = set()
     for path in sorted(review_dir.glob('*/*.json')):
         try:
             record = json.loads(path.read_text(encoding='utf-8'))
@@ -2337,7 +2389,6 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
         # The signed content must be about this function, under its own key and id
         placed_right = (record.get('function') == func_hash and record.get('verdict') in REVIEW_VERDICTS
                         and well_formed
-                        and isinstance(record.get('supersedes', []), list)
                         and review_acks(record) is not None
                         and key_id == helper_key_id(record['public_key'])
                         and path.stem == review_compute_id(record))
@@ -2346,17 +2397,16 @@ def review_list_shared(func_hash: str, every: bool = False) -> List[Dict[str, An
         # (signature_status, the rules of every signed record). Checking against
         # your whole list would accept any trusted peer's signature on a record
         # naming someone else's key, filed in their directory, where it would
-        # supersede their reviews (a rejection, say).
+        # count as that key's verdict.
         status = 'invalid'
         if placed_right:
             status = signature_status(path, REVIEW_SIGNATURE_NAMESPACE, record['public_key'], email)[0]
-        if status != 'invalid':
-            superseded.update((key_id, old) for old in record.get('supersedes', []) if isinstance(old, str))
         record.update(id=path.stem, status=status)
-        reviews.append((key_id, record))
-    for key_id, record in reviews:
-        record['superseded'] = (key_id, record['id']) in superseded
-    return [record for _, record in reviews if every or not record['superseded']]
+        reviews.append(record)
+    current = review_pick_current(reviews)
+    for record in reviews:
+        record['current'] = record['id'] in current
+    return reviews
 
 
 def review_authored_path() -> Path:
@@ -2399,8 +2449,9 @@ def review_approvals(hashes: List[str]) -> Set[str]:
     Approved means: you approved it yourself (here, or in a review signed
     with your key), or a peer you trust approved it in a signed review
     acknowledging every aspect (REVIEW_ACKS: security, correctness,
-    readability), and no trusted review rejects it. Your own rejection
-    here always wins.
+    readability), and no trusted key's current verdict rejects it (a
+    key's current verdict is its latest review, review_pick_current).
+    Your own rejection here always wins.
     """
     private = review_load_state()
     rejected = review_load_rejections()
@@ -2412,7 +2463,7 @@ def review_approvals(hashes: List[str]) -> Set[str]:
             approved.add(func_hash)
             continue
         # An approval that does not acknowledge every aspect says too little to run on
-        verdicts = {r['verdict'] for r in review_list_shared(func_hash) if r['status'] == 'trusted'
+        verdicts = {r['verdict'] for r in review_list_shared(func_hash) if r['current']
                     and (r['verdict'] != 'approve' or set(review_acks(r) or []) >= set(REVIEW_ACKS))}
         if 'approve' in verdicts and 'reject' not in verdicts:
             approved.add(func_hash)
@@ -2435,15 +2486,16 @@ def review_save_rejections(rejected: Set[str]):
     path.write_text(json.dumps({'rejected': sorted(rejected)}, indent=2), encoding='utf-8')
 
 
-def command_reviews(identifier: str, as_json: bool = False, every: bool = False):
+def command_reviews(identifier: str, as_json: bool = False):
     """
     Show who reviewed a function: each shared review and its signature.
 
     trusted: signed by you or by a peer in your private list; untrusted: validly
     signed by someone you do not trust (yet); invalid: forged, altered or
-    misplaced. Only trusted reviews count, and only current ones: with
-    every, the reviews a reviewer replaced since are listed too, marked
-    'superseded'. Under a review, 'read as NAME@lang' says under which
+    misplaced. Every review is listed, newest first. Only trusted reviews
+    count, and of a key's reviews only its latest: that one is marked
+    'current', the ones before it 'earlier', and untrusted or invalid ones
+    'hint', which never count. Under a review, 'read as NAME@lang' says under which
     names and documentation its reviewer read the function; the verdict is
     on the function, whatever the mapping.
     'acknowledged:' lists the aspects
@@ -2453,7 +2505,7 @@ def command_reviews(identifier: str, as_json: bool = False, every: bool = False)
     func_hash = helper_resolve_to_hash(identifier)
     yours = ("approved" if func_hash in review_load_state() else
              "rejected" if func_hash in review_load_rejections() else "not reviewed")
-    reviews = review_list_shared(func_hash, every)
+    reviews = sorted(review_list_shared(func_hash), key=review_order_key, reverse=True)
     if as_json:
         print(json.dumps({'function': func_hash, 'you': yours, 'reviews': reviews}, indent=2, ensure_ascii=False))
         return
@@ -2464,8 +2516,8 @@ def command_reviews(identifier: str, as_json: bool = False, every: bool = False)
         return
     for record in reviews:
         reviewer = record.get('reviewer', {})
-        line = (("superseded  " if record['superseded'] else "") +
-                f"{record['status']}  {record.get('verdict', '?')}  "
+        mark = 'current' if record['current'] else ('earlier' if record['status'] == 'trusted' else 'hint')
+        line = (f"{mark:<8}  {record['status']}  {record.get('verdict', '?')}  "
                 f"{reviewer.get('name', '')} <{reviewer.get('email', '')}>  {record.get('created', '')}")
         print(line + (f"  {record['comment']}" if record.get('comment') else ""))
         if record.get('verdict') == 'approve' or review_acks(record):
@@ -2781,7 +2833,7 @@ def command_review(identifier: str, comment: str = ""):
             print(f"Shared reviews: {len(shared)}")
             for record in shared:
                 reviewer = record.get('reviewer', {})
-                print(f"  - {record['status']} {record.get('verdict')} by "
+                print(f"  - {record['status']} {record.get('verdict')}{'' if record['current'] else ' (not counted)'} by "
                       f"{reviewer.get('name', '')} <{reviewer.get('email', '')}>")
         print()
 
@@ -10616,8 +10668,6 @@ def _build_parser():
     reviews_parser = subparsers.add_parser('reviews', help='Show who reviewed a function, with signature status')
     reviews_parser.add_argument('identifier', help='Hash or name, with optional @lang')
     reviews_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
-    reviews_parser.add_argument('--all', dest='every', action='store_true',
-                                help='Also list the reviews their reviewer replaced since (superseded)')
 
     # Trust command with subcommands
     trust_parser = subparsers.add_parser('trust', help='Manage the peers whose signed reviews you trust')
@@ -10784,7 +10834,7 @@ def main_dispatch():
         command_anchor(args.identifier, upgrade=args.upgrade, verify=args.verify, status=args.status,
                        snapshots=args.snapshots)
     elif args.command == 'reviews':
-        command_reviews(args.identifier, as_json=args.as_json, every=args.every)
+        command_reviews(args.identifier, as_json=args.as_json)
     elif args.command == 'trust':
         if args.trust_command == 'add':
             command_trust_add(args.email, args.key)
