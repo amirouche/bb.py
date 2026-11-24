@@ -1389,6 +1389,39 @@ def test_signed_review_names_the_mapping_read(mock_bb_dir, monkeypatch, tmp_path
 
 
 @needs_ssh_keygen
+def test_review_refuses_to_approve_code_that_does_not_match_its_hash(mock_bb_dir, monkeypatch, tmp_path, capsys):
+    """bb review must bind to the hash it approves: the reviewed bytes are the ones the hash names.
+
+    A git-shared object.json can show benign code under a hash while the real,
+    hash-matching body runs later (bb run recomputes the hash). If review
+    displayed the swapped bytes and let them be approved, the reviewer would
+    sign off on code they never saw. Review refuses the mismatch instead.
+    """
+    func = _pool_add("def double(x):\n    return x * 2\n")
+    path = bb.storage_object_path(func)
+    data = json.loads(path.read_text(encoding='utf-8'))
+    data['normalized_code'] = normalize_code_for_test("def _bb_v_0(_bb_v_1):\n    return 'benign'")
+    data.pop('public_key', None)
+    path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+    bb.storage_cache_clear()
+    assert not bb.object_hash_matches(func, bb.object_load(func))
+
+    _become(monkeypatch, tmp_path, 'alice')
+    monkeypatch.setattr('builtins.input', lambda *_: 'y')  # a reviewer trying to approve
+    monkeypatch.setattr(sys.stdin, 'isatty', lambda: True, raising=False)
+    with pytest.raises(SystemExit) as exit_info:
+        bb.command_review(func, 'looks fine')
+    assert exit_info.value.code == 1
+
+    captured = capsys.readouterr()
+    assert "does not match its stored code" in captured.err
+    assert "benign" not in captured.out  # the swapped body was never shown
+    # Nothing was approved, privately or as a shared review
+    assert bb.review_load_state() == set()
+    assert bb.review_list_shared(func) == []
+
+
+@needs_ssh_keygen
 def test_signed_review_cannot_be_moved_to_another_function(mock_bb_dir, monkeypatch, tmp_path):
     """Copying a valid review under another hash does not approve that hash"""
     good = _pool_add("def one():\n    return 1\n")

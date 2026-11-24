@@ -2532,6 +2532,17 @@ def command_review(identifier: str, comment: str = ""):
     print()
 
     for i, current_hash in enumerate(to_review):
+        # Approve the code the hash names, not whatever bytes sit under it: a
+        # git-shared object.json can be swapped under a hash (object_hash_matches,
+        # the guard bb run and bb validate already apply). Without this check a
+        # reviewer would read, and sign off on, code that is not the code the
+        # approved hash names, while the real body runs later.
+        if not object_hash_matches(current_hash, object_load(current_hash)):
+            print(f"Error: {current_hash[:12]}... does not match its stored code "
+                  f"(the object was altered); refusing to show or approve it.", file=sys.stderr)
+            print()
+            failed = True
+            continue
         rendered = review_render(current_hash, preferred_langs)
         if rendered is None:
             print(f"Warning: {current_hash} has no language mapping to show; skipped.", file=sys.stderr)
