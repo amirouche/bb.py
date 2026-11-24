@@ -3,7 +3,6 @@
 <!-- Format: bullet list with topic, type names, intended feature - one sentence max -->
 <!-- Remove implemented entries in atomic commits (separate from feature commits) -->
 
-- `update`, `refactor`: hash exactly the stored `normalized_code` so a body with two leading strings does not save a version `object_hash_matches` refuses
 - `object_hash_matches`: return False unless `checks` is absent or a list of strings, so a tampered object is reported instead of crashing `bb validate`
 - `code_denormalize`: reject mapping names and aliases that are not non-keyword identifiers, which can inject code through `bb compile --debug` and forge `bb show`
 - `update_check_rewritten`: require `base` and its closure to be approved or authored before `bb update` runs its checks
