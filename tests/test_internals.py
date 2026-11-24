@@ -1228,6 +1228,23 @@ def test_running_refuses_tampered_checks_under_an_approved_hash(mock_bb_dir):
         bb.code_load_normalized(func)
 
 
+@pytest.mark.parametrize('checks', ['a' * 64, [['a' * 64]], [{}], {'a' * 64: 1}, [1], 7, False])
+def test_checks_that_are_not_a_list_of_strings_are_a_mismatch_not_a_crash(mock_bb_dir, checks):
+    """A tampered 'checks' (a string, nested lists, numbers) is reported like any altered object"""
+    func = _pool_add("def one():\n    return 1\n")
+    path = bb.storage_object_path(func)
+    data = json.loads(path.read_text(encoding='utf-8'))
+    data['checks'] = checks
+    path.write_text(json.dumps(data, indent=2), encoding='utf-8')
+    bb.storage_cache_clear()
+
+    assert not bb.object_hash_matches(func, bb.object_load(func))
+    is_valid, errors = bb.schema_validate(func)
+    assert not is_valid and errors
+    with pytest.raises(ValueError):
+        bb.code_load_normalized(func)
+
+
 def _swap_body(func_hash, body="def _bb_v_0(_bb_v_1):\n    return 'swapped'"):
     """Rewrite a stored object's code in place so it no longer hashes to its name."""
     path = bb.storage_object_path(func_hash)

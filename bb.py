@@ -831,12 +831,19 @@ def object_hash_matches(func_hash: str, data: Dict[str, Any]) -> bool:
 
     Returns:
         True when recomputing the hash from the stored code and checks
-        gives func_hash
+        gives func_hash (False as well when the code is not a
+        string, or the checks are neither absent nor a list of strings)
     """
     code = data.get('normalized_code')
     if not isinstance(code, str):
         return False
-    return code_compute_function_hash(code, data.get('checks')) == func_hash
+    # Checks are absent or a list of hashes: anything else was not written by bb,
+    # and must be reported as a mismatch, not crash the hash (an unhashable entry)
+    # or pass for the list it spells (a string is an iterable of strings too)
+    checks = data.get('checks')
+    if checks is not None and not (isinstance(checks, list) and all(isinstance(c, str) for c in checks)):
+        return False
+    return code_compute_function_hash(code, checks) == func_hash
 
 
 def object_check_hash(func_hash: str):
