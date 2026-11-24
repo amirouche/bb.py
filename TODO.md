@@ -3,7 +3,6 @@
 <!-- Format: bullet list with topic, type names, intended feature - one sentence max -->
 <!-- Remove implemented entries in atomic commits (separate from feature commits) -->
 
-- `add`: support adding a module with several definitions
 - `search`: tell namesakes apart by running one against the other's checks (interchangeable, covers, incompatible)
 - `update`, `refactor`: hash exactly the stored `normalized_code` so a body with two leading strings does not save a version `object_hash_matches` refuses
 - `object_hash_matches`: return False unless `checks` is absent or a list of strings, so a tampered object is reported instead of crashing `bb validate`
