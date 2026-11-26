@@ -8,11 +8,6 @@ def echo(args):
     print(args)
 '''
 
-SUM_CODE = '''def add(a, b):
-    """Add two numbers."""
-    return a + b
-'''
-
 
 def test_show_with_0x_hash_prefix_lists_languages(tmp_path):
     pool = Pool(tmp_path)
@@ -87,6 +82,24 @@ def test_show_unknown_0x_hash_prefix_error(tmp_path):
     assert 'Error: No function matches hash prefix: 0xdeadbeef1234' in show_res.stderr
 
 
+def test_show_empty_0x_prefix_error(tmp_path):
+    pool = Pool(tmp_path)
+    pool.add('echo', ECHO_CODE)
+
+    show_res = pool.bb('show', '0x')
+    assert show_res.returncode != 0
+    assert 'Error: Empty hash prefix: 0x' in show_res.stderr
+
+
+def test_show_prefix_too_short_error(tmp_path):
+    pool = Pool(tmp_path)
+    pool.add('echo', ECHO_CODE)
+
+    show_res = pool.bb('show', '0x123')
+    assert show_res.returncode != 0
+    assert 'Error: Hash prefix too short: 0x123 (minimum 6 hex characters)' in show_res.stderr
+
+
 def test_show_invalid_hex_error(tmp_path):
     pool = Pool(tmp_path)
     pool.add('echo', ECHO_CODE)
@@ -96,13 +109,52 @@ def test_show_invalid_hex_error(tmp_path):
     assert 'Error: Invalid hex characters in hash: 0xxyz123' in show_res.stderr
 
 
-def test_helper_resolve_hash_prefix_ambiguous(monkeypatch):
-    import bb
-    import pytest
+def test_show_ambiguous_prefix_cli(tmp_path):
+    pool = Pool(tmp_path)
+    pool.add('echo', ECHO_CODE)
 
-    # Mock storage_list_functions to return two hashes starting with 'abcd'
-    monkeypatch.setattr(bb, 'storage_list_functions', lambda: {'abcd1111' + '0' * 56, 'abcd2222' + '0' * 56})
+    # Manually seed two functions sharing the prefix 'abcdef' in the pool
+    h1 = 'abcdef' + '1' * 58
+    h2 = 'abcdef' + '2' * 58
+    func_dir1 = tmp_path / 'bb' / 'pool' / 'functions' / h1[:2] / h1[2:]
+    func_dir2 = tmp_path / 'bb' / 'pool' / 'functions' / h2[:2] / h2[2:]
+    func_dir1.mkdir(parents=True, exist_ok=True)
+    func_dir2.mkdir(parents=True, exist_ok=True)
+    (func_dir1 / 'object.json').write_text('{}', encoding='utf-8')
+    (func_dir2 / 'object.json').write_text('{}', encoding='utf-8')
 
-    with pytest.raises(SystemExit):
-        bb.helper_resolve_hash_prefix('0xabcd')
+    show_res = pool.bb('show', '0xabcdef')
+    assert show_res.returncode != 0
+    assert 'Error: Several functions match hash prefix: 0xabcdef' in show_res.stderr
+    assert f'0x{h1}' in show_res.stderr
+    assert f'0x{h2}' in show_res.stderr
 
+
+def test_log_with_0x_hash_prefix(tmp_path):
+    pool = Pool(tmp_path)
+    res = pool.add('echo', ECHO_CODE)
+    assert res.returncode == 0, res.stderr
+    full_hash = hash_of(res)
+
+    prefix = full_hash[:12]
+    log_res = pool.bb('log', f'0x{prefix}')
+    assert log_res.returncode == 0, log_res.stderr
+    assert f'Hash: {full_hash}' in log_res.stdout
+
+
+def test_show_triple_at_with_mapping_prefix(tmp_path):
+    import json
+    pool = Pool(tmp_path)
+    res = pool.add('echo', ECHO_CODE)
+    assert res.returncode == 0, res.stderr
+    full_hash = hash_of(res)
+
+    mappings_dir = tmp_path / 'bb' / 'pool' / 'mappings' / full_hash[:2] / full_hash[2:] / 'eng'
+    mapping_files = list(mappings_dir.glob('*.json'))
+    assert len(mapping_files) >= 1
+    mapping_hash = mapping_files[0].stem
+
+    # Test with 8-character prefix of mapping hash
+    show_res = pool.bb('show', f'0x{full_hash[:12]}@eng@{mapping_hash[:8]}')
+    assert show_res.returncode == 0, show_res.stderr
+    assert 'def echo(args):' in show_res.stdout

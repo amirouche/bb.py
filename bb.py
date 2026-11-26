@@ -313,6 +313,16 @@ BB_IMPORT_PREFIX = "object_"
 NORMALIZATION_VERSION = 4
 
 _HASH_RE = re.compile(r'^[0-9a-f]{64}$')
+_HASH_PREFIX_RE = re.compile(r'^[0-9a-f]{6,64}$')
+
+
+def helper_is_hash(s: str) -> bool:
+    """True if s is a 64-char hex hash or a 0x-prefixed hash/prefix (6 to 64 hex chars)."""
+    if s.startswith(('0x', '0X')):
+        return bool(_HASH_PREFIX_RE.fullmatch(s[2:].lower()))
+    return bool(_HASH_RE.fullmatch(s.lower()))
+
+
 BB_POOL_IMPORT_HINT = ("`from bb.pool import ...` is gone: write `import bb`, then "
                        "`NAME = bb.resolve(\"NAME\")` (by name) or `NAME = bb.ref(\"<hash>\")` (an exact version)")
 # Calls naming a pool function by name, resolved when saving: bb.resolve,
@@ -3388,6 +3398,8 @@ def command_log(identifier: str = None):
     keep_steps = keep_functions = None
     if identifier:
         name, _, lang = identifier.partition('@')
+        if name.startswith(('0x', '0X')):
+            name = helper_resolve_hash_prefix(name)
         if re.fullmatch(r'[0-9a-f]{64}', name):
             keep_steps = {i for i, r in steps.items() if r['function'] == name}
             keep_functions = {name}
@@ -4720,7 +4732,7 @@ def search_uses_under_name(caller: Dict[str, Any], dep_hash: str, identifier: st
     language, matches every caller.
     """
     name, _, lang = identifier.partition('@')
-    if not lang or re.fullmatch(r'[0-9a-f]{64}', name):
+    if not lang or helper_is_hash(name):
         return True
     aliases = [m.get('alias_mapping', {}).get(dep_hash) for m in caller['all_mappings'].get(lang, [])]
     aliases = [alias for alias in aliases if alias]
@@ -7422,7 +7434,7 @@ def code_show(identifier: str):
     # Special case: triple-@ format is always hash@lang@mapping
     parts = identifier.split('@')
     if len(parts) == 3:
-        raw_hash, lang, mapping_hash = parts
+        raw_hash, lang, raw_mapping = parts
         if raw_hash.startswith(('0x', '0X')):
             hash_value = helper_resolve_hash_prefix(raw_hash)
         else:
@@ -7435,6 +7447,23 @@ def code_show(identifier: str):
             if version is None:
                 print(f"Error: Function not found: {hash_value}", file=sys.stderr)
                 sys.exit(1)
+
+        m_raw = raw_mapping[2:] if raw_mapping.startswith(('0x', '0X')) else raw_mapping
+        m_lower = m_raw.lower()
+        available_mappings = [m[0] for m in mappings_list(hash_value, lang)]
+        if len(m_lower) == 64:
+            mapping_hash = m_lower
+        else:
+            matches = [m for m in available_mappings if m.startswith(m_lower)]
+            if len(matches) == 1:
+                mapping_hash = matches[0]
+            elif len(matches) > 1:
+                print(f"Error: Several mappings match prefix: {raw_mapping}", file=sys.stderr)
+                for m in matches:
+                    print(f"  {m}", file=sys.stderr)
+                sys.exit(1)
+            else:
+                mapping_hash = m_lower
     else:
         # Use unified identifier parsing (hash, hash@lang, name, name@lang)
         mapping_hash = None
@@ -7836,13 +7865,22 @@ def helper_resolve_hash_prefix(prefix: str) -> str:
     """
     Resolve a full hash or unambiguous hash prefix to a 64-char function hash.
 
-    Prefix may start with '0x' or '0X'.
+    Prefix may start with '0x' or '0X'. Requires at least 6 hex characters.
     Exits with error if no function or several functions match.
     """
     raw = prefix[2:] if prefix.startswith(('0x', '0X')) else prefix
     raw_lower = raw.lower()
-    if not raw_lower or not all(c in '0123456789abcdef' for c in raw_lower):
+    if not raw_lower:
+        print(f"Error: Empty hash prefix: {prefix}", file=sys.stderr)
+        sys.exit(1)
+    if not all(c in '0123456789abcdef' for c in raw_lower):
         print(f"Error: Invalid hex characters in hash: {prefix}", file=sys.stderr)
+        sys.exit(1)
+    if len(raw_lower) < 6:
+        print(f"Error: Hash prefix too short: {prefix} (minimum 6 hex characters)", file=sys.stderr)
+        sys.exit(1)
+    if len(raw_lower) > 64:
+        print(f"Error: Hash too long: {prefix}", file=sys.stderr)
         sys.exit(1)
 
     if len(raw_lower) == 64:
@@ -7851,10 +7889,6 @@ def helper_resolve_hash_prefix(prefix: str) -> str:
             print(f"Error: Function not found: {prefix}", file=sys.stderr)
             sys.exit(1)
         return raw_lower
-
-    if len(raw_lower) > 64:
-        print(f"Error: Hash too long: {prefix}", file=sys.stderr)
-        sys.exit(1)
 
     # Prefix lookup against functions in pool
     matches = sorted(h for h in storage_list_functions() if h.startswith(raw_lower))
@@ -7917,9 +7951,7 @@ def helper_resolve_to_hash(identifier: str) -> str:
 def helper_identifier_name(identifier: str) -> Optional[str]:
     """The name in an identifier (name or name@lang), None for a hash."""
     part = identifier.split('@')[0]
-    if part.startswith(('0x', '0X')):
-        return None
-    if len(part) == 64 and all(c in '0123456789abcdef' for c in part.lower()):
+    if helper_is_hash(part):
         return None
     return part or None
 
@@ -8739,7 +8771,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         refused}, 'stale': why the draft is stale or None}; else None
     """
     name, _, requested_lang = identifier.partition('@')
-    is_hash = (name.startswith(('0x', '0X')) and all(c in '0123456789abcdef' for c in name[2:].lower())) or (len(name) == 64 and all(c in '0123456789abcdef' for c in name.lower()))
+    is_hash = helper_is_hash(name)
     if not is_hash and name.isidentifier() and not helper_find_heads_by_name(name)[0]:
         if not requested_lang:
             print(f"Error: '{name}' is a new function: give its language, e.g. bb edit {name}@eng",
@@ -9657,10 +9689,15 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
         comment: Comment for every new mapping (asked for when None)
     """
     # Validate hash formats
+    resolved_hashes = []
     for name, h in [('what', what_hash), ('from', from_hash), ('to', to_hash)]:
-        if len(h) != 64 or not all(c in '0123456789abcdef' for c in h.lower()):
+        if h.startswith(('0x', '0X')):
+            h = helper_resolve_hash_prefix(h)
+        elif len(h) != 64 or not all(c in '0123456789abcdef' for c in h.lower()):
             print(f"Error: Invalid {name} hash format. Expected 64 hex characters. Got: {h}", file=sys.stderr)
             sys.exit(1)
+        resolved_hashes.append(h)
+    what_hash, from_hash, to_hash = resolved_hashes
 
     # Check if what function exists
     what_version = code_detect_schema(what_hash)
@@ -9686,8 +9723,9 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str, at_hash: str 
 
     # Surgical refactor mode: if at_hash is provided
     if at_hash is not None:
-        # Validate at_hash format
-        if len(at_hash) != 64 or not all(c in '0123456789abcdef' for c in at_hash.lower()):
+        if at_hash.startswith(('0x', '0X')):
+            at_hash = helper_resolve_hash_prefix(at_hash)
+        elif len(at_hash) != 64 or not all(c in '0123456789abcdef' for c in at_hash.lower()):
             print(f"Error: Invalid at hash format. Expected 64 hex characters. Got: {at_hash}", file=sys.stderr)
             sys.exit(1)
 
@@ -10279,7 +10317,7 @@ def command_compile(identifier: str, debug_mode: bool = False, output_path: Opti
     # If so, implicitly enable debug mode
     base_identifier = identifier.split('@')[0]
     has_lang_suffix = '@' in identifier
-    is_full_hash = (base_identifier.startswith(('0x', '0X')) and all(c in '0123456789abcdef' for c in base_identifier[2:].lower())) or (len(base_identifier) == 64 and all(c in '0123456789abcdef' for c in base_identifier.lower()))
+    is_full_hash = helper_is_hash(base_identifier)
 
     # Implicit debug mode: name@lang (not hash@lang)
     if has_lang_suffix and not is_full_hash and not debug_mode:
@@ -10584,7 +10622,7 @@ def _build_parser():
 
     # Translate command
     translate_parser = subparsers.add_parser('translate', help='Add translation for existing function')
-    translate_parser.add_argument('identifier', help='Hash or name with @lang suffix (e.g., compute_pi@eng)')
+    translate_parser.add_argument('identifier', help='Hash (0x... or 64 hex), hash prefix (0x...), or name with @lang suffix (e.g., compute_pi@eng)')
     translate_parser.add_argument('target_lang', help='Target language code (e.g., fra, spa)')
     translate_parser.add_argument('file', nargs='?', default=None,
                                   help='Translation file instead of prompts: written when missing, saved from when present')
@@ -10595,13 +10633,13 @@ def _build_parser():
 
     # Rm command
     rm_parser = subparsers.add_parser('rm', help='Remove function or language mapping')
-    rm_parser.add_argument('identifier', help='Hash or name, with optional @lang to remove only that language')
+    rm_parser.add_argument('identifier', help='Hash (0x... or 64 hex), hash prefix (0x...), or name, with optional @lang to remove only that language')
     rm_parser.add_argument('--force', action='store_true',
                            help='Remove a function even though other functions still use it')
 
     # Run command
     run_parser = subparsers.add_parser('run', help='Execute a function from the pool')
-    run_parser.add_argument('identifier', help='Hash or name, with optional @lang (e.g., compute_pi@eng)')
+    run_parser.add_argument('identifier', help='Hash (0x... or 64 hex), hash prefix (0x...), or name, with optional @lang (e.g., compute_pi@eng)')
     run_parser.add_argument('func_args', nargs='*', help='Arguments to pass to function')
 
     # Edit command
@@ -10621,7 +10659,7 @@ def _build_parser():
                                    help='Run checks even on unreviewed functions they import')
 
     edit_parser = subparsers.add_parser('edit', help='Edit a function and its checks, then save a new version')
-    edit_parser.add_argument('identifier', help='Hash or name, with optional @lang (e.g., compute_pi@eng)')
+    edit_parser.add_argument('identifier', help='Hash (0x... or 64 hex), hash prefix (0x...), or name, with optional @lang (e.g., compute_pi@eng)')
     edit_parser.add_argument('file', nargs='?', default=None,
                              help='Edit file instead of $EDITOR: written when missing, saved from when present')
     edit_parser.add_argument('--comment', '-m', default=None, help='Comment for the new version (asked when omitted)')
@@ -10643,7 +10681,7 @@ def _build_parser():
 
     # Review command
     review_parser = subparsers.add_parser('review', help='Read, run the checks of, and approve or reject functions')
-    review_parser.add_argument('identifier', help='Hash or name, with optional @lang')
+    review_parser.add_argument('identifier', help='Hash (0x... or 64 hex), hash prefix (0x...), or name, with optional @lang')
     review_parser.add_argument('--comment', '-m', default="", help='Comment stored in your signed reviews')
 
     # Reviews command
@@ -10651,7 +10689,7 @@ def _build_parser():
         'anchor', help='Anchor the records in Bitcoin with OpenTimestamps (FILE.ots proofs)',
         description="Stamp every JSON file of the pool, the worklogs and the reviews that has no proof yet. "
                     "Runs the OpenTimestamps client: ots, or the command in $BB_OTS.")
-    anchor_parser.add_argument('identifier', nargs='?', help='Only this function: hash or name, with optional @lang')
+    anchor_parser.add_argument('identifier', nargs='?', help='Only this function: hash (0x... or 64 hex), hash prefix (0x...), or name, with optional @lang')
     anchor_mode = anchor_parser.add_mutually_exclusive_group()
     anchor_mode.add_argument('--upgrade', action='store_true', help='Complete the pending proofs')
     anchor_mode.add_argument('--status', action='store_true', help='Count what is anchored, without the network')
@@ -10661,7 +10699,7 @@ def _build_parser():
                              help='List every snapshot of the pool and what each removed')
 
     reviews_parser = subparsers.add_parser('reviews', help='Show who reviewed a function, with signature status')
-    reviews_parser.add_argument('identifier', help='Hash or name, with optional @lang')
+    reviews_parser.add_argument('identifier', help='Hash (0x... or 64 hex), hash prefix (0x...), or name, with optional @lang')
     reviews_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
     reviews_parser.add_argument('--all', dest='every', action='store_true',
                                 help='Also list the reviews their reviewer replaced since (superseded)')
@@ -10734,7 +10772,7 @@ def _build_parser():
 
     # Validate command
     validate_parser = subparsers.add_parser('validate', help='Validate function or entire bb directory')
-    validate_parser.add_argument('identifier', nargs='?', help='Hash or name to validate (omit for whole directory)')
+    validate_parser.add_argument('identifier', nargs='?', help='Hash (0x... or 64 hex), hash prefix (0x...), or name to validate (omit for whole directory)')
     validate_parser.add_argument('--checks', action='store_true',
                                  help='Run the checks of functions you approved with bb review')
     validate_parser.add_argument('--dangerously-unreviewed', action='store_true',
@@ -10745,33 +10783,33 @@ def _build_parser():
 
     # Caller command
     caller_parser = subparsers.add_parser('caller', help='Find functions that depend on a given function')
-    caller_parser.add_argument('identifier', help='Hash or name, with optional @lang')
+    caller_parser.add_argument('identifier', help='Hash (0x... or 64 hex), hash prefix (0x...), or name, with optional @lang')
     caller_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
     caller_parser.add_argument('--all', dest='every', action='store_true',
                                help='Also list callers replaced by a later version, marked "not current"')
 
     # Tree command
     tree_parser = subparsers.add_parser('tree', help='Display dependency tree of a function')
-    tree_parser.add_argument('identifier', help='Hash or name, with optional @lang')
+    tree_parser.add_argument('identifier', help='Hash (0x... or 64 hex), hash prefix (0x...), or name, with optional @lang')
     tree_parser.add_argument('--json', dest='as_json', action='store_true', help='Machine-readable output')
 
     # Refactor command
     update_parser = subparsers.add_parser('update', help='Bring a function and everything it uses up to date')
-    update_parser.add_argument('identifier', help='Function to update (name@lang or hash)')
+    update_parser.add_argument('identifier', help='Function to update (name@lang, hash, or 0x prefix)')
     update_parser.add_argument('--comment', '-m', default=None, help='Comment for the new versions (asked when omitted)')
     update_parser.add_argument('--dangerously-unreviewed', action='store_true',
                                help='Run checks even on unreviewed functions they import')
 
     refactor_parser = subparsers.add_parser('refactor', help='Replace a dependency in a function')
-    refactor_parser.add_argument('what', help='Function hash to modify')
-    refactor_parser.add_argument('from_hash', metavar='from', help='Dependency hash to replace')
-    refactor_parser.add_argument('to_hash', metavar='to', help='New dependency hash')
-    refactor_parser.add_argument('at_hash', metavar='at', nargs='?', help='Optional: Limit refactor to path from AT to WHAT (surgical refactor)')
+    refactor_parser.add_argument('what', help='Function hash (0x... or 64 hex) to modify')
+    refactor_parser.add_argument('from_hash', metavar='from', help='Dependency hash (0x... or 64 hex) to replace')
+    refactor_parser.add_argument('to_hash', metavar='to', help='New dependency hash (0x... or 64 hex)')
+    refactor_parser.add_argument('at_hash', metavar='at', nargs='?', help='Optional: Limit refactor to path from AT to WHAT (0x... or 64 hex)')
     refactor_parser.add_argument('--comment', '-m', default=None, help='Comment for the new versions (asked when omitted)')
 
     # Compile command
     compile_parser = subparsers.add_parser('compile', help='Compile function to standalone Python file')
-    compile_parser.add_argument('identifier', help='Hash or name, with optional @lang. @lang required with --debug')
+    compile_parser.add_argument('identifier', help='Hash (0x... or 64 hex), hash prefix (0x...), or name, with optional @lang. @lang required with --debug')
     compile_parser.add_argument('--output', '-o', default=None,
                                 help='Output file path (default: main.py)')
     compile_parser.add_argument('--debug', action='store_true',

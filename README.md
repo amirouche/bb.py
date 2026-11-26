@@ -59,7 +59,7 @@ The project is early. Exact matching is the foundation; near-matches are still a
 bb.py is a tool for sharing content-addressed knowledge that is verifiable, maintainable, and preserves authorship and lineage.
 
 - **Think in your language** — variable names and documentation in your native tongue, without penalty
-- **Share across languages** — retrieve any function in any language with `bb show hash@lang`
+- **Share across languages** — retrieve any function in any language with `bb show hash@lang` (or `bb show 0x<prefix>@lang`)
 - **Verify identity** — same logic always produces the same hash, no matter who wrote it or in what language
 - **Preserve lineage** — every function is traceable; who made what, who built on whom
 - **Prove when** — `bb anchor` anchors every record in Bitcoin with OpenTimestamps: a date that is evidence, not a claim
