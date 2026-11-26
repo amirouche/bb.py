@@ -7422,15 +7422,19 @@ def code_show(identifier: str):
     # Special case: triple-@ format is always hash@lang@mapping
     parts = identifier.split('@')
     if len(parts) == 3:
-        hash_value, lang, mapping_hash = parts
-        # Validate hash format for triple-@ (must be a real hash)
-        if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value.lower()):
-            print(f"Error: Invalid hash format in triple-@ notation. Got: {hash_value}", file=sys.stderr)
-            sys.exit(1)
-        version = code_detect_schema(hash_value)
-        if version is None:
-            print(f"Error: Function not found: {hash_value}", file=sys.stderr)
-            sys.exit(1)
+        raw_hash, lang, mapping_hash = parts
+        if raw_hash.startswith(('0x', '0X')):
+            hash_value = helper_resolve_hash_prefix(raw_hash)
+        else:
+            hash_value = raw_hash
+            # Validate hash format for triple-@ (must be a real hash)
+            if len(hash_value) != 64 or not all(c in '0123456789abcdef' for c in hash_value.lower()):
+                print(f"Error: Invalid hash format in triple-@ notation. Got: {hash_value}", file=sys.stderr)
+                sys.exit(1)
+            version = code_detect_schema(hash_value)
+            if version is None:
+                print(f"Error: Function not found: {hash_value}", file=sys.stderr)
+                sys.exit(1)
     else:
         # Use unified identifier parsing (hash, hash@lang, name, name@lang)
         mapping_hash = None
@@ -7444,7 +7448,7 @@ def code_show(identifier: str):
                 print(f"No languages found for {hash_value}", file=sys.stderr)
                 sys.exit(1)
 
-            print(f"Available languages for {hash_value}:")
+            print(f"Available languages for 0x{hash_value}:")
             for l in languages:
                 mappings = mappings_list(hash_value, l)
                 print(f"  {l} - {len(mappings)} mapping(s)")
@@ -7828,16 +7832,54 @@ def _tree_build(func_hash: str, lang: str, visited: set, index: Dict[str, Any] =
     return node
 
 
+def helper_resolve_hash_prefix(prefix: str) -> str:
+    """
+    Resolve a full hash or unambiguous hash prefix to a 64-char function hash.
+
+    Prefix may start with '0x' or '0X'.
+    Exits with error if no function or several functions match.
+    """
+    raw = prefix[2:] if prefix.startswith(('0x', '0X')) else prefix
+    raw_lower = raw.lower()
+    if not raw_lower or not all(c in '0123456789abcdef' for c in raw_lower):
+        print(f"Error: Invalid hex characters in hash: {prefix}", file=sys.stderr)
+        sys.exit(1)
+
+    if len(raw_lower) == 64:
+        version = code_detect_schema(raw_lower)
+        if version is None:
+            print(f"Error: Function not found: {prefix}", file=sys.stderr)
+            sys.exit(1)
+        return raw_lower
+
+    if len(raw_lower) > 64:
+        print(f"Error: Hash too long: {prefix}", file=sys.stderr)
+        sys.exit(1)
+
+    # Prefix lookup against functions in pool
+    matches = sorted(h for h in storage_list_functions() if h.startswith(raw_lower))
+    if not matches:
+        print(f"Error: No function matches hash prefix: {prefix}", file=sys.stderr)
+        sys.exit(1)
+    if len(matches) > 1:
+        print(f"Error: Several functions match hash prefix: {prefix}", file=sys.stderr)
+        for m in matches:
+            print(f"  0x{m}", file=sys.stderr)
+        sys.exit(1)
+    return matches[0]
+
+
 def helper_parse_identifier(identifier: str) -> Tuple[str, Optional[str]]:
     """
     Parse a function identifier into (hash, lang).
 
-    Accepts: hash, hash@lang, name, name@lang.
+    Accepts: hash, hash@lang, name, name@lang, 0x<hash-or-prefix>, 0x<hash-or-prefix>@lang.
     Resolves names to their single current version (see helper_resolve_name).
 
     Examples:
         helper_parse_identifier("abc123...")        → ("abc123...", None)
-        helper_parse_identifier("abc123...@eng")    → ("abc123...", "eng")
+        helper_parse_identifier("0xabc123...")      → ("abc123...", None)
+        helper_parse_identifier("0xabc123...@eng")  → ("abc123...", "eng")
         helper_parse_identifier("compute_pi")       → ("abc123...", "eng")
         helper_parse_identifier("compute_pi@eng")   → ("abc123...", "eng")
     """
@@ -7847,13 +7889,16 @@ def helper_parse_identifier(identifier: str) -> Tuple[str, Optional[str]]:
         part = identifier
         lang = None
 
+    if part.startswith(('0x', '0X')):
+        return helper_resolve_hash_prefix(part), lang
+
     if len(part) == 64 and all(c in '0123456789abcdef' for c in part.lower()):
         # It's a hash — verify it exists
-        version = code_detect_schema(part)
+        version = code_detect_schema(part.lower())
         if version is None:
             print(f"Error: Function not found: {part}", file=sys.stderr)
             sys.exit(1)
-        return part, lang
+        return part.lower(), lang
 
     # It's a name — resolve it to its single current version
     return helper_resolve_name(part, lang)
@@ -7872,6 +7917,8 @@ def helper_resolve_to_hash(identifier: str) -> str:
 def helper_identifier_name(identifier: str) -> Optional[str]:
     """The name in an identifier (name or name@lang), None for a hash."""
     part = identifier.split('@')[0]
+    if part.startswith(('0x', '0X')):
+        return None
     if len(part) == 64 and all(c in '0123456789abcdef' for c in part.lower()):
         return None
     return part or None
@@ -8692,7 +8739,7 @@ def command_edit(identifier: str, comment: str = None, unreviewed: bool = False,
         refused}, 'stale': why the draft is stale or None}; else None
     """
     name, _, requested_lang = identifier.partition('@')
-    is_hash = len(name) == 64 and all(c in '0123456789abcdef' for c in name.lower())
+    is_hash = (name.startswith(('0x', '0X')) and all(c in '0123456789abcdef' for c in name[2:].lower())) or (len(name) == 64 and all(c in '0123456789abcdef' for c in name.lower()))
     if not is_hash and name.isidentifier() and not helper_find_heads_by_name(name)[0]:
         if not requested_lang:
             print(f"Error: '{name}' is a new function: give its language, e.g. bb edit {name}@eng",
@@ -10232,7 +10279,7 @@ def command_compile(identifier: str, debug_mode: bool = False, output_path: Opti
     # If so, implicitly enable debug mode
     base_identifier = identifier.split('@')[0]
     has_lang_suffix = '@' in identifier
-    is_full_hash = len(base_identifier) == 64 and all(c in '0123456789abcdef' for c in base_identifier.lower())
+    is_full_hash = (base_identifier.startswith(('0x', '0X')) and all(c in '0123456789abcdef' for c in base_identifier[2:].lower())) or (len(base_identifier) == 64 and all(c in '0123456789abcdef' for c in base_identifier.lower()))
 
     # Implicit debug mode: name@lang (not hash@lang)
     if has_lang_suffix and not is_full_hash and not debug_mode:
@@ -10533,7 +10580,7 @@ def _build_parser():
 
     # Show command
     show_parser = subparsers.add_parser('show', help='Show a function from the pool')
-    show_parser.add_argument('identifier', help='Hash or name, with optional @lang (e.g., compute_pi@eng, abc123...@eng@mapping)')
+    show_parser.add_argument('identifier', help='Hash (0x... or 64 hex), hash prefix (0x...), or name, with optional @lang (e.g., compute_pi@eng, 0x1a994e...@eng, abc123...@eng@mapping)')
 
     # Translate command
     translate_parser = subparsers.add_parser('translate', help='Add translation for existing function')
