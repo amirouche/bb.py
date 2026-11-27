@@ -255,7 +255,7 @@ you give. bb log, bb show and bb reviews say whether a signature is by a
 peer you trust (bb trust).
 
 Records are written once and say when themselves ('created'). bb anchor
-has it attested: an OpenTimestamps proof next to each file (FILE.ots) that
+has it attested: an OpenTimestamps proof next to each file (FILE.anchored.ots) that
 it existed when a given Bitcoin block was mined. It is the only command
 that reaches the network, through the OpenTimestamps client (ots, or the
 command in $BB_OTS). It also anchors a snapshot, the list of every file,
@@ -2211,7 +2211,7 @@ def storage_write_authored(path: Path, data: Dict[str, Any], namespace: str, sig
 
 def storage_unlink(path: Path):
     """Remove a record with what stands next to it: its signature and their proofs."""
-    for extra in (anchor_proof_path(signature_path(path)), signature_path(path), anchor_proof_path(path), path):
+    for extra in (*anchor_proof_paths(signature_path(path)), signature_path(path), *anchor_proof_paths(path), path):
         if extra.exists():
             extra.unlink()
 
@@ -2920,9 +2920,13 @@ def review_run_checks(func_hash: str, reviewed: set) -> bool:
 #
 # The 'created' of a record is what its author says. `bb anchor` has
 # OpenTimestamps attest it: each JSON file of the pool, the worklogs and the
-# reviews, and each signature next to one, gets a proof next to it, FILE.ots,
-# that these bytes existed when a given Bitcoin block was mined. Proofs are
-# plain OpenTimestamps files: `ots verify FILE.ots` checks one without bb.
+# reviews, and each signature next to one, gets a proof next to it that these
+# bytes existed when a given Bitcoin block was mined. A proof is two files:
+# FILE.pending.ots, what the calendars promised when the file was stamped,
+# and FILE.anchored.ots, the complete proof, made from the first one once a
+# block holds it. bb creates each once and never writes it again: the
+# pending proof stays next to the anchored one. Both are plain OpenTimestamps
+# files: `ots verify -f FILE FILE.anchored.ots` checks one without bb.
 #
 # bb runs the OpenTimestamps client (`ots`, or the command in $BB_OTS) to
 # stamp, upgrade and verify, and reads the proofs itself to say, offline,
@@ -2938,9 +2942,19 @@ ANCHOR_OPS_BINARY = {0xf0, 0xf1}
 ANCHOR_BATCH = 500
 
 
-def anchor_proof_path(path: Path) -> Path:
-    """Where the proof of a file lives: next to it, FILE.ots."""
-    return Path(str(path) + '.ots')
+def anchor_pending_path(path: Path) -> Path:
+    """Where the proof a stamp gives lives: next to the file, FILE.pending.ots."""
+    return Path(str(path) + '.pending.ots')
+
+
+def anchor_anchored_path(path: Path) -> Path:
+    """Where the complete proof of a file lives: next to it, FILE.anchored.ots."""
+    return Path(str(path) + '.anchored.ots')
+
+
+def anchor_proof_paths(path: Path) -> Tuple[Path, Path]:
+    """Every proof a file may have next to it: the anchored one, then the pending one."""
+    return anchor_anchored_path(path), anchor_pending_path(path)
 
 
 def anchor_list_files(func_hash: str = None) -> List[Path]:
@@ -3025,20 +3039,14 @@ def anchor_parse(data: bytes) -> Optional[Tuple[bytes, List[int], int]]:
     return digest, sorted(heights), pending
 
 
-def anchor_state(path: Path) -> Tuple[str, Optional[int]]:
+def anchor_judge(proof: Path, path: Path) -> Tuple[str, Optional[int]]:
     """
-    What the proof next to a file says, without the network.
+    What one proof file says of a file, without the network.
 
     Returns:
-        (state, Bitcoin block height): 'none' (no proof), 'unreadable',
-        'stale' (the proof is for other content: the file changed since),
-        'pending' (calendars have it, no block yet) or 'complete' (with the
-        earliest block attesting it). Nothing here checks the block itself:
-        bb anchor --verify does
+        (state, Bitcoin block height): 'unreadable', 'stale' (the proof is
+        for other content), 'pending' or 'complete'
     """
-    proof = anchor_proof_path(path)
-    if not proof.exists():
-        return 'none', None
     try:
         parsed = anchor_parse(proof.read_bytes())
         content = path.read_bytes()
@@ -3050,6 +3058,36 @@ def anchor_state(path: Path) -> Tuple[str, Optional[int]]:
     if digest != hashlib.sha256(content).digest():
         return 'stale', None
     return ('complete', heights[0]) if heights else ('pending', None)
+
+
+def anchor_state(path: Path) -> Tuple[str, Optional[int]]:
+    """
+    What the proofs next to a file say, without the network.
+
+    The anchored proof (FILE.anchored.ots) speaks when there is one, else
+    the pending one (FILE.pending.ots).
+
+    Returns:
+        (state, Bitcoin block height): 'none' (no proof), 'unreadable',
+        'stale' (the proof is for other content: the file changed since),
+        'pending' (calendars have it, no block yet) or 'complete' (with the
+        earliest block attesting it). An anchored proof no block attests is
+        'unreadable'. Nothing here checks the block itself: bb anchor
+        --verify does
+    """
+    anchored, pending = anchor_proof_paths(path)
+    if anchored.exists():
+        state, height = anchor_judge(anchored, path)
+        return ('unreadable', None) if state == 'pending' else (state, height)
+    if pending.exists():
+        return anchor_judge(pending, path)
+    return 'none', None
+
+
+def anchor_proof_path(path: Path) -> Path:
+    """The proof that speaks for a file: the anchored one when there is one, else the pending one."""
+    anchored, pending = anchor_proof_paths(path)
+    return anchored if anchored.exists() else pending
 
 
 def anchor_describe(path: Path) -> Optional[str]:
@@ -3297,7 +3335,8 @@ def command_anchor(identifier: str = None, upgrade: bool = False, verify: bool =
     - bb anchor: stamp every file that has no proof yet (one request to
       the calendars for all of them). Proofs are pending until a block
       holds them, a few hours later.
-    - bb anchor --upgrade: complete the pending proofs.
+    - bb anchor --upgrade: complete the pending proofs: each gets an
+      anchored proof next to it, and stays as it is.
     - bb anchor --status: count what is anchored, without the network.
     - bb anchor --verify: have the client check each complete proof
       against Bitcoin (it needs a Bitcoin node) and say since when.
@@ -3375,16 +3414,18 @@ def command_anchor(identifier: str = None, upgrade: bool = False, verify: bool =
         pending = [path for path in files if states[path][0] == 'pending']
         for start in range(0, len(pending), ANCHOR_BATCH):
             batch = pending[start:start + ANCHOR_BATCH]
-            result = anchor_run(['upgrade'] + [str(anchor_proof_path(path)) for path in batch])
-            anchor_relay(result, expected=('Calendar ', 'Failed! Timestamp not complete', 'Success!', 'Got '))
-            for path in batch:
-                # The client keeps the proof it replaced as FILE.ots.bak: one proof per file is enough
-                backup = Path(str(anchor_proof_path(path)) + '.bak')
-                if backup.exists():
-                    if anchor_state(path)[0] in ('complete', 'pending'):
-                        backup.unlink()
-                    else:
-                        backup.replace(anchor_proof_path(path))
+            # The client rewrites the proof it upgrades: it is given copies, never the pending proofs
+            with tempfile.TemporaryDirectory() as directory:
+                copies = [Path(directory) / f"{index}.ots" for index in range(len(batch))]
+                for path, copy in zip(batch, copies):
+                    shutil.copyfile(anchor_pending_path(path), copy)
+                result = anchor_run(['upgrade'] + [str(copy) for copy in copies])
+                anchor_relay(result, expected=('Calendar ', 'Failed! Timestamp not complete', 'Success!', 'Got '))
+                for path, copy in zip(batch, copies):
+                    if anchor_judge(copy, path)[0] == 'complete':
+                        # Created once: an anchored proof is never written over
+                        with open(anchor_anchored_path(path), 'xb') as f:
+                            f.write(copy.read_bytes())
         pending = [path for path in pending if path in records]
         completed = sum(1 for path in pending if anchor_state(path)[0] == 'complete')
         print(f"Completed: {completed}")
@@ -3398,13 +3439,19 @@ def command_anchor(identifier: str = None, upgrade: bool = False, verify: bool =
     new = [path for path in files if states[path][0] == 'none']
     failed = False
     for start in range(0, len(new), ANCHOR_BATCH):
-        result = anchor_run(['stamp'] + [str(path) for path in new[start:start + ANCHOR_BATCH]])
+        batch = new[start:start + ANCHOR_BATCH]
+        result = anchor_run(['stamp'] + [str(path) for path in batch])
+        for path in batch:
+            # The client writes FILE.ots: it becomes the pending proof (none exists, the file had no proof)
+            stamped = Path(str(path) + '.ots')
+            if stamped.exists():
+                stamped.rename(anchor_pending_path(path))
         if result.returncode != 0:
             anchor_relay(result)
             failed = True
             break
-    anchored = sum(1 for path in new if path in records and anchor_proof_path(path).exists())
-    missed = sum(1 for path in new if not anchor_proof_path(path).exists())
+    anchored = sum(1 for path in new if path in records and anchor_pending_path(path).exists())
+    missed = sum(1 for path in new if not anchor_pending_path(path).exists())
     if anchored:
         print(f"Anchored: {anchored} file{'' if anchored == 1 else 's'}, pending until a Bitcoin block holds "
               f"{'it' if anchored == 1 else 'them'} (in a few hours: bb anchor --upgrade)")
@@ -10653,7 +10700,7 @@ def _build_parser():
 
     # Reviews command
     anchor_parser = subparsers.add_parser(
-        'anchor', help='Anchor the records in Bitcoin with OpenTimestamps (FILE.ots proofs)',
+        'anchor', help='Anchor the records in Bitcoin with OpenTimestamps (FILE.pending.ots, then FILE.anchored.ots)',
         description="Stamp every JSON file of the pool, the worklogs and the reviews that has no proof yet. "
                     "Runs the OpenTimestamps client: ots, or the command in $BB_OTS.")
     anchor_parser.add_argument('identifier', nargs='?', help='Only this function: hash or name, with optional @lang')

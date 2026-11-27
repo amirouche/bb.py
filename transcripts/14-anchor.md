@@ -8,7 +8,7 @@
 - Complexity: intermediate
 
 ## Overview
-The date of a record is what its author says. `bb anchor` has it attested: every JSON file of the pool, the worklogs and the reviews gets an OpenTimestamps proof next to it, `FILE.ots`, that these exact bytes existed when a given Bitcoin block was mined. The proofs are tracked with git like everything else, and `ots verify FILE.ots` checks one without bb. Each `bb anchor` also anchors a snapshot, the list of every file with its hash, so that a record removed later is seen.
+The date of a record is what its author says. `bb anchor` has it attested: every JSON file of the pool, the worklogs and the reviews gets an OpenTimestamps proof next to it that these exact bytes existed when a given Bitcoin block was mined: first `FILE.pending.ots`, what the calendars promised, then `FILE.anchored.ots`, the complete proof, once a block holds it. Each is written once and the pending one stays. The proofs are tracked with git like everything else, and `ots verify -f FILE FILE.anchored.ots` checks one without bb. Each `bb anchor` also anchors a snapshot, the list of every file with its hash, so that a record removed later is seen.
 
 bb runs the OpenTimestamps client for this: `ots`, or the command in `$BB_OTS`. So that this transcript needs neither the network nor a few hours of waiting, `$BB_OTS` names a stand-in that writes the same files as the client and answers at once.
 
@@ -54,9 +54,11 @@ if command == 'stamp':
             f.write(proof(path, PENDING))
 elif command == 'upgrade':
     for path in paths:
+        with open(path, 'rb') as f:
+            digest = f.read()[len(HEADER):len(HEADER) + 32]
         os.replace(path, path + '.bak')
         with open(path, 'wb') as f:
-            f.write(proof(path[:-len('.ots')], BLOCK_870000))
+            f.write(HEADER + digest + b'\x00' + BLOCK_870000)
 elif command == 'verify':
     print("Success! Bitcoin block 870000 attests existence as of 2026-11-23 UTC")
 ```
@@ -93,9 +95,9 @@ $ env BB_OTS="python3 ots_stand_in.py" bb anchor | sed -E 's/[0-9a-f]{12}\.\.\./
 Anchored: 3 files, pending until a Bitcoin block holds them (in a few hours: bb anchor --upgrade)
 Snapshot: <id> of 3 files (+3 -0), pending (bb anchor --upgrade)
 $ (cd $BB_DIRECTORY/pool && find . -name '*.ots' | sed -E 's/[0-9a-f]{2}\/[0-9a-f]{62}/<hash>/; s/[0-9a-f]{64}/<hash>/' | sort)
-./functions/<hash>/object.json.ots
-./lineage/<hash>.json.ots
-./mappings/<hash>/eng/<hash>.json.ots
+./functions/<hash>/object.json.pending.ots
+./lineage/<hash>.json.pending.ots
+./mappings/<hash>/eng/<hash>.json.pending.ots
 ```
 
 ### Step 3: Only what is new is stamped
@@ -147,6 +149,9 @@ $ bb anchor --status | head -3
 Complete: 5 (Bitcoin block 870000)
 Pending: 0
 Not anchored: 0
+$ (cd $BB_DIRECTORY/pool/functions && find . -name '*.ots' | sed -E 's/[0-9a-f]{2}\/[0-9a-f]{62}/<hash>/' | sort)
+./<hash>/object.json.anchored.ots
+./<hash>/object.json.pending.ots
 $ bb log greet | grep '^Anchored' | sort -u
 Anchored: Bitcoin block 870000
 ```
@@ -251,7 +256,7 @@ Snapshot: <id> of 3 files (+1 -2), pending (bb anchor --upgrade)
 
 2. **Only `bb anchor` reaches the network**: saving, editing and reviewing stay offline. What the calendars receive is one hash for the whole batch, never the records.
 
-3. **Proofs are ordinary OpenTimestamps files**: `FILE.ots` next to `FILE`, kept in git with it, checked by `ots verify` without bb.
+3. **Proofs are ordinary OpenTimestamps files**: `FILE.pending.ots` and then `FILE.anchored.ots` next to `FILE`, kept in git with it, checked by `ots verify` without bb. bb creates each once and never writes over one.
 
 4. **A snapshot says what else existed**: the list of every file, anchored with them, each naming the one before. A record removed since is listed by `bb anchor --status`, and the next snapshot records the removal.
 

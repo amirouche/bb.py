@@ -54,9 +54,11 @@ if command == 'stamp':
             f.write(proof(path, PENDING))
 elif command == 'upgrade':
     for path in paths:
+        with open(path, 'rb') as f:
+            digest = f.read()[len(HEADER):len(HEADER) + 32]
         os.replace(path, path + '.bak')
         with open(path, 'wb') as f:
-            f.write(proof(path[:-4], bytes.fromhex('000588960d73d7190103f08c35')))
+            f.write(HEADER + digest + bytes.fromhex('000588960d73d7190103f08c35'))
     print("Success! Timestamp complete", file=sys.stderr)
 elif command == 'verify':
     if os.environ.get('STAND_IN_REFUSES'):
@@ -119,15 +121,27 @@ def test_anchor_state_tells_pending_complete_and_stale(tmp_path):
     record = tmp_path / 'record.json'
     record.write_bytes(b"a\n")
     assert bb.anchor_state(record) == ('none', None)
-    bb.anchor_proof_path(record).write_bytes(REAL_PENDING_PROOF)
+    bb.anchor_pending_path(record).write_bytes(REAL_PENDING_PROOF)
     assert bb.anchor_state(record) == ('pending', None)
-    bb.anchor_proof_path(record).write_bytes(HEADER + hashlib.sha256(b"a\n").digest() + bitcoin(b'\xf0\x8c\x35'))
+    assert bb.anchor_proof_path(record).name == 'record.json.pending.ots'
+    # The anchored proof speaks once there is one, the pending one stays
+    complete = HEADER + hashlib.sha256(b"a\n").digest() + bitcoin(b'\xf0\x8c\x35')
+    bb.anchor_anchored_path(record).write_bytes(complete)
     assert bb.anchor_state(record) == ('complete', 870000)
     assert bb.anchor_describe(record) == "Bitcoin block 870000"
+    assert bb.anchor_proof_path(record).name == 'record.json.anchored.ots'
     record.write_bytes(b"b\n")
     assert bb.anchor_state(record) == ('stale', None)
-    bb.anchor_proof_path(record).write_bytes(b'garbage')
+    bb.anchor_anchored_path(record).write_bytes(b'garbage')
     assert bb.anchor_state(record) == ('unreadable', None)
+    # An anchored proof no block attests is not one
+    record.write_bytes(b"a\n")
+    bb.anchor_anchored_path(record).write_bytes(REAL_PENDING_PROOF)
+    assert bb.anchor_state(record) == ('unreadable', None)
+    # A pending proof alone is read for what it holds
+    bb.anchor_anchored_path(record).unlink()
+    bb.anchor_pending_path(record).write_bytes(complete)
+    assert bb.anchor_state(record) == ('complete', 870000)
 
 
 def test_anchor_stamps_only_what_has_no_proof(mock_bb_dir, tmp_path, stand_in, capsys):
@@ -137,6 +151,8 @@ def test_anchor_stamps_only_what_has_no_proof(mock_bb_dir, tmp_path, stand_in, c
     assert "Anchored: 3 files" in capsys.readouterr().out
     assert _states() == ['pending'] * 3
     proofs = {path: bb.anchor_proof_path(path).read_bytes() for path in bb.anchor_list_files()}
+    # The client's FILE.ots became FILE.pending.ots: nothing else is left
+    assert {path.name.split('.json')[-1] for path in bb.storage_get_bb_directory().rglob('*.ots')} == {'.pending.ots'}
 
     bb.command_anchor()
     assert "Nothing to anchor." in capsys.readouterr().out
@@ -154,14 +170,35 @@ def test_anchor_one_function_only(mock_bb_dir, tmp_path, stand_in, capsys):
     assert _states() == ['none'] * 3 + ['pending'] * 3
 
 
-def test_anchor_upgrade_completes_and_keeps_one_proof_per_file(mock_bb_dir, tmp_path, stand_in, capsys):
+def _proofs():
+    """Every proof file of the store: its bytes and when it was last written."""
+    return {path: (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in bb.storage_get_bb_directory().rglob('*.ots')}
+
+
+def test_anchor_upgrade_adds_the_anchored_proof_and_leaves_the_pending_one(mock_bb_dir, tmp_path, stand_in, capsys):
     _add(tmp_path)
     bb.command_anchor()
+    stamped = _proofs()
+    assert len(stamped) == 4  # three records and the snapshot
     bb.command_anchor(upgrade=True)
     out = capsys.readouterr()
     assert "Completed: 3" in out.out and "Still pending: 0" in out.out and out.err == ""
     assert {bb.anchor_state(path) for path in bb.anchor_list_files()} == {('complete', 870000)}
+
+    # Nothing was written over: the pending proofs are as they were, the anchored ones are new files
+    upgraded = _proofs()
+    assert all(upgraded[path] == proof for path, proof in stamped.items())
+    covered = [*bb.anchor_list_files(), *bb.storage_get_bb_directory().glob('anchor/*.json')]
+    assert sorted(set(upgraded) - set(stamped)) == sorted(bb.anchor_anchored_path(path) for path in covered)
+    assert all(bb.anchor_pending_path(path).exists() for path in bb.anchor_list_files())
     assert not list(bb.storage_get_bb_directory().rglob('*.bak'))
+    assert not list(bb.storage_get_bb_directory().rglob('*.json.ots'))
+
+    # Upgrading again writes nothing
+    bb.command_anchor(upgrade=True)
+    assert "Completed: 0" in capsys.readouterr().out
+    assert _proofs() == upgraded
 
     bb.command_anchor(status=True)
     assert "Complete: 3 (Bitcoin block 870000)" in capsys.readouterr().out
@@ -232,7 +269,15 @@ def test_rm_takes_the_proofs_along(mock_bb_dir, tmp_path, stand_in):
     _add(tmp_path)
     bb.command_anchor()
     bb.command_rm('one@eng')
-    assert [path.name for path in bb.storage_get_pool_directory().rglob('*.ots')] == ['object.json.ots']
+    assert [path.name for path in bb.storage_get_pool_directory().rglob('*.ots')] == ['object.json.pending.ots']
+    # The anchored proof goes too
+    _add(tmp_path, "def two():\n    return 2\n", 'two.py')
+    bb.command_anchor()
+    bb.command_anchor(upgrade=True)
+    bb.command_rm('two@eng')
+    assert sorted(path.name for path in bb.storage_get_pool_directory().rglob('*.ots')) == [
+        'object.json.anchored.ots', 'object.json.anchored.ots',
+        'object.json.pending.ots', 'object.json.pending.ots']
 
 
 # ----------------------------------------------------------------------------
